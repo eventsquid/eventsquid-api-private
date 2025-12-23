@@ -52,7 +52,7 @@ This document tracks the migration progress from Mantle to Lambda.
 - [x] AuthNet routes (8 routes migrated)
 - [x] Email routes (15 routes migrated)
 - [x] Reports routes (23 routes migrated)
-- [x] Credits routes (44 routes migrated)
+- [x] Credits routes (44 routes migrated - 9 methods implemented, many pending)
 - [x] Reporting routes (11 routes migrated)
 
 #### Services Implemented
@@ -246,6 +246,33 @@ This document tracks the migration progress from Mantle to Lambda.
   - verifyEmail (checks if email has Eventsquid account)
   - getUserPhone (gets user phone number by email)
   - sendVerificationCode (generates code and sends via email - sendEmail pending)
+- [x] Credits functions (4 functions):
+  - getCreditsByUserID (gets credits for user from MSSQL)
+  - getStates (gets states from EventsquidCommon database)
+  - filterAttendeesByProfile (filters attendees by profile)
+  - filterAttendeesByJurisdiction (filters attendees by jurisdiction)
+- [x] Users functions (1 function):
+  - getUserByID (gets user by ID with specified columns)
+- [x] CreditsService (9 methods implemented, many pending):
+  - getCreditsByUserID (gets credits and user data)
+  - getCEEventsByUserID (gets CE events for user)
+  - getEventCreditCategoriesReport (gets categories for report)
+  - getAwardedAttendeesByCategory (gets awarded attendees)
+  - getSessionsByCategory (gets sessions for category)
+  - getGrantsByCategory (gets grants for category)
+  - getUnusedCategories (gets unused categories)
+  - getEventCreditCategories (pending - complex with filtering)
+  - getEventCreditCategoriesAssignmentGrid (pending)
+  - getEventCreditCategoriesGrantDashboard (pending)
+  - getEventCreditCategoriesCreditLibrary (pending)
+  - getEventCreditCategoriesCriteriaForm (pending)
+  - updateCreditCategory (pending)
+  - createCreditCategory (pending)
+  - archiveCreditCategory (pending)
+  - getTranscriptTemplateConfig (pending)
+  - saveTranscriptConfig (pending)
+  - getTranscriptTemplate (pending)
+  - Many grant and award methods (pending)
 - [x] EmailService (12 methods implemented, 2 pending):
   - logEmail (logs SendGrid webhooks)
   - validateEmail (validates email address)
