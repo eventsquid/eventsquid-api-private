@@ -3,55 +3,86 @@
  * Migrated from services/AuthNetService.js
  */
 
-import { getDatabase } from '../utils/mongodb.js';
+import {
+  getMerchantDetails,
+  getTransactionDetails,
+  payByCreditCard,
+  refundTransaction,
+  checkMultiCheckout,
+  getPaymentForm
+} from '../functions/authNet.js';
 
 class AuthNetService {
   /**
    * Get merchant details
    */
   async getMerchantDetails(request) {
-    // TODO: Implement getMerchantDetails from old AuthNetService
-    return {};
+    try {
+      return await getMerchantDetails(request);
+    } catch (error) {
+      console.error('Error getting merchant details:', error);
+      throw error;
+    }
   }
 
   /**
    * Pay by credit card
    */
   async payByCreditCard(request) {
-    // TODO: Implement payByCreditCard from old AuthNetService
-    return { status: 'success' };
+    try {
+      return await payByCreditCard(request);
+    } catch (error) {
+      console.error('Error processing credit card payment:', error);
+      throw error;
+    }
   }
 
   /**
    * Refund transaction
    */
   async refundTransaction(request) {
-    // TODO: Implement refundTransaction from old AuthNetService
-    return { status: 'success' };
+    try {
+      return await refundTransaction(request);
+    } catch (error) {
+      console.error('Error refunding transaction:', error);
+      throw error;
+    }
   }
 
   /**
    * Get transaction details
    */
   async getTransactionDetails(request) {
-    // TODO: Implement getTransactionDetails from old AuthNetService
-    return {};
+    try {
+      return await getTransactionDetails(request);
+    } catch (error) {
+      console.error('Error getting transaction details:', error);
+      throw error;
+    }
   }
 
   /**
    * Check multi-checkout
    */
   async checkMultiCheckout(request) {
-    // TODO: Implement checkMultiCheckout from old AuthNetService
-    return { multiCheckout: false };
+    try {
+      return await checkMultiCheckout(request);
+    } catch (error) {
+      console.error('Error checking multi-checkout:', error);
+      throw error;
+    }
   }
 
   /**
    * Get payment form
    */
   async getPaymentForm(request) {
-    // TODO: Implement getPaymentForm from old AuthNetService
-    return { form: '' };
+    try {
+      return await getPaymentForm(request);
+    } catch (error) {
+      console.error('Error getting payment form:', error);
+      throw error;
+    }
   }
 }
 

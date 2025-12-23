@@ -291,3 +291,165 @@ export async function sendVerificationCode(form) {
   }
 }
 
+/**
+ * Get email detail from API (helper function)
+ */
+export async function getEmailDetailFromAPI(msgID, vert) {
+  try {
+    const sendgridAPIURL = `https://api.sendgrid.com/v3/messages/${msgID}`;
+    const sgEmailActivityKey = process.env.SG_EMAIL_ACTIVITY_KEY || process.env.SENDGRID_ACTIVITY_API_KEY;
+
+    if (!sgEmailActivityKey) {
+      throw new Error('SG_EMAIL_ACTIVITY_KEY or SENDGRID_ACTIVITY_API_KEY environment variable is required');
+    }
+
+    const response = await axios.request({
+      url: sendgridAPIURL,
+      method: 'get',
+      headers: {
+        'authorization': `Bearer ${sgEmailActivityKey}`
+      }
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Error getting email detail from API:', error);
+    // Return error object instead of throwing to match old behavior
+    return error;
+  }
+}
+
+/**
+ * Get email list from API
+ */
+export async function getEmailListFromAPI(form, vert) {
+  try {
+    const inboundAPIKey = process.env.TWILIO_INBOUND_API_KEY || process.env.SENDGRID_INBOUND_API_KEY;
+    const sgEmailActivityKey = process.env.SG_EMAIL_ACTIVITY_KEY || process.env.SENDGRID_ACTIVITY_API_KEY;
+
+    if (!sgEmailActivityKey) {
+      throw new Error('SG_EMAIL_ACTIVITY_KEY or SENDGRID_ACTIVITY_API_KEY environment variable is required');
+    }
+
+    if (!inboundAPIKey) {
+      throw new Error('TWILIO_INBOUND_API_KEY or SENDGRID_INBOUND_API_KEY environment variable is required');
+    }
+
+    let sendgridAPIURL = `https://api.sendgrid.com/v3/messages?limit=999&query=`;
+    let qryParams = `(unique_args["s"]="${vert}") AND (unique_args["_esk"]="${inboundAPIKey}")`;
+
+    // If we have a date range
+    if (form.fromTS && form.toTS) {
+      // TS (timestamp) strings must be in this format: "2020-09-03T00:00:00.000Z"
+      qryParams += ` AND last_event_time BETWEEN TIMESTAMP "${form.fromTS}" AND TIMESTAMP "${form.toTS}"`;
+    }
+
+    // If we have a mailID
+    if (form.mailID) {
+      qryParams += ` AND (unique_args["mailID"]="${form.mailID}")`;
+    }
+
+    // If we have any query params
+    if (qryParams.length > 0) {
+      sendgridAPIURL += encodeURI(qryParams);
+    }
+
+    const response = await axios.request({
+      url: sendgridAPIURL,
+      method: 'get',
+      headers: {
+        'authorization': `Bearer ${sgEmailActivityKey}`
+      }
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Error getting email list from API:', error);
+    // Return error object instead of throwing to match old behavior
+    return error;
+  }
+}
+
+/**
+ * Import email detail from API
+ * Rate-limited to one request every 3 seconds to respect SendGrid API limits
+ */
+export async function importEmailDetailFromAPI(msgIDRA, vert) {
+  try {
+    if (!Array.isArray(msgIDRA) || msgIDRA.length === 0) {
+      return [];
+    }
+
+    // Rate limit: one request every 3 seconds (SendGrid API is rate-limited)
+    const rateLimitDelay = 3000;
+    const emailDetailRA = [];
+
+    // Process each message ID with rate limiting
+    for (let i = 0; i < msgIDRA.length; i++) {
+      // Wait before making request (except for first one)
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, rateLimitDelay));
+      }
+
+      const emailDetail = await getEmailDetailFromAPI(msgIDRA[i].msg_id || msgIDRA[i], vert);
+      
+      if (emailDetail && !emailDetail.response) {
+        emailDetailRA.push(emailDetail);
+      }
+    }
+
+    // Loop the array of emails and prep them for logging
+    const emailLogRA = [];
+    for (let i = 0; i < emailDetailRA.length; i++) {
+      let emailLogObj = _.assign({}, emailDetailRA[i]);
+      
+      // Merge unique_args into main object
+      if (emailLogObj.unique_args) {
+        emailLogObj = _.assign(emailLogObj, emailLogObj.unique_args);
+      }
+
+      if (emailLogObj._est) {
+        emailLogObj._est = Number(emailLogObj._est);
+      }
+
+      emailLogObj.sg_message_id = String(emailLogObj.msg_id || emailLogObj.message_id || '');
+
+      // If we have an array of events (we almost certainly will)
+      if (emailLogObj.events && Array.isArray(emailLogObj.events)) {
+        // Loop them and transform
+        for (let j = 0; j < emailLogObj.events.length; j++) {
+          const thisActObj = {};
+
+          if (emailLogObj.events[j].event_name) {
+            thisActObj.act = _.trim(emailLogObj.events[j].event_name);
+            thisActObj.tsp = moment.utc(emailLogObj.events[j].processed || emailLogObj.events[j].timestamp).format();
+            thisActObj._x = (_.trim(emailLogObj.events[j].event_name) === 'delivered') ? 99 : 0;
+          }
+
+          if (emailLogObj.events[j].reason) {
+            thisActObj.rsp = _.trim(emailLogObj.events[j].reason);
+          }
+
+          emailLogObj.events[j] = _.assign({}, thisActObj);
+        }
+      }
+
+      delete emailLogObj.unique_args;
+      delete emailLogObj.msg_id;
+      delete emailLogObj.message_id;
+
+      emailLogRA.push(_.assign({}, emailLogObj));
+    }
+
+    // Log them using the logEmail function
+    if (emailLogRA.length > 0) {
+      await logEmail(emailLogRA);
+    }
+
+    return emailLogRA;
+  } catch (error) {
+    console.error('Error importing email detail from API:', error);
+    throw error;
+  }
+}
+

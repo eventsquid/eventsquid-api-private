@@ -4,182 +4,551 @@
  */
 
 import { getDatabase } from '../utils/mongodb.js';
+import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
+import { ObjectId } from 'mongodb';
+import {
+  getEventDetailsByGUID,
+  getReportDetailsByGUID,
+  getReportingMenu,
+  getBiosByEventID,
+  checkDupTemplateName,
+  getTemplates,
+  findEventReportConfig,
+  getRegistrantFilters,
+  registrantReport,
+  registrantReportExport,
+  getRegistrantTransactionsReport,
+  saveRegistrantTemplate,
+  deleteTemplate,
+  shareTemplate
+} from '../functions/reports.js';
+import EventService from './EventService.js';
+
+const _eventsService = new EventService();
 
 class ReportService {
   /**
    * Get event details by GUID
    */
   async getEventDetailsByGUID(request) {
-    // TODO: Implement getEventDetailsByGUID from old ReportService
-    return {};
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventGUID = request.pathParameters?.eventGUID;
+      const session = request.session || request.user || {};
+
+      return await getEventDetailsByGUID(eventGUID, vert, session);
+    } catch (error) {
+      console.error('Error getting event details by GUID:', error);
+      throw error;
+    }
   }
 
   /**
    * Get report details by GUID
    */
   async getReportDetailsByGUID(request) {
-    // TODO: Implement getReportDetailsByGUID from old ReportService
-    return {};
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const reportGUID = request.pathParameters?.reportGUID;
+      const session = request.session || request.user || {};
+
+      return await getReportDetailsByGUID(reportGUID, vert, session);
+    } catch (error) {
+      console.error('Error getting report details by GUID:', error);
+      throw error;
+    }
   }
 
   /**
    * Get reporting menu
    */
   async getReportingMenu(request) {
-    // TODO: Implement getReportingMenu from old ReportService
-    return [];
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+      const affiliateID = request.session?.affiliate_id || request.user?.affiliate_id;
+      const user_admin_level = request.session?.user_admin_level || request.user?.user_admin_level || 0;
+
+      return await getReportingMenu(eventID, affiliateID, user_admin_level, vert);
+    } catch (error) {
+      console.error('Error getting reporting menu:', error);
+      throw error;
+    }
   }
 
   /**
    * Registrant report
    */
   async registrantReport(request) {
-    // TODO: Implement registrantReport from old ReportService
-    return [];
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+
+      return await registrantReport(eventID, vert, request.body || {});
+    } catch (error) {
+      console.error('Error generating registrant report:', error);
+      throw error;
+    }
   }
 
   /**
    * Export registrant report
    */
   async registrantReportExport(request) {
-    // TODO: Implement registrantReportExport from old ReportService
-    return {};
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const reportGUID = request.pathParameters?.reportGUID;
+      const format = request.pathParameters?.format;
+      const checkID = request.pathParameters?.checkID;
+      const session = request.session || request.user || {};
+
+      return await registrantReportExport(reportGUID, format, checkID, vert, session);
+    } catch (error) {
+      console.error('Error exporting registrant report:', error);
+      throw error;
+    }
   }
 
   /**
    * Get registrant filters
    */
   async getRegistrantFilters(request) {
-    // TODO: Implement getRegistrantFilters from old ReportService
-    return {};
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+
+      return await getRegistrantFilters(eventID, vert);
+    } catch (error) {
+      console.error('Error getting registrant filters:', error);
+      throw error;
+    }
   }
 
   /**
    * Save registrant template
    */
   async saveRegistrantTemplate(request) {
-    // TODO: Implement saveRegistrantTemplate from old ReportService
-    return { status: 'success' };
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+      const session = request.session || request.user || {};
+
+      return await saveRegistrantTemplate(eventID, vert, request.body, session);
+    } catch (error) {
+      console.error('Error saving registrant template:', error);
+      throw error;
+    }
   }
 
   /**
    * Get registrant templates
    */
   async getRegistrantTemplates(request) {
-    // TODO: Implement getRegistrantTemplates from old ReportService
-    return [];
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+      const session = request.session || request.user || {};
+
+      return await getTemplates(eventID, vert, 'registrant', session);
+    } catch (error) {
+      console.error('Error getting registrant templates:', error);
+      throw error;
+    }
   }
 
   /**
    * Get registrant transactions report
    */
   async getRegistrantTransactionsReport(reqDetails) {
-    // TODO: Implement getRegistrantTransactionsReport from old ReportService
-    return [];
+    try {
+      const {
+        affiliateID,
+        eventID,
+        keyword,
+        fromDate,
+        toDate,
+        payMethod,
+        vert
+      } = reqDetails;
+
+      return await getRegistrantTransactionsReport(
+        affiliateID,
+        eventID,
+        keyword,
+        fromDate,
+        toDate,
+        payMethod,
+        vert
+      );
+    } catch (error) {
+      console.error('Error getting registrant transactions report:', error);
+      throw error;
+    }
   }
 
   /**
    * Check duplicate template name
    */
   async checkDupTemplateName(request) {
-    // TODO: Implement checkDupTemplateName from old ReportService
-    return { isDuplicate: false };
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+      const reportType = request.pathParameters?.reportType;
+      const templateName = request.pathParameters?.templateName;
+
+      const isDuplicate = await checkDupTemplateName(eventID, reportType, templateName, vert);
+      return { isDuplicate };
+    } catch (error) {
+      console.error('Error checking duplicate template name:', error);
+      throw error;
+    }
   }
 
   /**
    * Delete template
    */
   async deleteTemplate(request) {
-    // TODO: Implement deleteTemplate from old ReportService
-    return { status: 'success' };
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+      const idg = request.pathParameters?.idg;
+      const reportType = request.pathParameters?.reportType;
+      const session = request.session || request.user || {};
+
+      return await deleteTemplate(eventID, idg, reportType, vert, session);
+    } catch (error) {
+      console.error('Error deleting template:', error);
+      throw error;
+    }
   }
 
   /**
    * Share template
    */
   async shareTemplate(request) {
-    // TODO: Implement shareTemplate from old ReportService
-    return { status: 'success' };
+    try {
+      const session = request.session || request.user || {};
+
+      return await shareTemplate(request.body, session);
+    } catch (error) {
+      console.error('Error sharing template:', error);
+      throw error;
+    }
   }
 
   /**
    * Get bios by event ID
    */
   async getBiosByEventID(request) {
-    // TODO: Implement getBiosByEventID from old ReportService
-    return [];
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+
+      return await getBiosByEventID(eventID, vert);
+    } catch (error) {
+      console.error('Error getting bios by event ID:', error);
+      throw error;
+    }
   }
 
   /**
    * Find event report config
    */
   async findEventReportConfig(request) {
-    // TODO: Implement findEventReportConfig from old ReportService
-    return {};
+    try {
+      // We need to check if the event configuration is up-to-date
+      // TODO: Implement EventService.updateEventConfig if needed
+      // await _eventsService.updateEventConfig(request);
+
+      return await findEventReportConfig(request);
+    } catch (error) {
+      console.error('Error finding event report config:', error);
+      throw error;
+    }
   }
 
   /**
    * Get CEU Summary Report
    */
   async getCEUSummaryReport(eventID, query, vert) {
-    // TODO: Implement getCEUSummaryReport from old ReportService
-    return [];
+    try {
+      const connection = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const params = ['@eventID'];
+      if ('categoryIDList' in query) {
+        params.push('@categoryIDList');
+      }
+      if ('attendeeSearchCriteria' in query) {
+        params.push('@attendeeSearchCriteria');
+      }
+
+      const qryStr = `
+        USE ${dbName};
+        EXEC dbo.ceuSummaryReport ${params.join(', ')}
+      `;
+
+      let request = connection.sql(qryStr)
+        .parameter('eventID', TYPES.Int, Number(eventID));
+
+      if ('categoryIDList' in query) {
+        request = request.parameter('categoryIDList', TYPES.VarChar, String(query.categoryIDList));
+      }
+
+      if ('attendeeSearchCriteria' in query) {
+        request = request.parameter('attendeeSearchCriteria', TYPES.VarChar, String(query.attendeeSearchCriteria));
+      }
+
+      return await request.execute();
+    } catch (error) {
+      console.error('Error getting CEU summary report:', error);
+      throw error;
+    }
   }
 
   /**
    * Get CEU Summary Report filters
    */
   async getCEUSummaryReportFilters(request) {
-    // TODO: Implement getCEUSummaryReportFilters from old ReportService
-    return {};
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const reportID = request.pathParameters?.reportID;
+
+      const db = await getDatabase(null, vert);
+      const layoutsColl = db.collection('ceu-summary-reports');
+
+      const report = await layoutsColl.findOne({
+        _id: new ObjectId(reportID)
+      });
+
+      return report || {};
+    } catch (error) {
+      console.error('Error getting CEU summary report filters:', error);
+      throw error;
+    }
   }
 
   /**
    * Save CEU Summary Report Layout
    */
   async saveCEUSummaryReportLayout(request) {
-    // TODO: Implement saveCEUSummaryReportLayout from old ReportService
-    return { status: 'success' };
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const session = request.session || request.user || {};
+
+      const db = await getDatabase(null, vert);
+      const layoutsColl = db.collection('ceu-summary-reports');
+
+      const reqBody = {
+        ...request.body,
+        history: [{
+          userEmail: String(session.user_email || ''),
+          userFirstName: String(session.user_firstname || ''),
+          userLastName: String(session.user_lastname || ''),
+          userID: Number(session.user_id),
+          date: new Date(),
+          act: 'Created report.'
+        }]
+      };
+
+      const result = await layoutsColl.insertOne(reqBody);
+      return { status: 'success', _id: result.insertedId };
+    } catch (error) {
+      console.error('Error saving CEU summary report layout:', error);
+      throw error;
+    }
   }
 
   /**
    * Update CEU Summary Report Layout
    */
   async updateCEUSummaryReportLayout(request) {
-    // TODO: Implement updateCEUSummaryReportLayout from old ReportService
-    return { status: 'success' };
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const reportID = request.pathParameters?.reportID;
+      const session = request.session || request.user || {};
+
+      const db = await getDatabase(null, vert);
+      const layoutsColl = db.collection('ceu-summary-reports');
+
+      const reqBody = {
+        ceuColumnIDs: request.body.ceuColumnIDs,
+        eg: request.body.eg,
+        name: request.body.name,
+        otherColumns: request.body.otherColumns,
+        ceuFilterIDs: request.body.ceuFilterIDs,
+        searchFilterString: request.body.searchFilterString
+      };
+
+      await layoutsColl.updateOne(
+        {
+          _id: new ObjectId(reportID)
+        },
+        {
+          $set: reqBody,
+          $push: {
+            history: {
+              userEmail: String(session.user_email || ''),
+              userFirstName: String(session.user_firstname || ''),
+              userLastName: String(session.user_lastname || ''),
+              userID: Number(session.user_id),
+              date: new Date(),
+              act: 'Saved changes.'
+            }
+          }
+        }
+      );
+
+      return { status: 'success', message: 'CEU summary report layout updated' };
+    } catch (error) {
+      console.error('Error updating CEU summary report layout:', error);
+      throw error;
+    }
   }
 
   /**
    * Get CEU Detail Report
    */
   async getCEUDetailReport(eventID, query, vert) {
-    // TODO: Implement getCEUDetailReport from old ReportService
-    return [];
+    try {
+      const connection = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const params = ['@eventID'];
+      if ('attendeeSearchCriteria' in query) {
+        params.push('@attendeeSearchCriteria');
+      }
+      if ('categoryIDList' in query) {
+        params.push('@categoryIDList');
+      }
+      if ('eventFeeIDList' in query) {
+        params.push('@eventFeeIDList');
+      }
+
+      const qryStr = `
+        USE ${dbName};
+        EXEC dbo.ceuDetailReport ${params.join(', ')}
+      `;
+
+      let request = connection.sql(qryStr)
+        .parameter('eventID', TYPES.Int, Number(eventID));
+
+      if ('attendeeSearchCriteria' in query) {
+        request = request.parameter('attendeeSearchCriteria', TYPES.VarChar, String(query.attendeeSearchCriteria));
+      }
+
+      if ('categoryIDList' in query) {
+        request = request.parameter('categoryIDList', TYPES.VarChar, String(query.categoryIDList));
+      }
+
+      if ('eventFeeIDList' in query) {
+        request = request.parameter('eventFeeIDList', TYPES.VarChar, String(query.eventFeeIDList));
+      }
+
+      return await request.execute();
+    } catch (error) {
+      console.error('Error getting CEU detail report:', error);
+      throw error;
+    }
   }
 
   /**
    * Get CEU Detail Report filters
    */
   async getCEUDetailReportFilters(request) {
-    // TODO: Implement getCEUDetailReportFilters from old ReportService
-    return {};
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const reportID = request.pathParameters?.reportID;
+
+      const db = await getDatabase(null, vert);
+      const layoutsColl = db.collection('ceu-detail-reports');
+
+      const report = await layoutsColl.findOne({
+        _id: new ObjectId(reportID)
+      });
+
+      return report || {};
+    } catch (error) {
+      console.error('Error getting CEU detail report filters:', error);
+      throw error;
+    }
   }
 
   /**
    * Save CEU Detail Report Layout
    */
   async saveCEUDetailReportLayout(request) {
-    // TODO: Implement saveCEUDetailReportLayout from old ReportService
-    return { status: 'success' };
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const session = request.session || request.user || {};
+
+      const db = await getDatabase(null, vert);
+      const layoutsColl = db.collection('ceu-detail-reports');
+
+      const reqBody = {
+        ...request.body,
+        history: [{
+          userEmail: String(session.user_email || ''),
+          userFirstName: String(session.user_firstname || ''),
+          userLastName: String(session.user_lastname || ''),
+          userID: Number(session.user_id),
+          date: new Date(),
+          act: 'Created report.'
+        }]
+      };
+
+      const result = await layoutsColl.insertOne(reqBody);
+      return { status: 'success', _id: result.insertedId };
+    } catch (error) {
+      console.error('Error saving CEU detail report layout:', error);
+      throw error;
+    }
   }
 
   /**
    * Update CEU Detail Report Layout
    */
   async updateCEUDetailReportLayout(request) {
-    // TODO: Implement updateCEUDetailReportLayout from old ReportService
-    return { status: 'success' };
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const reportID = request.pathParameters?.reportID;
+      const session = request.session || request.user || {};
+
+      const db = await getDatabase(null, vert);
+      const layoutsColl = db.collection('ceu-detail-reports');
+
+      const reqBody = {
+        eg: request.body.eg,
+        name: request.body.name,
+        columns: request.body.columns,
+        ceuFilterSessionIDs: request.body.ceuFilterSessionIDs,
+        ceuFilterCatIDs: request.body.ceuFilterCatIDs
+      };
+
+      await layoutsColl.updateOne(
+        {
+          _id: new ObjectId(reportID)
+        },
+        {
+          $set: reqBody,
+          $push: {
+            history: {
+              userEmail: String(session.user_email || ''),
+              userFirstName: String(session.user_firstname || ''),
+              userLastName: String(session.user_lastname || ''),
+              userID: Number(session.user_id),
+              date: new Date(),
+              act: 'Saved changes.'
+            }
+          }
+        }
+      );
+
+      return { status: 'success', message: 'CEU detail report layout updated' };
+    } catch (error) {
+      console.error('Error updating CEU detail report layout:', error);
+      throw error;
+    }
   }
 }
 

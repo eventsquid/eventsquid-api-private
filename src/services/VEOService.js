@@ -12,7 +12,11 @@ import {
   connectorSaveOption as connectorSaveOptionFunc,
   getRatingsConfigBySlotAndUser as getRatingsConfigBySlotAndUserFunc,
   checkUsage as checkUsageFunc,
-  setUsage as setUsageFunc
+  setUsage as setUsageFunc,
+  schedulingGridGetSlots as schedulingGridGetSlotsFunc,
+  schedulingGridExportSlots as schedulingGridExportSlotsFunc,
+  schedulingGridGetVenues as schedulingGridGetVenuesFunc,
+  schedulingGridGetRoomsByAffiliate as schedulingGridGetRoomsByAffiliateFunc
 } from '../functions/veo.js';
 import { getAccessibleResources, getEventResourceCategories } from '../functions/resources.js';
 import moment from 'moment-timezone';
@@ -185,40 +189,60 @@ class VEOService {
    * Scheduling Grid - Get slots
    */
   async schedulingGridGetSlots(request) {
-    // TODO: Implement schedulingGridGetSlots from old VEOService
-    // This requires scheduling grid stored procedures
-    console.log('schedulingGridGetSlots called - needs scheduling grid implementation');
-    return [];
+    try {
+      const scheduleID = Number(request.pathParameters?.scheduleID);
+      const vert = request.headers?.vert || request.vert || '';
+
+      return await schedulingGridGetSlotsFunc(scheduleID, vert);
+    } catch (error) {
+      console.error('Error getting scheduling grid slots:', error);
+      throw error;
+    }
   }
 
   /**
    * Scheduling Grid - Export slots
    */
   async schedulingGridExportSlots(request) {
-    // TODO: Implement schedulingGridExportSlots from old VEOService
-    // This requires scheduling grid stored procedures
-    console.log('schedulingGridExportSlots called - needs scheduling grid implementation');
-    return [];
+    try {
+      const scheduleID = Number(request.pathParameters?.scheduleID);
+      const vert = request.headers?.vert || request.vert || '';
+
+      return await schedulingGridExportSlotsFunc(scheduleID, vert);
+    } catch (error) {
+      console.error('Error exporting scheduling grid slots:', error);
+      throw error;
+    }
   }
 
   /**
    * Scheduling Grid - Get venues
    */
   async schedulingGridGetVenues(request) {
-    // TODO: Implement schedulingGridGetVenues from old VEOService
-    // This requires scheduling grid stored procedures
-    console.log('schedulingGridGetVenues called - needs scheduling grid implementation');
-    return [];
+    try {
+      const affiliateID = Number(request.pathParameters?.affiliateID);
+      const vert = request.headers?.vert || request.vert || '';
+
+      return await schedulingGridGetVenuesFunc(affiliateID, vert);
+    } catch (error) {
+      console.error('Error getting scheduling grid venues:', error);
+      throw error;
+    }
   }
 
   /**
    * Scheduling Grid - Get rooms by affiliate
    */
   async schedulingGridGetRoomsByAffiliate(request) {
-    // TODO: Implement schedulingGridGetRoomsByAffiliate from old VEOService
-    // This requires scheduling grid stored procedures
-    console.log('schedulingGridGetRoomsByAffiliate called - needs scheduling grid implementation');
-    return [];
+    try {
+      const affiliateID = Number(request.pathParameters?.affiliateID);
+      const vert = request.headers?.vert || request.vert || '';
+
+      return await schedulingGridGetRoomsByAffiliateFunc(affiliateID, vert);
+    } catch (error) {
+      console.error('Error getting scheduling grid rooms by affiliate:', error);
+      throw error;
+    }
   }
 
   /**

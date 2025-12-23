@@ -10,7 +10,9 @@ import {
   validateEmail as validateEmailFunc,
   verifyEmail as verifyEmailFunc,
   getUserPhone as getUserPhoneFunc,
-  sendVerificationCode as sendVerificationCodeFunc
+  sendVerificationCode as sendVerificationCodeFunc,
+  getEmailListFromAPI,
+  importEmailDetailFromAPI
 } from '../functions/sendgrid.js';
 import _ from 'lodash';
 import moment from 'moment-timezone';
@@ -623,10 +625,8 @@ class EmailService {
    */
   async getEmailListFromAPI(request) {
     try {
-      // TODO: Implement getEmailListFromAPI - requires SendGrid Activity API
-      // This would call SendGrid API to get email list
-      console.log('getEmailListFromAPI called - requires SendGrid Activity API implementation');
-      return [];
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT || '';
+      return await getEmailListFromAPI(request.body || {}, vert);
     } catch (error) {
       console.error('Error getting email list from API:', error);
       throw error;
@@ -638,10 +638,9 @@ class EmailService {
    */
   async importEmailDetailFromAPI(request) {
     try {
-      // TODO: Implement importEmailDetailFromAPI - requires SendGrid Activity API
-      // This would import email details from SendGrid API and log them
-      console.log('importEmailDetailFromAPI called - requires SendGrid Activity API implementation');
-      return { status: 'success' };
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT || '';
+      const msgIDRA = request.body?.msgIDRA || [];
+      return await importEmailDetailFromAPI(msgIDRA, vert);
     } catch (error) {
       console.error('Error importing email detail from API:', error);
       throw error;

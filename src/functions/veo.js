@@ -219,3 +219,91 @@ export async function setUsage(eventID, slotID, actionID, session, vert) {
   }
 }
 
+/**
+ * Scheduling Grid - Get slots
+ */
+export async function schedulingGridGetSlots(scheduleID, vert) {
+  try {
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const qryStr = `
+      USE ${dbName};
+      EXEC dbo.node_veoGetSchedulingGrid2 @scheduleID
+    `;
+
+    return await connection.sql(qryStr)
+      .parameter('scheduleID', TYPES.Int, Number(scheduleID))
+      .execute();
+  } catch (error) {
+    console.error('Error getting scheduling grid slots:', error);
+    throw error;
+  }
+}
+
+/**
+ * Scheduling Grid - Export slots
+ */
+export async function schedulingGridExportSlots(scheduleID, vert) {
+  try {
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const qryStr = `
+      USE ${dbName};
+      EXEC dbo.node_veoExportSchedulingGrid @scheduleID
+    `;
+
+    return await connection.sql(qryStr)
+      .parameter('scheduleID', TYPES.Int, Number(scheduleID))
+      .execute();
+  } catch (error) {
+    console.error('Error exporting scheduling grid slots:', error);
+    throw error;
+  }
+}
+
+/**
+ * Scheduling Grid - Get venues
+ */
+export async function schedulingGridGetVenues(affiliateID, vert) {
+  try {
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const qryStr = `
+      USE ${dbName};
+      EXEC dbo.node_veoGetVenues @affiliateID
+    `;
+
+    return await connection.sql(qryStr)
+      .parameter('affiliateID', TYPES.Int, Number(affiliateID))
+      .execute();
+  } catch (error) {
+    console.error('Error getting scheduling grid venues:', error);
+    throw error;
+  }
+}
+
+/**
+ * Scheduling Grid - Get rooms by affiliate
+ */
+export async function schedulingGridGetRoomsByAffiliate(affiliateID, vert) {
+  try {
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const qryStr = `
+      USE ${dbName};
+      EXEC dbo.node_veoGetRoomsByAffiliate @affiliateID
+    `;
+
+    return await connection.sql(qryStr)
+      .parameter('affiliateID', TYPES.Int, Number(affiliateID))
+      .execute();
+  } catch (error) {
+    console.error('Error getting scheduling grid rooms by affiliate:', error);
+    throw error;
+  }
+}
+

@@ -40,7 +40,13 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+            echo "⚠️ package-lock.json was missing and has been generated. Please commit it to the repository."
+          fi
 
       - name: Run tests
         run: npm test
