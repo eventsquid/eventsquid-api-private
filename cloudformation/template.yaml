@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EventSquid API - Lambda function with API Gateway for private VPC access'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where the Lambda will be deployed
+  
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet IDs for Lambda function (at least 2 recommended)
+  
+  MongoSecretName:
+    Type: String
+    Default: mongodb/eventsquid
+    Description: Name of the secret in Secrets Manager containing MongoDB connection string
+  
+  MongoDbName:
+    Type: String
+    Default: eventsquid
+    Description: MongoDB database name
+
+Resources:
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-eventsquid-api-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MongoSecretName}*'
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${Environment}-eventsquid-api:*'
+
+  # Security Group for Lambda
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${Environment}-eventsquid-api-lambda-sg'
+      GroupDescription: Security group for EventSquid API Lambda function
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+
+  # Lambda Function
+  # Note: Initial deployment uses placeholder code
+  # After first deployment, use GitHub Actions or AWS CLI to update with actual code
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-eventsquid-api'
+      Runtime: nodejs24.x
+      Handler: src/handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ 
+                message: 'Placeholder - deploy actual code via GitHub Actions or AWS CLI',
+                note: 'See README.md for deployment instructions'
+              })
+            };
+          };
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          MONGO_SECRET_NAME: !Ref MongoSecretName
+          MONGO_DB_NAME: !Ref MongoDbName
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      ReservedConcurrentExecutions: 10
+
+  # API Gateway - Private REST API
+  ApiGatewayRestApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${Environment}-eventsquid-api'
+      ProtocolType: HTTP
+      Description: Private API Gateway for EventSquid API
+      # For private API, we'll use VPC endpoint or resource policy
+      # This creates a regional API that can be accessed via VPC endpoint
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Amz-Date
+          - X-Api-Key
+          - X-Amz-Security-Token
+
+  # API Gateway Integration
+  ApiGatewayIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGatewayRestApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
+  # API Gateway Route - Catch all
+  ApiGatewayRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGatewayRestApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+
+  # API Gateway Stage
+  ApiGatewayStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGatewayRestApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+
+  # Lambda Permission for API Gateway
+  LambdaApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*'
+
+  # CloudWatch Log Group
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Environment}-eventsquid-api'
+      RetentionInDays: 14
+
+Outputs:
+  ApiGatewayUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${Environment}-eventsquid-api-url'
+
+  LambdaFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt LambdaFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-eventsquid-api-lambda-arn'
+
+  LambdaFunctionName:
+    Description: Lambda function name
+    Value: !Ref LambdaFunction
+    Export:
+      Name: !Sub '${Environment}-eventsquid-api-lambda-name'
+

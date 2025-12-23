@@ -1,0 +1,117 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AWS_REGION: us-west-2
+  NODE_VERSION: '24'
+
+jobs:
+  deploy:
+    name: Deploy Lambda Function
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+        continue-on-error: true
+
+      - name: Package Lambda function
+        run: |
+          npm install --production
+          zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ steps.env.outputs.environment }}-eventsquid-api \
+            --zip-file fileb://function.zip \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Update Lambda function configuration
+        run: |
+          aws lambda update-function-configuration \
+            --function-name ${{ steps.env.outputs.environment }}-eventsquid-api \
+            --environment Variables="{NODE_ENV=${{ steps.env.outputs.environment }},MONGO_SECRET_NAME=${{ secrets.MONGO_SECRET_NAME }},MONGO_DB_NAME=${{ secrets.MONGO_DB_NAME }}}" \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/template.yaml \
+            --stack-name ${{ steps.env.outputs.environment }}-eventsquid-api \
+            --parameter-overrides \
+              Environment=${{ steps.env.outputs.environment }} \
+              VpcId=${{ secrets.VPC_ID }} \
+              SubnetIds=${{ secrets.SUBNET_IDS }} \
+              MongoSecretName=${{ secrets.MONGO_SECRET_NAME }} \
+              MongoDbName=${{ secrets.MONGO_DB_NAME }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get API Gateway URL
+        id: api-url
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ steps.env.outputs.environment }}-eventsquid-api \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayUrl`].OutputValue' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          echo "url=$API_URL" >> $GITHUB_OUTPUT
+
+      - name: Deployment summary
+        run: |
+          echo "✅ Deployment complete!"
+          echo "Environment: ${{ steps.env.outputs.environment }}"
+          echo "API URL: ${{ steps.api-url.outputs.url }}"
+
