@@ -201,6 +201,7 @@ Resources:
                 - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
                 - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides Environment=dev VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} MongoSecretName=${MONGO_SECRET_NAME} MongoDbName=${MONGO_DB_NAME} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
                 - aws lambda update-function-code --function-name eventsquid-private-api --zip-file fileb://function.zip --region ${AWS_REGION}
+                - aws lambda wait function-updated --function-name eventsquid-private-api --region ${AWS_REGION}
                 - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=dev,MONGO_SECRET_NAME=${MONGO_SECRET_NAME},MONGO_DB_NAME=${MONGO_DB_NAME}}" --region ${AWS_REGION}
           artifacts:
             files: '**/*'
