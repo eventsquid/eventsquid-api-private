@@ -18,7 +18,7 @@ phases:
       - echo "Determining environment from branch..."
       - export BRANCH_NAME=${CODEBUILD_SOURCE_VERSION#refs/heads/}
       - echo "Branch: $BRANCH_NAME"
-      - '[ "$BRANCH_NAME" = "main" ] && export ENVIRONMENT=prod || ([ "$BRANCH_NAME" = "develop" ] && export ENVIRONMENT=staging || export ENVIRONMENT=dev)'
+      - export ENVIRONMENT=$(if [ "$BRANCH_NAME" = "main" ]; then echo "prod"; elif [ "$BRANCH_NAME" = "develop" ]; then echo "staging"; else echo "dev"; fi)
       - echo "Environment: $ENVIRONMENT"
       - echo "Verifying AWS credentials..."
       - aws sts get-caller-identity || echo "Warning: Could not verify AWS credentials"

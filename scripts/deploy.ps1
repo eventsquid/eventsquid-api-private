@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $AwsRegion = if ($env:AWS_REGION) { $env:AWS_REGION } else { "us-west-2" }
-$FunctionName = "$Environment-eventsquid-api"
+$FunctionName = "eventsquid-private-api"
 
 Write-Host "🚀 Deploying to $Environment environment..." -ForegroundColor Cyan
 Write-Host "Function: $FunctionName" -ForegroundColor Cyan
