@@ -206,9 +206,11 @@ Resources:
       RetentionInDays: 14
 
   # CloudWatch Log Group for API Gateway
+  # Note: API Gateway v2 may create this automatically, but we define it here for retention policy
   ApiGatewayLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: '/aws/apigateway/eventsquid-private-api'
       RetentionInDays: 14
