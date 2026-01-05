@@ -1,0 +1,35 @@
+[
+  {
+    "ParameterKey": "GitHubOwner",
+    "ParameterValue": "eventsquid"
+  },
+  {
+    "ParameterKey": "GitHubRepo",
+    "ParameterValue": "eventsquid-api-private"
+  },
+  {
+    "ParameterKey": "GitHubBranch",
+    "ParameterValue": "main"
+  },
+  {
+    "ParameterKey": "GitHubConnectionArn",
+    "ParameterValue": "arn:aws:codestar-connections:us-west-2:326684255434:connection/0b67c1a2-20c4-40f6-998e-2acb9bce9059"
+  },
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-38dc235f"
+  },
+  {
+    "ParameterKey": "SubnetIds",
+    "ParameterValue": "subnet-3c625f4a,subnet-3a650c62,subnet-0a504b6e"
+  },
+  {
+    "ParameterKey": "MongoSecretName",
+    "ParameterValue": "mongodb/eventsquid"
+  },
+  {
+    "ParameterKey": "MongoDbName",
+    "ParameterValue": "eventsquid"
+  }
+]
+

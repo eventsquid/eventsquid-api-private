@@ -182,9 +182,17 @@ This project uses AWS CodePipeline for CI/CD, similar to other EventSquid projec
 
 1. **Create GitHub Connection** (if not already exists):
    - Go to AWS Console → Developer Tools → Settings → Connections
-   - Create a new connection to GitHub
-   - Authorize the connection
-   - Note the Connection ARN
+   - Click "Create connection"
+   - Select "GitHub" as the provider
+   - Give it a name (e.g., "GitHub-All-Repos")
+   - Click "Connect to GitHub"
+   - You'll be redirected to GitHub to authorize the connection
+   - **Important**: When authorizing, make sure to grant access to:
+     - All repositories (recommended), OR
+     - The specific organization/repositories you need
+   - After authorization, return to AWS Console
+   - Wait for the connection status to show "Available" (may take a minute)
+   - Copy the Connection ARN (format: `arn:aws:codestar-connections:REGION:ACCOUNT:connection/CONNECTION_ID`)
 
 2. **Deploy the Pipeline Stack**:
 ```bash
@@ -195,7 +203,7 @@ aws cloudformation create-stack \
     ParameterKey=GitHubOwner,ParameterValue=YOUR_GITHUB_OWNER \
     ParameterKey=GitHubRepo,ParameterValue=eventsquid-api-private \
     ParameterKey=GitHubBranch,ParameterValue=main \
-    ParameterKey=GitHubConnectionArn,ParameterValue=arn:aws:codestar-connections:REGION:ACCOUNT:connection/CONNECTION_ID \
+    ParameterKey=GitHubConnectionArn,ParameterValue=arn:aws:codestar-connections:us-west-2:326684255434:connection/0b67c1a2-20c4-40f6-998e-2acb9bce9059 \
     ParameterKey=VpcId,ParameterValue=vpc-xxxxx \
     ParameterKey=SubnetIds,ParameterValue=subnet-xxxxx,subnet-yyyyy \
     ParameterKey=MongoSecretName,ParameterValue=mongodb/eventsquid \
