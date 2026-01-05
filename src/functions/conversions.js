@@ -33,3 +33,16 @@ export function timezoneToUTC(date, zone, format) {
   return moment(date).tz(zone, true).utc().format(format);
 }
 
+/**
+ * Convert timezone date to UTC Date object
+ * @param {Date|string|moment.Moment} date - Date in specified timezone
+ * @param {string} zone - Timezone (e.g., 'America/New_York')
+ * @returns {Date} UTC Date object
+ */
+export function timezoneToUTCDateObj(date, zone) {
+  if (!zone || !zone.length) {
+    return moment(date).utc(true).toDate();
+  }
+  return moment(date).tz(zone, true).utc().toDate();
+}
+

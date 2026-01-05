@@ -4,21 +4,184 @@
  */
 
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
+import { getRegisteredAttendeeByUserID } from './attendees.js';
+import { getMyItinerarySlotsByContestantID } from './agenda.js';
+
+/**
+ * Get event resources
+ */
+export async function getEventResources(eventID, filter, vert) {
+  try {
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const filterClause = filter && filter.length 
+      ? `AND u.resource_type IN (${filter.map(item => `'${item}'`).join(',')})`
+      : '';
+
+    const results = await connection.sql(`
+      USE ${dbName};
+      SELECT
+        u.upload_id,
+        u.event_id,
+        u.filename,
+        u.uploadTitle,
+        u.uploadType,
+        u.filenameS3,
+        u.uploadCategory,
+        u.sortOrder,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM emailReminders_attachments era
+          INNER JOIN emailReminders er ON er.reminderID = era.reminderID
+          WHERE era.attachmentID = u.upload_id
+            AND era.type = 'eventDoc'
+            AND CAST(er.sendDate AS DATE) > CAST(getDate() AS DATE)
+        ) THEN 1 ELSE 0 END as scheduleForAutoReminder,
+        CASE
+          WHEN u.resource_type IS NULL THEN 'document-upload'
+          ELSE u.resource_type
+        END AS resource_type,
+        u.category_id,
+        u.created_date,
+        u.deleted,
+        u.resource_url,
+        u.preview_url,
+        u.description,
+        u.accessRestriction,
+        u.showOnWebsite,
+        u.showOnMobile,
+        u.showOnVeo,
+        u.sponsorID,
+        u.linkedLibraryDocID,
+        uu.uploadtitle as linkedDocTitle,
+        s.affiliate_name AS sponsorName,
+        s.defaultSponsorEmail AS sponsorEmail,
+        s.affiliate_website,
+        (
+          SELECT TOP 1 es.level_id
+          FROM event_sponsor es
+          LEFT JOIN b_sponsorLevels sl ON sl.event_id = es.event_id AND sl.level_id = es.level_id
+          WHERE es.sponsorID = s.sponsorID
+            AND es.event_id = @eventID
+          ORDER BY sl.level_order ASC, sl.level_id DESC
+        ) levelID,
+        rc.name as categoryName,
+        ISNULL(JSON_VALUE(
+          REPLACE(
+            (
+              SELECT CAST(slot_id as varchar) as slot_id FROM event_resources_to_agenda_slots
+              WHERE resource_id = u.upload_id
+              FOR JSON path
+            ), '"},{"slot_id":"', ','
+          ),
+          '$[0].slot_id'
+        ), '') as slots
+      FROM eventUploads u
+      LEFT JOIN resource_categories rc ON rc.category_id = u.category_id
+        AND rc.event_id = @eventID
+        AND rc.deleted = 0
+      LEFT JOIN b_sponsors s ON u.sponsorID = s.sponsorID
+      LEFT JOIN user_uploads uu on uu.doc_id = u.linkedLibraryDocID
+      WHERE u.event_id = @eventID
+        AND u.deleted = 0
+        ${filterClause}
+    `)
+    .parameter('eventID', TYPES.Int, Number(eventID))
+    .execute();
+
+    return results.map(resource => {
+      resource.slots = resource.slots.trim().length 
+        ? resource.slots.split(',').map(id => Number(id))
+        : [];
+      resource.uploadCategory = resource.categoryName;
+      resource.linkedDoc = resource.linkedLibraryDocID 
+        ? {
+            title: resource.linkedDocTitle,
+            id: resource.linkedLibraryDocID
+          }
+        : {};
+      delete resource.linkedDocTitle;
+      delete resource.linkedLibraryDocID;
+      delete resource.categoryName;
+      return resource;
+    });
+  } catch (error) {
+    console.error('Error getting event resources:', error);
+    throw error;
+  }
+}
 
 /**
  * Get accessible resources for a user/event
- * Simplified version - full implementation needs getEventResources and attendee functions
+ * Filters resources based on access restrictions, registration status, and slot assignments
  */
 export async function getAccessibleResources(filter, userID, eventID, vert) {
   try {
-    // TODO: Full implementation needs:
-    // - getEventResources function
-    // - getRegisteredAttendeeByUserID function
-    // - getAttendeeAgendaSlots function
+    // Get all event resources
+    let resources = await getEventResources(eventID, [], vert);
     
-    // For now, return empty array - this will be fully implemented when those functions are available
-    console.log('getAccessibleResources called - needs full implementation with getEventResources');
-    return [];
+    // Apply filter parameters (showOnWebsite, showOnMobile, showOnVeo)
+    if (filter) {
+      if (filter.showOnWebsite !== undefined) {
+        resources = resources.filter(r => r.showOnWebsite === (filter.showOnWebsite ? 1 : 0));
+      }
+      if (filter.showOnMobile !== undefined) {
+        resources = resources.filter(r => r.showOnMobile === (filter.showOnMobile ? 1 : 0));
+      }
+      if (filter.showOnVeo !== undefined) {
+        resources = resources.filter(r => r.showOnVeo === (filter.showOnVeo ? 1 : 0));
+      }
+    }
+    
+    // If no userID, return public resources only (no access restrictions)
+    if (!userID || Number(userID) === 0) {
+      return resources.filter(r => !r.accessRestriction || r.accessRestriction === 'public');
+    }
+    
+    // Get registered attendee to check registration status
+    const attendee = await getRegisteredAttendeeByUserID(Number(userID), Number(eventID), vert);
+    const isRegistered = !!attendee;
+    
+    // Get attendee's registered slots if registered (for slot-based filtering)
+    let registeredSlotIDs = [];
+    if (isRegistered) {
+      const itinerary = await getMyItinerarySlotsByContestantID(attendee.c, vert);
+      registeredSlotIDs = itinerary.regSlots || [];
+    }
+    
+    // Filter based on access restrictions
+    resources = resources.filter(resource => {
+      // Public resources are always accessible
+      if (!resource.accessRestriction || resource.accessRestriction === 'public') {
+        return true;
+      }
+      
+      // Registered-only resources require registration
+      if (resource.accessRestriction === 'registered') {
+        return isRegistered;
+      }
+      
+      // Slot-specific resources require registration and slot assignment
+      if (resource.accessRestriction === 'slot' || (resource.slots && resource.slots.length > 0)) {
+        if (!isRegistered) {
+          return false;
+        }
+        
+        // If resource has slot assignments, check if user is registered for those slots
+        if (resource.slots && resource.slots.length > 0) {
+          // Check if any of the resource's slots match the attendee's registered slots
+          return resource.slots.some(slotID => registeredSlotIDs.includes(slotID));
+        }
+        
+        // If accessRestriction is 'slot' but no specific slots assigned, allow if registered
+        return true;
+      }
+      
+      // Default: deny access for unknown restriction types
+      return false;
+    });
+    
+    return resources;
   } catch (error) {
     console.error('Error getting accessible resources:', error);
     throw error;

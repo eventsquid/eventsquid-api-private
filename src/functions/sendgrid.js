@@ -8,6 +8,7 @@ import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 import _ from 'lodash';
 import moment from 'moment-timezone';
 import axios from 'axios';
+import sgMail from '@sendgrid/mail';
 import { generateVerifyCode } from './verification.js';
 
 /**
@@ -271,6 +272,57 @@ export async function getUserPhone(request) {
 }
 
 /**
+ * Send email via SendGrid
+ */
+export async function sendEmail(form) {
+  try {
+    const sgKey = process.env.SENDGRID_API_KEY;
+    if (!sgKey) {
+      throw new Error('SENDGRID_API_KEY environment variable is required');
+    }
+
+    sgMail.setApiKey(sgKey);
+
+    if (!('html' in form) && !('text' in form)) {
+      throw new Error('No body provided for email');
+    }
+
+    if (!('to' in form)) {
+      throw new Error('No recipient specified for email');
+    }
+
+    if (!('subject' in form)) {
+      throw new Error('No subject specified for email');
+    }
+
+    const sgSender = process.env.SENDGRID_SENDER || 'noreply@eventsquid.com';
+    let from = sgSender;
+    
+    if ('fromName' in form) {
+      from = {
+        email: sgSender,
+        name: form.fromName
+      };
+    }
+
+    const payload = {
+      from,
+      to: form.to,
+      subject: form.subject,
+      ...(form.html && { html: form.html }),
+      ...(form.text && { text: form.text }),
+      ...(form.reply_to && { replyTo: form.reply_to })
+    };
+
+    await sgMail.send(payload);
+    return true;
+  } catch (error) {
+    console.error('Error sending email:', error);
+    return false;
+  }
+}
+
+/**
  * Send verification code
  */
 export async function sendVerificationCode(form) {
@@ -278,13 +330,26 @@ export async function sendVerificationCode(form) {
     // Generate Verification Code and add token to database
     const code = await generateVerifyCode(form.email);
 
-    // TODO: Implement sendEmail function for sending emails via SendGrid
-    // For now, return success - sendEmail would need to be implemented
-    console.log('sendVerificationCode called - sendEmail function needs to be implemented');
+    // Send email
+    const emailSent = await sendEmail({
+      to: form.email,
+      fromName: 'Eventsquid Security Team',
+      reply_to: 'support@eventsquid.com',
+      subject: 'Verification Code for Eventsquid',
+      html: `
+        <div>
+          <p>Your verification code is <strong>${code}</strong></p>
+          <p>This passcode expires in 15 minutes</p>
+          <p>Eventsquid</p>
+        </div>
+      `
+    });
 
-    // The old code sends an email with the verification code
-    // This would require implementing sendEmail function
-    return { success: true, data: 'Email Sent' };
+    if (emailSent) {
+      return { success: true, data: 'Email Sent' };
+    } else {
+      return { success: false, data: 'Email Not Sent' };
+    }
   } catch (error) {
     console.error('Error sending verification code:', error);
     return { success: false, data: 'Email Not Sent' };

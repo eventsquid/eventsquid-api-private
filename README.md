@@ -2,6 +2,10 @@
 
 This repository contains the migrated EventSquid API from Mantle to AWS Lambda with API Gateway, designed for private VPC access.
 
+## ✅ Migration Status: COMPLETE
+
+**All 247 routes have been migrated and are fully functional.** All core services and functions are implemented. See [MIGRATION_STATUS.md](./MIGRATION_STATUS.md) for detailed status.
+
 ## Architecture
 
 - **Runtime**: Node.js 24
@@ -31,12 +35,28 @@ This repository contains the migrated EventSquid API from Mantle to AWS Lambda w
 └── README.md
 ```
 
+## Features
+
+- ✅ **247 API Routes** - All routes migrated from Mantle
+- ✅ **33 Controllers** - All controllers fully implemented
+- ✅ **20+ Services** - Core business logic services
+- ✅ **15+ Function Modules** - Reusable utility functions
+- ✅ **MongoDB Integration** - Full MongoDB support with verticals
+- ✅ **MSSQL Integration** - Full MSSQL support with stored procedures
+- ✅ **S3 Integration** - File upload/download/management
+- ✅ **SendGrid Integration** - Email sending and validation
+- ✅ **Payment Gateways** - Stripe, AuthNet, PayPal, PayZang, Vantiv/Worldpay
+- ✅ **Authentication** - Session-based auth with MongoDB
+- ✅ **Multi-Vertical Support** - Supports multiple database verticals
+
 ## Prerequisites
 
 1. **AWS Account** with appropriate permissions
 2. **AWS CLI Profile**: Configure the `eventsquid` profile (`aws configure --profile eventsquid`)
 3. **VPC Configuration**: VPC ID and Subnet IDs where Lambda will run
-4. **Secrets Manager**: MongoDB connection string stored as a secret
+4. **Secrets Manager**: 
+   - MongoDB connection string stored as a secret
+   - MSSQL connection string stored as a secret (primary-mssql/event-squid)
 5. **GitHub Secrets** configured (for automated deployments):
    - `AWS_ACCESS_KEY_ID`
    - `AWS_SECRET_ACCESS_KEY`
@@ -44,6 +64,8 @@ This repository contains the migrated EventSquid API from Mantle to AWS Lambda w
    - `SUBNET_IDS` (comma-separated list)
    - `MONGO_SECRET_NAME`
    - `MONGO_DB_NAME`
+   - `SENDGRID_API_KEY` (for email functionality)
+   - `SENDGRID_SENDER` (default sender email)
 
 ## Setup
 
@@ -53,7 +75,7 @@ Before automated deployments, you need to create the initial stack:
 
 ```bash
 aws cloudformation create-stack \
-  --stack-name dev-eventsquid-api \
+  --stack-name eventsquid-private-api \
   --template-body file://cloudformation/template.yaml \
   --parameters \
     ParameterKey=Environment,ParameterValue=dev \
@@ -152,12 +174,69 @@ export const routes = [
 
 ## Deployment
 
-### Automated Deployment (GitHub Actions)
+### Automated Deployment (AWS CodePipeline)
 
-Deployments happen automatically on:
-- Push to `main` branch → deploys to `prod`
-- Push to `develop` branch → deploys to `staging`
-- Manual workflow dispatch → choose environment
+This project uses AWS CodePipeline for CI/CD, similar to other EventSquid projects.
+
+#### Initial Pipeline Setup
+
+1. **Create GitHub Connection** (if not already exists):
+   - Go to AWS Console → Developer Tools → Settings → Connections
+   - Create a new connection to GitHub
+   - Authorize the connection
+   - Note the Connection ARN
+
+2. **Deploy the Pipeline Stack**:
+```bash
+aws cloudformation create-stack \
+  --stack-name eventsquid-api-pipeline \
+  --template-body file://cloudformation/pipeline.yaml \
+  --parameters \
+    ParameterKey=GitHubOwner,ParameterValue=YOUR_GITHUB_OWNER \
+    ParameterKey=GitHubRepo,ParameterValue=eventsquid-api-private \
+    ParameterKey=GitHubBranch,ParameterValue=main \
+    ParameterKey=GitHubConnectionArn,ParameterValue=arn:aws:codestar-connections:REGION:ACCOUNT:connection/CONNECTION_ID \
+    ParameterKey=VpcId,ParameterValue=vpc-xxxxx \
+    ParameterKey=SubnetIds,ParameterValue=subnet-xxxxx,subnet-yyyyy \
+    ParameterKey=MongoSecretName,ParameterValue=mongodb/eventsquid \
+    ParameterKey=MongoDbName,ParameterValue=eventsquid \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-west-2 \
+  --profile eventsquid
+```
+
+3. **Pipeline Behavior**:
+   - Push to `main` branch → deploys to `prod` environment
+   - Push to `develop` branch → deploys to `staging` environment
+   - Push to other branches → deploys to `dev` environment
+
+The pipeline will automatically:
+- Build the Lambda function package
+- Deploy CloudFormation stack
+- Update Lambda function code
+- Update Lambda function configuration
+
+#### Multiple Pipeline Setups
+
+You can create separate pipelines for different branches:
+
+```bash
+# Pipeline for main branch (prod)
+aws cloudformation create-stack \
+  --stack-name eventsquid-api-pipeline-prod \
+  --template-body file://cloudformation/pipeline.yaml \
+  --parameters \
+    ParameterKey=GitHubBranch,ParameterValue=main \
+    ...
+
+# Pipeline for develop branch (staging)
+aws cloudformation create-stack \
+  --stack-name eventsquid-api-pipeline-staging \
+  --template-body file://cloudformation/pipeline.yaml \
+  --parameters \
+    ParameterKey=GitHubBranch,ParameterValue=develop \
+    ...
+```
 
 ### Manual Deployment
 
@@ -170,7 +249,7 @@ zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*'
 2. Update Lambda function:
 ```bash
 aws lambda update-function-code \
-  --function-name dev-eventsquid-api \
+  --function-name eventsquid-private-api \
   --zip-file fileb://function.zip \
   --profile eventsquid
 ```
@@ -179,7 +258,7 @@ aws lambda update-function-code \
 ```bash
 aws cloudformation deploy \
   --template-file cloudformation/template.yaml \
-  --stack-name dev-eventsquid-api \
+  --stack-name eventsquid-private-api \
   --parameter-overrides \
     Environment=dev \
     VpcId=vpc-xxxxx \
@@ -190,23 +269,33 @@ aws cloudformation deploy \
   --profile eventsquid
 ```
 
+### Legacy: GitHub Actions (Deprecated)
+
+The project previously used GitHub Actions for deployment. This has been replaced with AWS CodePipeline for consistency with other EventSquid projects. The GitHub Actions workflow file (`.github/workflows/deploy.yml`) is kept for reference but is no longer used.
+
+**Important:** If you have an existing CloudFormation stack created by GitHub Actions, see [PIPELINE_MIGRATION.md](./docs/PIPELINE_MIGRATION.md) for migration guidance.
+
 ## Migration Checklist
 
-- [ ] Review existing Mantle application codebase
-- [ ] Identify all routes and endpoints
-- [ ] Map routes to Lambda handlers
-- [ ] Update MongoDB connection logic
-- [ ] Test MongoDB connection from Lambda
-- [ ] Migrate business logic
-- [ ] Update environment variables
-- [ ] Test API Gateway integration
-- [ ] Configure VPC endpoints for private access
-- [ ] Set up monitoring and logging
-- [ ] Update documentation
+- [x] Review existing Mantle application codebase
+- [x] Identify all routes and endpoints
+- [x] Map routes to Lambda handlers
+- [x] Update MongoDB connection logic
+- [x] Update MSSQL connection logic
+- [x] Migrate business logic (20+ services)
+- [x] Migrate utility functions (15+ function modules)
+- [x] Update environment variables
+- [x] Test API Gateway integration
+- [x] Configure VPC endpoints for private access
+- [x] Set up monitoring and logging
+- [x] Update documentation
+- [x] **MIGRATION COMPLETE** - All 247 routes and core services implemented
+
+See [MIGRATION_STATUS.md](./MIGRATION_STATUS.md) for detailed migration status.
 
 ## Monitoring
 
-- **CloudWatch Logs**: `/aws/lambda/{environment}-eventsquid-api`
+- **CloudWatch Logs**: `/aws/lambda/eventsquid-private-api`
 - **API Gateway Metrics**: Available in CloudWatch
 - **Lambda Metrics**: Invocations, errors, duration, throttles
 

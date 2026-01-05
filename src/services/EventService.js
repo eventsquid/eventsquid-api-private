@@ -1506,21 +1506,338 @@ class EventService {
   }
 
   /**
+   * Get event config
+   * Helper method to get event configuration for form prompts
+   */
+  async getEventConfig(eventID, profileID, vert) {
+    try {
+      const connection = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      let qryStr = `
+        USE ${dbName};
+        SELECT
+          ISNULL( biofield_req, 0 ) AS biofield_req,
+          ISNULL( hotelfield_req, 0 ) AS hotelfield_req,
+          ISNULL( companyfield_req, 0 ) AS companyfield_req,
+          ISNULL( positionfield_req, 0 ) AS positionfield_req,
+          ISNULL( departurefield_req, 0 ) AS departurefield_req,
+          ISNULL( hotelcheckinoutfield_req, 0 ) AS hotelcheckinoutfield_req,
+          ISNULL( needroomfield_req, 0 ) AS needroomfield_req,
+          ISNULL( emergencyContactField_req, 0 ) AS emergencycontactfield_req,
+          ISNULL( emergencyPhonefield_req, 0 ) AS emergencyphonefield_req,
+          ISNULL( emergencyRelationfield_req, 0 ) AS emergencyrelationfield_req,
+          ISNULL( birthdatefield_req, 0 ) AS birthdatefield_req,
+          ISNULL( driverlicensefield_req, 0 ) AS driverlicensefield_req,
+          ISNULL( travelMethodfield_req, 0 ) AS travelmethodfield_req,
+          ISNULL( phonefield_req, 0 ) AS phonefield_req,
+          ISNULL( mobilefield_req, 0 ) AS mobilefield_req,
+          ISNULL( teamfield_req, 0 ) AS teamfield_req,
+          ISNULL( genderField_req, 0 ) AS genderfield_req,
+          ISNULL( addressField_req, 0 ) AS addressfield_req,
+          ISNULL( ssnField_req, 0 ) AS ssnfield_req,
+          ISNULL( companyAddressField_req, 0 ) AS companyaddressfield_req,
+          ISNULL( companyShipAddressField_req, 0 ) AS companyshipaddressfield_req,
+          ISNULL( suffixField_req, 0 ) AS suffixfield_req,
+          ISNULL( titleField_req, 0 ) AS titlefield_req,
+          ISNULL( showisspeaker, 0 ) AS showisspeaker,
+          ISNULL( memberofaffiliateid, 0 ) AS memberofaffiliateid,
+          ISNULL( roomtypelist, '' ) AS roomtypelist,
+          ISNULL( bio_req, 0 ) AS bio_req,
+          ISNULL( hotel_req, 0 ) AS hotel_req,
+          CAST( ISNULL( company_req, 0 ) AS INT ) AS company_req,
+          CAST( ISNULL( position_req, 0 ) AS INT ) AS position_req,
+          CAST( ISNULL( departure_req, 0 ) AS INT ) AS departure_req,
+          CAST( ISNULL( hotelcheckinout, 0 ) AS INT ) AS hotelcheckinout,
+          ISNULL( needRoom, 0 ) AS needroom,
+          ISNULL( birthdate_req, 0 ) AS birthdate_req,
+          ISNULL( showTravelMethod, 0 ) AS showtravelmethod,
+          ISNULL( phone_req, 0 ) AS phone_req,
+          ISNULL( mobile_req, 0 ) AS mobile_req,
+          ISNULL( team_req, 0 ) AS team_req,
+          ISNULL( gender_req, 0 ) AS gender_req,
+          ISNULL( address_req, 0 ) AS address_req,
+          ISNULL( ssn_req, 0 ) AS ssn_req,
+          ISNULL( companyAddress_req, 0 ) AS companyaddress_req,
+          ISNULL( companyShipAddress_req, 0 ) AS companyshipaddress_req,
+          ISNULL( suffix_req, 0 ) AS suffix_req,
+          ISNULL( title_req, 0 ) AS title_req
+      `;
+
+      if (Number(profileID) > 0) {
+        qryStr += `,
+            '' AS mindatehotel,
+            '' AS maxdatehotel
+          FROM b_eventConfig ec
+            LEFT JOIN b_requiredFields rf ON rf.bundle_id = ISNULL(ec.bundle_id,0)
+              AND rf.event_id = ec.event_id
+          WHERE ec.event_id = @eventID
+            AND ISNULL(ec.bundle_ID,0) = @profileID
+        `;
+      } else {
+        qryStr += `,
+            ISNULL( mindatehotel, '' ) AS mindatehotel,
+            ISNULL( maxdatehotel, '' ) AS maxdatehotel
+          FROM b_events e
+            LEFT JOIN b_requiredFields rf ON rf.event_id = e.event_id
+              AND ISNULL(rf.bundle_ID,0) = 0
+          WHERE e.event_id = @eventID
+        `;
+      }
+
+      const results = await connection.sql(qryStr)
+        .parameter('eventID', TYPES.Int, Number(eventID))
+        .parameter('profileID', TYPES.Int, Number(profileID))
+        .execute();
+
+      return results;
+    } catch (error) {
+      console.error('Error getting event config:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Save event standard prompts
    */
   async saveEventStandardPrompts(request) {
-    // TODO: Migrate implementation
-    console.log('saveEventStandardPrompts called');
-    return { success: true };
+    try {
+      const connection = await getConnection(request.vert);
+      const dbName = getDatabaseName(request.vert);
+      const eventID = Number(request.pathParameters?.eventID);
+      const profileID = Number(request.pathParameters?.profileID);
+      const body = request.body || {};
+
+      const validFields = [
+        'address_req', 'addressfield_req', 'bio_req', 'biofield_req',
+        'birthdate_req', 'birthdatefield_req', 'company_req', 'companyaddress_req',
+        'companyaddressfield_req', 'companyfield_req', 'companyshipaddress_req',
+        'companyshipaddressfield_req', 'departure_req', 'departurefield_req',
+        'driverlicensefield_req', 'emergencycontactfield_req', 'emergencyphonefield_req',
+        'emergencyrelationfield_req', 'gender_req', 'genderfield_req', 'hotel_req',
+        'hotelcheckinout', 'hotelcheckinoutfield_req', 'hotelfield_req',
+        'memberofaffiliateid', 'mobile_req', 'mobilefield_req', 'needroom',
+        'needroomfield_req', 'phone_req', 'phonefield_req', 'position_req',
+        'positionfield_req', 'roomtypelist', 'showisspeaker', 'showtravelmethod',
+        'ssn_req', 'ssnfield_req', 'suffix_req', 'suffixfield_req', 'team_req',
+        'teamfield_req', 'title_req', 'titlefield_req', 'travelmethodfield_req'
+      ];
+
+      const validSettings = ['enabled', 'required', 'maxdatehotel', 'mindatehotel', 'roomtypelist'];
+
+      const isValidField = validFields.indexOf(body.name) >= 0 || validFields.indexOf(body.requiredName) >= 0;
+      const isValidSetting = validSettings.indexOf(body.setting) >= 0;
+      const isNumeric = !isNaN(Number(body.value));
+
+      if (!isValidField || !isValidSetting) {
+        return { error: 'invalid request' };
+      }
+
+      let qryStr = `USE ${dbName};`;
+
+      // If this is changing the enabled setting
+      if (body.setting === 'enabled') {
+        if (profileID > 0) {
+          qryStr += `
+            UPDATE b_eventConfig
+            SET ${body.name} = @value
+            WHERE event_id = @eventID
+              AND ISNULL( bundle_ID, 0 ) = @profileID
+          `;
+        } else {
+          qryStr += `
+            UPDATE b_events
+            SET ${body.name} = @value
+            WHERE event_id = @eventID
+          `;
+        }
+      }
+      // If this is the required setting
+      else if (body.setting === 'required') {
+        qryStr += `
+          IF NOT EXISTS (
+            SELECT event_id
+            FROM b_requiredFields
+            WHERE event_id = @eventID
+              AND ISNULL( bundle_id, 0 ) = @profileID
+          )
+            BEGIN
+              INSERT INTO b_requiredFields ( event_id, ${body.requiredName}, bundle_id )
+              VALUES( @eventID, @value, @profileID )
+            END
+          ELSE
+            BEGIN
+              UPDATE b_requiredFields
+              SET ${body.requiredName} = @value
+              WHERE event_id = @eventID
+                AND ISNULL( bundle_id, 0 ) = @profileID
+            END
+        `;
+      }
+      // If this is the maxdatehotel / mindatehotel setting
+      else if (body.setting === 'maxdatehotel' || body.setting === 'mindatehotel') {
+        qryStr += `
+          UPDATE b_events
+          SET ${body.setting} = @value
+          WHERE event_id = @eventID
+        `;
+      }
+      // If this is the roomtypelist setting
+      else if (body.setting === 'roomtypelist') {
+        if (profileID > 0) {
+          qryStr += `
+            UPDATE b_eventConfig
+            SET roomtypelist = @value
+            WHERE event_id = @eventID
+              AND ISNULL( bundle_ID, 0 ) = @profileID
+          `;
+        } else {
+          qryStr += `
+            UPDATE b_events
+            SET roomtypelist = @value
+            WHERE event_id = @eventID
+          `;
+        }
+      } else {
+        return { error: 'invalid request' };
+      }
+
+      // Execute query based on value type
+      if (isNumeric) {
+        await connection.sql(qryStr)
+          .parameter('eventID', TYPES.Int, eventID)
+          .parameter('profileID', TYPES.Int, profileID)
+          .parameter('value', TYPES.Int, Number(body.value))
+          .execute();
+      } else if (body.setting === 'maxdatehotel' || body.setting === 'mindatehotel') {
+        await connection.sql(qryStr)
+          .parameter('eventID', TYPES.Int, eventID)
+          .parameter('value', TYPES.Date, body.value)
+          .execute();
+      } else {
+        await connection.sql(qryStr)
+          .parameter('eventID', TYPES.Int, eventID)
+          .parameter('profileID', TYPES.Int, profileID)
+          .parameter('value', TYPES.VarChar, String(body.value))
+          .execute();
+      }
+
+      return {
+        qryStr: qryStr,
+        eventID: eventID,
+        profileID: profileID,
+        value: body.value,
+        valueType: typeof body.value
+      };
+    } catch (error) {
+      console.error('Error saving event standard prompts:', error);
+      throw error;
+    }
   }
 
   /**
    * Save event custom prompts
    */
   async saveEventCustomPrompts(request) {
-    // TODO: Migrate implementation
-    console.log('saveEventCustomPrompts called');
-    return { success: true };
+    try {
+      const connection = await getConnection(request.vert);
+      const dbName = getDatabaseName(request.vert);
+      const eventID = Number(request.pathParameters?.eventID);
+      const profileID = Number(request.pathParameters?.profileID);
+      const body = request.body || {};
+
+      const validSettings = ['enabled', 'required', 'mindate', 'maxdate'];
+      const isValidSetting = validSettings.indexOf(body.setting) >= 0;
+      const isNumeric = !isNaN(Number(body.value));
+
+      if (!isValidSetting) {
+        return { error: 'invalid request' };
+      }
+
+      let qryStr = `USE ${dbName};`;
+
+      // If this is changing the enabled setting
+      if (body.setting === 'enabled') {
+        // If this custom prompt is now enabled
+        if (Number(body.value) > 0) {
+          qryStr += `
+            IF NOT EXISTS (
+              SELECT event_id
+              FROM b_events_to_custom_fields
+              WHERE event_id = @eventID
+                AND ISNULL( bundle_ID, 0 ) = @profileID
+                AND ISNULL( field_ID, 0 ) = @fieldID
+            )
+              BEGIN
+                INSERT INTO b_events_to_custom_fields ( event_id, bundle_id, field_id )
+                VALUES ( @eventID, @profileID, @fieldID )
+              END
+          `;
+        } else {
+          qryStr += `
+            DELETE FROM b_events_to_custom_fields
+            WHERE event_id = @eventID
+              AND ISNULL( bundle_ID, 0 ) = @profileID
+              AND ISNULL( field_ID, 0 ) = @fieldID
+          `;
+        }
+      }
+      // If this is the required setting
+      else if (body.setting === 'required') {
+        qryStr += `
+          UPDATE b_events_to_custom_fields
+          SET isRequired = @value
+          WHERE event_id = @eventID
+            AND ISNULL( bundle_ID, 0 ) = @profileID
+            AND ISNULL( field_ID, 0 ) = @fieldID
+        `;
+      }
+      // If this is the maxdate / mindate setting
+      else if (body.setting === 'maxdate' || body.setting === 'mindate') {
+        qryStr += `
+          UPDATE b_events_to_custom_fields
+          SET ${body.setting} = @value
+          WHERE event_id = @eventID
+            AND ISNULL( bundle_ID, 0 ) = @profileID
+            AND ISNULL( field_ID, 0 ) = @fieldID
+        `;
+      }
+
+      // Execute query based on value type
+      if (isNumeric) {
+        await connection.sql(qryStr)
+          .parameter('eventID', TYPES.Int, eventID)
+          .parameter('profileID', TYPES.Int, profileID)
+          .parameter('value', TYPES.Int, Number(body.value))
+          .parameter('fieldID', TYPES.Int, Number(body.field_ID))
+          .execute();
+      } else if (body.setting === 'maxdate' || body.setting === 'mindate') {
+        await connection.sql(qryStr)
+          .parameter('eventID', TYPES.Int, eventID)
+          .parameter('profileID', TYPES.Int, profileID)
+          .parameter('fieldID', TYPES.Int, Number(body.field_ID))
+          .parameter('value', TYPES.Date, body.value)
+          .execute();
+      } else {
+        await connection.sql(qryStr)
+          .parameter('eventID', TYPES.Int, eventID)
+          .parameter('profileID', TYPES.Int, profileID)
+          .parameter('value', TYPES.VarChar, String(body.value))
+          .parameter('fieldID', TYPES.Int, Number(body.field_ID))
+          .execute();
+      }
+
+      return {
+        qryStr: qryStr,
+        eventID: eventID,
+        profileID: profileID,
+        value: body.value,
+        valueType: typeof body.value
+      };
+    } catch (error) {
+      console.error('Error saving event custom prompts:', error);
+      throw error;
+    }
   }
 }
 

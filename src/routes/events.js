@@ -369,6 +369,93 @@ export const getCEUConfigRoute = {
   })
 };
 
-// Note: Resource-related routes (uploads, library, sponsors, etc.) are complex
-// and will be migrated separately as they require S3 and more complex logic
+/**
+ * GET /event/:eventID/uploads
+ * Get event resources (documents)
+ */
+export const getEventUploadsRoute = {
+  method: 'GET',
+  path: '/event/:eventID/uploads',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = Number(request.pathParameters.eventID);
+      const vert = request.vert;
+      const { getEventResources } = await import('../functions/resources.js');
+      const resourceTypes = { documents: ['document-upload'] };
+      const result = await getEventResources(eventID, resourceTypes.documents, vert);
+      return successResponse(result);
+    } catch (error) {
+      console.error('Error getting event uploads:', error);
+      return errorResponse('Failed to get event uploads', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * GET /event/:eventID/library
+ * Get affiliate library resources (documents)
+ */
+export const getEventLibraryRoute = {
+  method: 'GET',
+  path: '/event/:eventID/library',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = Number(request.pathParameters.eventID);
+      const vert = request.vert;
+      const event = await _eventsService.getEventData(request);
+      const { getAffiliateResources } = await import('../functions/resources.js');
+      const resourceTypes = { documents: ['document-upload'] };
+      const result = await getAffiliateResources(event.a, resourceTypes.documents, vert);
+      return successResponse(result);
+    } catch (error) {
+      console.error('Error getting event library:', error);
+      return errorResponse('Failed to get event library', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * GET /event/:eventID/resource/library/video
+ * Get affiliate library resources (videos)
+ */
+export const getEventLibraryVideoRoute = {
+  method: 'GET',
+  path: '/event/:eventID/resource/library/video',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = Number(request.pathParameters.eventID);
+      const vert = request.vert;
+      const event = await _eventsService.getEventData(request);
+      const { getAffiliateResources } = await import('../functions/resources.js');
+      const resourceTypes = { videos: ['video'] };
+      const result = await getAffiliateResources(event.a, resourceTypes.videos, vert);
+      return successResponse(result);
+    } catch (error) {
+      console.error('Error getting event library videos:', error);
+      return errorResponse('Failed to get event library videos', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * GET /event/:eventID/resource/video
+ * Get event resources (videos)
+ */
+export const getEventVideoRoute = {
+  method: 'GET',
+  path: '/event/:eventID/resource/video',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = Number(request.pathParameters.eventID);
+      const vert = request.vert;
+      const { getEventResources } = await import('../functions/resources.js');
+      const resourceTypes = { videos: ['video'] };
+      const result = await getEventResources(eventID, resourceTypes.videos, vert);
+      return successResponse(result);
+    } catch (error) {
+      console.error('Error getting event videos:', error);
+      return errorResponse('Failed to get event videos', 500, error.message);
+    }
+  }))
+};
 

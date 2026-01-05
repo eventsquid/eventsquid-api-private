@@ -208,3 +208,34 @@ export async function getRatingsConfigByEventID(eventID, vert) {
   }
 }
 
+/**
+ * Get all rating configs by event and user
+ * Uses stored procedure node_getAllRatingConfigsByEventAndUser
+ */
+export async function getAllRatingConfigsByEventAndUser(userID, eventID, vert) {
+  try {
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const results = await connection.sql(`
+      USE ${dbName};
+      EXEC dbo.node_getAllRatingConfigsByEventAndUser @userID, @eventID
+    `)
+    .parameter('userID', TYPES.Int, Number(userID))
+    .parameter('eventID', TYPES.Int, Number(eventID))
+    .execute();
+
+    return results.map(result => {
+      if (!result.reviews_on && result.reviewable_speakers > 0) {
+        // Enable reviewing
+        result.reviews_on = true;
+      }
+      delete result.reviewable_speakers;
+      return result;
+    });
+  } catch (error) {
+    console.error('Error getting all rating configs by event and user:', error);
+    throw error;
+  }
+}
+

@@ -286,7 +286,7 @@ export async function updateGatewayDefaults(affiliateID, isDefault, vert) {
 }
 
 /**
- * Update gateway (delegates to gateway-specific update functions)
+ * Update gateway (updates MongoDB gateways collection)
  */
 export async function updateGateway(affiliateID, gatewayID, form, vert) {
   try {
@@ -294,14 +294,62 @@ export async function updateGateway(affiliateID, gatewayID, form, vert) {
       // Set isDefault to false for all gateways if current gateway is set to default
       await updateGatewayDefaults(affiliateID, form.isDefault, vert);
 
-      // TODO: Implement gateway-specific update functions
-      // For now, return success
-      // In the future, we would call:
-      // - updateStripeConfig(affiliateID, form, vert)
-      // - updateAuthNetConfig(affiliateID, form, vert)
-      // - etc.
-      console.log('updateGateway called - gateway-specific update functions pending');
-      return { success: true, gatewayID, message: 'Gateway update pending implementation' };
+      const db = await getDatabase(null, vert);
+      const gateways = db.collection('gateways');
+
+      // Map gatewayID to payment method
+      const gatewayMap = {
+        'stripe': 'Stripe',
+        'authnet': 'AuthNet',
+        'paypalexpress': 'PayPalExpress',
+        'paypalpayflow': 'PayPalPayflow',
+        'payzang': 'PayZang',
+        'vantiv-worldpay': 'Vantiv-Worldpay'
+      };
+
+      const pm = gatewayMap[gatewayID.toLowerCase()] || gatewayID;
+
+      // Update gateway in MongoDB
+      const updateObj = {
+        $currentDate: { lu: { $type: 'date' } },
+        $set: {
+          ...form,
+          isDefault: form.isDefault || false,
+          a: Number(affiliateID),
+          pm: pm
+        },
+        $setOnInsert: {
+          a: Number(affiliateID),
+          pm: pm
+        }
+      };
+
+      await gateways.updateOne(
+        {
+          a: Number(affiliateID),
+          pm: pm,
+          isDeleted: { $exists: false }
+        },
+        updateObj,
+        { upsert: true }
+      );
+
+      // If this is set as default, update MSSQL payMethod
+      if (form.isDefault) {
+        const connection = await getConnection(vert);
+        const dbName = getDatabaseName(vert);
+        await connection.sql(`
+          USE ${dbName};
+          UPDATE affiliateMerchant
+          SET payMethod = @payMethod
+          WHERE affiliate_id = @affiliateID
+        `)
+        .parameter('affiliateID', TYPES.Int, Number(affiliateID))
+        .parameter('payMethod', TYPES.VarChar, gatewayID.toLowerCase())
+        .execute();
+      }
+
+      return { success: true, gatewayID, message: 'Gateway updated successfully' };
     }
     return { success: false, message: 'Invalid affiliate ID' };
   } catch (error) {
@@ -311,19 +359,113 @@ export async function updateGateway(affiliateID, gatewayID, form, vert) {
 }
 
 /**
- * Delete gateway (delegates to gateway-specific delete functions)
+ * Delete gateway (marks as deleted in MongoDB and clears MSSQL fields)
  */
 export async function deleteGateway(affiliateID, gatewayID, vert) {
   try {
     if (Number(affiliateID) > 0) {
-      // TODO: Implement gateway-specific delete functions
-      // For now, return success
-      // In the future, we would call:
-      // - deleteStripeConfig(affiliateID, vert)
-      // - deleteAuthNetConfig(affiliateID, vert)
-      // - etc.
-      console.log('deleteGateway called - gateway-specific delete functions pending');
-      return { success: true, gatewayID, message: 'Gateway delete pending implementation' };
+      const db = await getDatabase(null, vert);
+      const gateways = db.collection('gateways');
+      const connection = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      // Map gatewayID to payment method
+      const gatewayMap = {
+        'stripe': 'Stripe',
+        'authnet': 'AuthNet',
+        'paypalexpress': 'PayPalExpress',
+        'paypalpayflow': 'PayPalPayflow',
+        'payzang': 'PayZang',
+        'vantiv-worldpay': 'Vantiv-Worldpay'
+      };
+
+      const pm = gatewayMap[gatewayID.toLowerCase()] || gatewayID;
+
+      // Check if this was the default gateway before deleting
+      const gateway = await gateways.findOne({
+        a: Number(affiliateID),
+        pm: pm,
+        isDeleted: { $exists: false }
+      });
+
+      // Mark gateway as deleted in MongoDB
+      await gateways.updateOne(
+        {
+          a: Number(affiliateID),
+          pm: pm,
+          isDeleted: { $exists: false }
+        },
+        {
+          $set: { isDeleted: true },
+          $currentDate: { lu: { $type: 'date' } }
+        }
+      );
+
+      // Clear MSSQL gateway-specific fields based on gateway type
+      let sqlQry = `USE ${dbName}; UPDATE affiliateMerchant SET `;
+      const updateFields = [];
+
+      if (gatewayID.toLowerCase() === 'authnet') {
+        updateFields.push(
+          '[auth_testMode] = NULL',
+          '[auth_visaCheckout] = NULL',
+          '[auth_iFrame] = NULL',
+          '[auth_transactionKey] = NULL',
+          '[auth_APILogin] = NULL',
+          '[auth_sandbox] = 0'
+        );
+      } else if (gatewayID.toLowerCase() === 'stripe') {
+        updateFields.push(
+          'stripeAccessToken = NULL',
+          'stripeLiveMode = NULL',
+          'stripeRefreshToken = NULL',
+          'stripeScope = NULL',
+          'stripePublishableKey = NULL',
+          'stripeUserID = NULL',
+          'stripeTokenType = NULL',
+          'stripeReqBillingAdd = NULL'
+        );
+      } else if (gatewayID.toLowerCase() === 'paypalexpress') {
+        updateFields.push(
+          'paypalExpressAPIUser = NULL',
+          'paypalExpressAPIPwd = NULL',
+          'paypalExpressAPISignature = NULL'
+        );
+      } else if (gatewayID.toLowerCase() === 'paypalpayflow') {
+        updateFields.push(
+          'paypalPayflowVendor = NULL',
+          'paypalPayflowPwd = NULL',
+          'paypalPayflowUser = NULL',
+          'paypalPayflowPartner = NULL',
+          'paypalPayflowTestMode = NULL'
+        );
+      } else if (gatewayID.toLowerCase() === 'payzang') {
+        updateFields.push(
+          'payZangTokenizationKey = NULL',
+          'payZangSecurityKey = NULL'
+        );
+      } else if (gatewayID.toLowerCase() === 'vantiv-worldpay') {
+        updateFields.push(
+          'vwApplicationID = NULL',
+          'vwAcceptorID = NULL',
+          'vwAccountToken = NULL',
+          'vwAccountID = NULL'
+        );
+      }
+
+      // If this was the default gateway, clear payMethod
+      if (gateway && gateway.isDefault) {
+        updateFields.push('payMethod = NULL');
+      }
+
+      if (updateFields.length > 0) {
+        sqlQry += updateFields.join(', ') + ' WHERE affiliate_id = @affiliateID';
+        await connection.sql(sqlQry)
+          .parameter('affiliateID', TYPES.Int, Number(affiliateID))
+          .execute();
+      }
+
+      return { success: true, gatewayID, message: 'Gateway deleted successfully' };
     }
     return { success: false, message: 'Invalid affiliate ID' };
   } catch (error) {

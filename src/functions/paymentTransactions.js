@@ -172,3 +172,71 @@ export async function sendUnconfirmedPaymentAlerts(request) {
   }
 }
 
+/**
+ * Get pending transactions
+ */
+export async function getPending(affiliateID, vert) {
+  try {
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const results = await connection.sql(`
+      USE ${dbName};
+      EXEC dbo.node_getPendingTransactions @affiliateID
+    `)
+    .parameter('affiliateID', TYPES.Int, Number(affiliateID || 0))
+    .execute();
+
+    return results;
+  } catch (error) {
+    console.error('Error getting pending transactions:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update pending transactions
+ */
+export async function updatePending(affiliateID, vert, validationkey) {
+  try {
+    // Validate secret key
+    const VALIDATION_KEY = '68bcd1af-d095-4a63-8013-dec6e0cdf90c';
+    if (!validationkey || validationkey !== VALIDATION_KEY) {
+      return { status: 'completed' };
+    }
+
+    // Get pending transactions
+    const transRA = await getPending(affiliateID, vert);
+
+    // Import AuthNet function
+    const { getTransactionDetails } = await import('../functions/authNet.js');
+
+    // Loop through transactions and update them
+    for (let i = 0; i < transRA.length; i++) {
+      // Build request object for getTransactionDetails
+      const reqObj = {
+        pathParameters: {
+          affiliateID: Number(transRA[i].a),
+          transactionID: String(transRA[i].pi)
+        },
+        headers: {
+          vert: String(vert)
+        },
+        body: {
+          affiliateID: Number(transRA[i].a)
+        }
+      };
+
+      // If this is an authnet transaction, update it
+      if (transRA[i].py && transRA[i].py.toLowerCase() === 'authnet') {
+        await getTransactionDetails(reqObj);
+      }
+    }
+
+    return { status: `Processed ${transRA.length} Records` };
+  } catch (error) {
+    console.error('Error updating pending transactions:', error);
+    throw error;
+  }
+}
+

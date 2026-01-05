@@ -5,6 +5,13 @@
  */
 
 import { getDatabase } from '../utils/mongodb.js';
+import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
+import moment from 'moment-timezone';
+import _ from 'lodash';
+import EventService from './EventService.js';
+import { getRegItemsByEventID } from '../functions/regItems.js';
+import { getBiosByEventID } from '../functions/reports.js';
+import { utcToTimezone } from '../functions/conversions.js';
 import _ from 'lodash';
 
 class AttendeeService {
@@ -145,21 +152,264 @@ class AttendeeService {
   /**
    * Find and pivot attendees
    * Wrapper that pivots nested arrays into columns
+   * Pivots fees, custom prompts, table assignments, and adds event data/timezone conversions
    */
   async findAndPivotAttendees(request) {
     try {
+      const { filter, pivot = [], pivotinclude = [], columns = {} } = request.body || {};
+      const vert = request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
+      
       // First get the base attendees
-      const attendees = await this.findAttendees(request);
+      let attendees = await this.findAttendees(request);
       
-      // TODO: Implement full pivot logic
-      // This is a complex method that:
-      // - Pivots fees array into columns (f_123, etc.)
-      // - Pivots custom prompts (ce) into columns (ce_456, etc.)
-      // - Pivots table assignments into columns (g_789, etc.)
-      // - Adds event data, timezone conversions, etc.
-      // For now, return the base attendees
-      // Full implementation can be added incrementally
-      
+      let eventData = {};
+      let zoneData = {};
+      let regItemsRA = [];
+      let regItemsCustomIDObj = {};
+      let tableAssignerRA = [];
+      const dateFormat = 'MM-DD-YYYY h:mm A z';
+
+      // If we have an event filter, get event data and timezone info
+      if (filter && filter.e) {
+        zoneData = await EventService.getEventTimezoneData(filter.e, vert);
+        eventData = await EventService.getEventData({
+          pathParameters: { eventID: String(filter.e) },
+          headers: { vert }
+        });
+        regItemsRA = await getRegItemsByEventID(filter.e, null, vert);
+
+        // Build custom ID lookup object
+        for (let x = 0; x < regItemsRA.length; x++) {
+          if (regItemsRA[x].customID) {
+            regItemsCustomIDObj[`f${String(regItemsRA[x].eventFeeID)}`] = _.trim(regItemsRA[x].customID);
+          }
+        }
+      }
+
+      // If we want table assignments, get them
+      if (pivot.indexOf('tableAssignments') >= 0) {
+        const db = await getDatabase(null, vert);
+        const tableAssignerCollection = db.collection('tableAssignerData');
+        
+        tableAssignerRA = await tableAssignerCollection.find(
+          {
+            $or: [
+              { e: Number(filter.e) },
+              { e: String(filter.e) }
+            ]
+          },
+          {
+            projection: { _id: 0, groupingID: 1, assignments: 1, blockName: 1 }
+          }
+        ).toArray();
+
+        // Loop assignments and add to attendees
+        for (let z = 0; z < tableAssignerRA.length; z++) {
+          const groupingID = String(tableAssignerRA[z].groupingID);
+
+          for (let y = 0; y < tableAssignerRA[z].assignments.length; y++) {
+            const attendeeID = String(tableAssignerRA[z].assignments[y].attendeeData.ai);
+            const blockName = String(tableAssignerRA[z].assignments[y].blockName);
+
+            const groupedAttendee = _.find(attendees, { ai: attendeeID });
+
+            if (groupedAttendee) {
+              if (!groupedAttendee.tableAssignments) {
+                groupedAttendee.tableAssignments = [];
+              }
+
+              groupedAttendee.tableAssignments.push({
+                groupingID: groupingID,
+                blockName: blockName
+              });
+            }
+          }
+        }
+      }
+
+      // Loop the attendees and pivot data
+      for (let i = 0; i < attendees.length; i++) {
+        const attendee = attendees[i];
+
+        // Add event data columns if requested
+        if (columns.tx && eventData.tx) {
+          attendee.tx = _.trim(eventData.tx);
+        }
+        if (columns.ebi && eventData.ebi) {
+          attendee.ebi = moment.tz(eventData.ebi, zoneData.zoneName).format(dateFormat);
+        }
+        if (columns.eei && eventData.eei) {
+          attendee.eei = moment.tz(eventData.eei, zoneData.zoneName).format(dateFormat);
+        }
+        if (columns.vm && eventData.vm) {
+          attendee.vm = _.trim(eventData.vm);
+        }
+
+        // Convert timezone for attendee dates
+        if (attendee.ciu) {
+          attendee.ciu = utcToTimezone(attendee.ciu, zoneData.zoneName, dateFormat);
+        }
+        if (attendee.co) {
+          attendee.co = utcToTimezone(attendee.co, zoneData.zoneName, dateFormat);
+        }
+        if (attendee.rt) {
+          attendee.rt = utcToTimezone(attendee.rt, zoneData.zoneName, dateFormat);
+        }
+
+        // Pivot fees array into columns
+        if ((pivot.indexOf('fees') >= 0 || columns.booths) && attendee.fees) {
+          for (let j = 0; j < attendee.fees.length; j++) {
+            const fee = attendee.fees[j];
+
+            // Convert timezone for fee check-in/out dates
+            if (fee.ci && zoneData.fees && zoneData.fees[fee.f]) {
+              fee.ci = utcToTimezone(fee.ci, zoneData.fees[fee.f], dateFormat);
+            }
+            if (fee.co && zoneData.fees && zoneData.fees[fee.f]) {
+              fee.co = utcToTimezone(fee.co, zoneData.fees[fee.f], dateFormat);
+            }
+
+            // Add custom ID if available
+            if (regItemsCustomIDObj[`f${String(fee.f)}`]) {
+              fee.cid = regItemsCustomIDObj[`f${String(fee.f)}`];
+            }
+
+            // Handle booths (special fee type 999000999)
+            if (Number(fee.f) === 999000999 && columns.booths) {
+              if (!attendee.booths) {
+                attendee.booths = [];
+              }
+              attendee.booths.push({
+                pr: Number(fee.pr || 0),
+                fm: _.trim(fee.fm),
+                bn: _.trim(fee.bn)
+              });
+            }
+
+            // If this fee is included in the output, pivot it
+            if (pivotinclude.indexOf(`f_${String(fee.f)}`) >= 0) {
+              const feeIDKey = `f_${String(fee.f)}`;
+              
+              // If the fee id already exists (duplicate), add quantity and price
+              if (attendee.hasOwnProperty(feeIDKey)) {
+                attendee[feeIDKey].q += fee.q;
+                attendee[feeIDKey].pr += fee.pr;
+              } else {
+                attendee[feeIDKey] = fee;
+              }
+            }
+          }
+
+          delete attendee.fees;
+        }
+
+        // Pivot custom prompts (ce) array into columns
+        if (pivot.indexOf('ce') >= 0 && attendee.ce) {
+          for (let k = 0; k < attendee.ce.length; k++) {
+            const cst = attendee.ce[k];
+
+            // If this custom prompt is included in the output AND we have data
+            if (pivotinclude.indexOf(`ce_${String(cst.fi)}`) >= 0 && cst.dt) {
+              const ceKey = `ce_${String(cst.fi)}`;
+              
+              if (!attendee[ceKey]) {
+                attendee[ceKey] = [];
+              }
+
+              // Append this response
+              attendee[ceKey].push(String(cst.dt));
+            }
+          }
+
+          delete attendee.ce;
+        }
+
+        // Pivot table assignments into columns
+        if (pivot.indexOf('tableAssignments') >= 0 && attendee.tableAssignments) {
+          for (let l = 0; l < attendee.tableAssignments.length; l++) {
+            const grp = attendee.tableAssignments[l];
+
+            // If this grouping assignment is included in the output AND we have data
+            if (pivotinclude.indexOf(`g_${String(grp.groupingID)}`) >= 0 && grp.blockName) {
+              attendee[`g_${String(grp.groupingID)}`] = String(grp.blockName);
+            }
+          }
+
+          delete attendee.tableAssignments;
+        }
+
+        // Pivot company info (cmpy) array
+        if (pivot.indexOf('cmpy') >= 0 && attendee.cmpy && attendee.cmpy.length > 0) {
+          if (attendee.cmpy[0].cbad) {
+            attendee.cbad = _.trim(attendee.cmpy[0].cbad.replace('ZZ,', ''));
+          }
+          if (attendee.cmpy[0].csad) {
+            attendee.csad = _.trim(attendee.cmpy[0].csad.replace('ZZ,', ''));
+          }
+          if (attendee.cmpy[0].cmid) {
+            attendee.cmid = Number(attendee.cmpy[0].cmid);
+          }
+          if (attendee.cmpy[0].cmn) {
+            attendee.cmn = _.trim(attendee.cmpy[0].cmn);
+          }
+          if (attendee.cmpy[0].cmbn) {
+            attendee.cmbn = _.trim(attendee.cmpy[0].cmbn);
+          }
+          if (attendee.cmpy[0].cmsn) {
+            attendee.cmsn = _.trim(attendee.cmpy[0].cmsn);
+          }
+
+          delete attendee.cmpy;
+        }
+
+        // Pivot master account (ps) array
+        if (pivot.indexOf('ps') >= 0 && attendee.ps && attendee.ps.length > 0) {
+          if (attendee.ps[0].ue) {
+            attendee.pe = _.trim(attendee.ps[0].ue);
+          }
+          if (attendee.ps[0].uf) {
+            attendee.pf = _.trim(attendee.ps[0].uf);
+          }
+          if (attendee.ps[0].ul) {
+            attendee.pl = _.trim(attendee.ps[0].ul);
+          }
+          if (attendee.ps[0].u) {
+            attendee.pt = Number(attendee.ps[0].u);
+          }
+
+          delete attendee.ps;
+        }
+
+        // Handle host info (hs) array
+        if (attendee.hs && attendee.hs.length > 0) {
+          let hostName = '';
+
+          if (attendee.hs[0].uf) {
+            hostName = `${hostName} ${_.trim(attendee.hs[0].uf)}`;
+          }
+          if (attendee.hs[0].ul) {
+            hostName = `${hostName} ${_.trim(attendee.hs[0].ul)}`;
+          }
+          if (attendee.hs[0].ue) {
+            hostName = `${hostName} (${_.trim(attendee.hs[0].ue)})`;
+          }
+
+          attendee.hs = _.trim(hostName);
+        }
+      }
+
+      // Add user bios if we have an event
+      if (filter && filter.e) {
+        const userBios = await getBiosByEventID(filter.e, vert);
+        
+        userBios.forEach(arrayItem => {
+          const attendeeIndex = attendees.findIndex(obj => obj.u === arrayItem.u);
+          if (attendeeIndex >= 0) {
+            attendees[attendeeIndex].ub = arrayItem.ubio;
+          }
+        });
+      }
+
       return attendees;
     } catch (error) {
       console.error('Error finding and pivoting attendees:', error);
@@ -442,14 +692,6 @@ class AttendeeService {
     }
   }
 
-  /**
-   * Find attendee object by API
-   */
-  async findAttendeeObjByAPI(request) {
-    // TODO: Migrate implementation
-    console.log('findAttendeeObjByAPI called');
-    return {};
-  }
 
   /**
    * Update attendee last updated timestamp
@@ -575,12 +817,12 @@ class AttendeeService {
             uf: 1, // user_firstname
             ul: 1, // user_lastname
             ue: 1, // user_email
-            tm: 1, // timestamp
-            ht: 1, // has_ticket
-            hi: 1, // has_invitation
-            ho: 1, // has_order
-            dc: 1, // date_created
-            ry: 1  // registration_year
+            hi: 1, // hotel check-in
+            ho: 1, // hotel check-out
+            ht: 1, // hotel
+            ry: 1, // room type
+            tm: 1, // travel method
+            dc: 1  // departure city
           }
         }
       );

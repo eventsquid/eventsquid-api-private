@@ -177,8 +177,8 @@ class ReportService {
         keyword,
         fromDate,
         toDate,
-        payMethod,
-        vert
+        payMethod || '',
+        vert || reqDetails.vert
       );
     } catch (error) {
       console.error('Error getting registrant transactions report:', error);

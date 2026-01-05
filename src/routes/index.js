@@ -4,7 +4,7 @@
  */
 
 import { createResponse } from '../utils/response.js';
-import { utcToEventZoneRoute, timezoneToUTCRoute, jurisdictionsRoute } from './root.js';
+import { utcToEventZoneRoute, timezoneToUTCRoute, jurisdictionsRoute, postImagesRoute } from './root.js';
 import {
   findEventsRoute,
   updateCustomPromptsRoute,
@@ -22,7 +22,11 @@ import {
   touchEventRoute,
   autoDeactivateFeesRoute,
   resetViewCountsRoute,
-  getCEUConfigRoute
+  getCEUConfigRoute,
+  getEventUploadsRoute,
+  getEventLibraryRoute,
+  getEventLibraryVideoRoute,
+  getEventVideoRoute
 } from './events.js';
 import {
   findPivotedAttendeesRoute,
@@ -293,7 +297,8 @@ export const routes = [
   utcToEventZoneRoute,
   timezoneToUTCRoute,
   jurisdictionsRoute,
-  // Event routes (19 routes - 16 migrated, 3 resource routes pending)
+  postImagesRoute,
+  // Event routes (19 routes - all migrated including resource routes)
   findEventsRoute,
   updateCustomPromptsRoute,
   getEventDataRoute,
@@ -311,6 +316,10 @@ export const routes = [
   autoDeactivateFeesRoute,
   resetViewCountsRoute,
   getCEUConfigRoute,
+  getEventUploadsRoute,
+  getEventLibraryRoute,
+  getEventLibraryVideoRoute,
+  getEventVideoRoute,
   // Attendee routes (9 routes)
   findPivotedAttendeesRoute,
   findAttendeesRoute,

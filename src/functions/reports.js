@@ -7,6 +7,9 @@ import { getDatabase } from '../utils/mongodb.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 import { ObjectId } from 'mongodb';
 import _ from 'lodash';
+import moment from 'moment-timezone';
+import { utcToTimezone, timezoneToUTCDateObj } from '../functions/conversions.js';
+import EventService from '../services/EventService.js';
 
 /**
  * Get event details by GUID
@@ -485,17 +488,84 @@ export async function findEventReportConfig(request) {
 
 /**
  * Get registrant filters
- * NOTE: This is a placeholder - the actual implementation is complex
+ * Gets registration items, profiles, categories, and options for filtering
  */
 export async function getRegistrantFilters(eventID, vert) {
   try {
-    // TODO: Implement full registrant filters logic
-    // This involves getting registration items, custom fields, date ranges, etc.
-    return {
-      registrationItems: [],
-      customFields: [],
-      dateRanges: []
+    const db = await getDatabase(null, vert);
+    const eventsColl = db.collection('events');
+
+    const events = await eventsColl.find(
+      { e: Number(eventID) },
+      { projection: { _id: 0, pfs: 1, evfs: 1 } }
+    ).toArray();
+
+    const eventObj = events[0] || {};
+    const returnObj = {
+      evfs: [],
+      pfs: eventObj.pfs || [],
+      cats: [],
+      ops: []
     };
+
+    if (eventObj.evfs) {
+      // Filter down to only active fees
+      let activeFees = _.filter(eventObj.evfs, { fa: 1 });
+      activeFees = _.orderBy(activeFees, ['for', 'fm'], ['asc', 'asc']);
+
+      const _griObj = {};
+      let _gri = '';
+      let _fgn = '';
+
+      for (let i = 0; i < activeFees.length; i++) {
+        // Set fee groups if they don't exist
+        activeFees[i].fgn = activeFees[i].fgn || _.trim(activeFees[i].fc);
+        activeFees[i].fgo = activeFees[i].fgo || 0;
+
+        if (!activeFees[i].gri) {
+          _fgn = _.trim(activeFees[i].fgn.toLowerCase());
+
+          // See if we have a matching fake group id
+          if (!(Number(_griObj[_fgn]) >= 0)) {
+            // Create a fake groupID
+            _gri = Number(i);
+            // And create an entry for fake fee groups
+            _griObj[_fgn] = Number(_gri);
+          }
+
+          activeFees[i].gri = Number(_griObj[_fgn]);
+        }
+
+        returnObj.evfs.push(_.pick(activeFees[i], ['f', 'fm', 'for', 'op', 'gri']));
+        returnObj.cats.push(_.pick(activeFees[i], ['gri', 'fgn', 'fgo']));
+        returnObj.ops.push(_.pick(activeFees[i], ['op']));
+      }
+
+      // Uniquify the fee categories
+      returnObj.cats = _.uniqBy(returnObj.cats, 'gri');
+      // And sort them
+      returnObj.cats = _.orderBy(returnObj.cats, ['fgo', 'fgn'], ['asc', 'asc']);
+
+      // Loop them and add items
+      for (let i = 0; i < returnObj.cats.length; i++) {
+        // Add the items
+        returnObj.cats[i].items = _.filter(returnObj.evfs, { gri: Number(returnObj.cats[i].gri) });
+        // And sort them
+        returnObj.cats[i].items = _.orderBy(returnObj.cats[i].items, ['for', 'fm'], ['asc', 'asc']);
+      }
+    }
+
+    // Loop the options (subclasses)
+    let _opsRA = [];
+    for (let i = 0; i < returnObj.ops.length; i++) {
+      if (returnObj.ops[i].op) {
+        _opsRA = _.concat(_opsRA, returnObj.ops[i].op);
+      }
+    }
+
+    returnObj.ops = _.orderBy(_opsRA, ['sn', 'on'], ['asc', 'asc']);
+
+    return _.pick(returnObj, ['cats', 'pfs', 'ops']);
   } catch (error) {
     console.error('Error getting registrant filters:', error);
     throw error;
@@ -503,14 +573,214 @@ export async function getRegistrantFilters(eventID, vert) {
 }
 
 /**
+ * Generate date range filters
+ * Helper function for date range filtering
+ */
+async function generateDateRangeFilters(dateRangeStr, dateRangeRA, zoneName) {
+  const returnObj = {
+    start: false,
+    end: false
+  };
+
+  // Evaluate what type of date range we're looking for
+  // Today
+  if (dateRangeStr === 'today') {
+    returnObj.start = timezoneToUTCDateObj(moment().startOf('day'), zoneName);
+    returnObj.end = timezoneToUTCDateObj(moment().endOf('day'), zoneName);
+  }
+  // Yesterday
+  else if (dateRangeStr === 'yesterday') {
+    returnObj.start = timezoneToUTCDateObj(moment().subtract(1, 'days').startOf('day'), zoneName);
+    returnObj.end = timezoneToUTCDateObj(moment().subtract(1, 'days').endOf('day'), zoneName);
+  }
+  // Past-7 days
+  else if (dateRangeStr === 'past-7') {
+    returnObj.start = timezoneToUTCDateObj(moment().subtract(7, 'days').startOf('day'), zoneName);
+    returnObj.end = timezoneToUTCDateObj(moment().endOf('day'), zoneName);
+  }
+  // Past-30 days
+  else if (dateRangeStr === 'past-30') {
+    returnObj.start = timezoneToUTCDateObj(moment().subtract(30, 'days').startOf('day'), zoneName);
+    returnObj.end = timezoneToUTCDateObj(moment().endOf('day'), zoneName);
+  }
+  // This month to date
+  else if (dateRangeStr === 'this-month') {
+    returnObj.start = timezoneToUTCDateObj(moment().startOf('month'), zoneName);
+    returnObj.end = timezoneToUTCDateObj(moment().endOf('day'), zoneName);
+  }
+  // Custom range
+  else if (dateRangeStr === 'custom-range' && dateRangeRA) {
+    returnObj.start = timezoneToUTCDateObj(moment(dateRangeRA[0]).startOf('day'), zoneName);
+    returnObj.end = timezoneToUTCDateObj(moment(dateRangeRA[1]).endOf('day'), zoneName);
+  }
+
+  return returnObj;
+}
+
+/**
  * Registrant report
- * NOTE: This is a placeholder - the actual implementation is very complex
+ * Generates registrant report using stored procedure with filtering and column selection
  */
 export async function registrantReport(eventID, vert, body) {
   try {
-    // TODO: Implement full registrant report logic
-    // This involves complex filtering, sorting, pagination, etc.
-    return [];
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+    const _eventService = new EventService();
+
+    const zoneData = await _eventService.getEventTimezoneData(eventID, vert);
+    const dateFormat = 'MM-DD-YYYY h:mm A z';
+
+    let regRA = [];
+    let regStart = null;
+    let regEnd = null;
+    let itemID = [];
+    let itemOptionID = [];
+    let colRA = [];
+    let selectStr = '';
+
+    const colObj = {
+      c: 'ISNULL( c, 0 ) AS c',
+      uf: 'ISNULL( uf, \'\' ) AS uf',
+      ul: 'ISNULL( ul, \'\' ) AS ul',
+      uc: 'ISNULL( uc, \'\' ) AS uc',
+      td: 'ISNULL( td, 0.00 ) AS td',
+      cv: 'ISNULL( cv, 0.00 ) AS cv',
+      rt: 'ISNULL( rt, \'\' ) AS rt',
+      stl: 'ISNULL( stl, 0.00 ) AS stl',
+      cu: 'ISNULL( cu, \'\' ) AS cu',
+      tp: 'ISNULL( tp, 0.00 ) AS tp',
+      pr: 'ISNULL( pr, 0.00 ) AS pr',
+      q: 'ISNULL( q, 0 ) AS q',
+      desc: 'ISNULL( [desc], \'\' ) AS [desc]',
+      sz: 'ISNULL( sz, \'\' ) AS sz',
+      f: 'ISNULL( f, 0 ) AS f',
+      bo: 'ISNULL( bo, 0 ) AS bo',
+      dt: 'ISNULL( dt, \'\' ) AS dt',
+      fc: 'ISNULL( fc, \'\' ) AS fc',
+      on: 'ISNULL( [on], \'\' ) AS [on]',
+      sn: 'ISNULL( sn, \'\' ) AS sn',
+      'o_c': 'ISNULL( o_c, 0 ) AS o_c',
+      'o_f': 'ISNULL( o_f, 0 ) AS o_f',
+      o: 'ISNULL( o, 0 ) AS o',
+      fm: 'ISNULL( fm, \'\' ) AS fm',
+      fl: 'ISNULL( fl, \'\' ) AS fl',
+      as: 'ISNULL( [as], \'\' ) AS [as]',
+      ast: 'ISNULL( ast, \'\' ) AS ast',
+      ae: 'ISNULL( ae, \'\' ) AS ae',
+      aet: 'ISNULL( aet, \'\' ) AS aet',
+      'bo|f': 'CASE WHEN ( ISNULL( bo, 0 ) > 0 ) THEN ISNULL( bo, 0 ) ELSE ISNULL( f, 0 ) END AS [bo|f]',
+      'fm&bo&desc': 'CASE WHEN ( RTRIM(LTRIM( ISNULL( fm, \'\' ) )) != \'\') THEN RTRIM(LTRIM( ISNULL( fm, \'\' ) )) ELSE \'\' END + CASE WHEN ( ISNULL( bo, 0 ) > 0 ) THEN \' Space Assigned:\' + ISNULL( [desc], \'\' ) ELSE \'\' END AS [fm&bo&desc]',
+      'on&sn': 'CASE WHEN ( RTRIM(LTRIM( ISNULL( [on], \'\' ) )) !=\'\' ) THEN sn + \': \' + [on] ELSE \'\'  END AS [on&sn]',
+      'fl&dt': 'CASE WHEN ( RTRIM(LTRIM( ISNULL( fl, \'\' ) )) != \'\' ) THEN fl + \': \' + dt ELSE \'\' END AS [fl&dt]',
+      'q&pr&stl': '( ISNULL( q, 0 ) * ISNULL( pr, 0 ) ) + ISNULL( stl, 0 ) AS [q&pr&stl]',
+      'q&pr': '( ISNULL( q, 0) * ISNULL( pr, 0) ) AS [q&pr]'
+    };
+
+    // If this has reg date ranges
+    if (body._regDateRange && body._regDateRange.length > 0) {
+      const dateRngFilter = await generateDateRangeFilters(
+        body._regDateRange,
+        body._dateRangeRA,
+        zoneData.zoneName
+      );
+      regStart = dateRngFilter.start;
+      regEnd = dateRngFilter.end;
+    }
+
+    // Process event fee IDs
+    if (body._eventFeeID && body._eventFeeID.length > 0) {
+      for (let i = 0; i < body._eventFeeID.length; i++) {
+        // Get the item and option IDs
+        itemID.push(Number(body._eventFeeID[i][0]));
+        itemOptionID.push(Number(body._eventFeeID[i][1]));
+      }
+      itemID = itemID.join(',');
+    }
+
+    // Build query string
+    let qryStr = `
+      USE ${dbName};
+
+      DECLARE @reportTbl TABLE (
+        c INT,
+        uf VARCHAR(255),
+        ul VARCHAR(255),
+        uc VARCHAR(255),
+        td DECIMAL(10,2),
+        cv DECIMAL(10,2),
+        rt DATETIME NULL,
+        stl DECIMAL(10,2),
+        cu VARCHAR(8),
+        tp DECIMAL(10,2),
+        pr DECIMAL(10,2),
+        q INT,
+        [desc] VARCHAR(MAX),
+        sz VARCHAR(8),
+        f INT,
+        bo INT,
+        dt VARCHAR(MAX),
+        fc VARCHAR(255),
+        [on] VARCHAR(255),
+        sn VARCHAR(255),
+        o_c INT,
+        o_f INT,
+        o INT,
+        fm VARCHAR(255),
+        fl VARCHAR(255),
+        [as] VARCHAR(255),
+        ast VARCHAR(255),
+        ae VARCHAR(255),
+        aet VARCHAR(255)
+      )
+
+      INSERT INTO @reportTbl
+        EXEC dbo.node_registrantReport @eventID, NULL, @regStart, @regEnd, @itemID
+
+      SELECT *
+      FROM @reportTbl
+    `;
+
+    // Build our returned columns
+    if (body.selectedCols && body.selectedCols.length > 0) {
+      // Loop our selected columns
+      for (let i = 0; i < body.selectedCols.length; i++) {
+        colRA.push(colObj[String(body.selectedCols[i])]);
+      }
+
+      // We always select the optionID
+      colRA.push(colObj['o']);
+
+      // Convert the columns array to a string
+      selectStr = colRA.join(',');
+
+      qryStr = qryStr.replace('SELECT *', `SELECT ${selectStr}`);
+    }
+
+    // Execute query
+    regRA = await connection.sql(qryStr)
+      .parameter('eventID', TYPES.Int, Number(eventID))
+      .parameter('regStart', TYPES.DateTime, (regStart === null || !regStart) ? null : new Date(regStart))
+      .parameter('regEnd', TYPES.DateTime, (regEnd === null || !regEnd) ? null : new Date(regEnd))
+      .parameter('itemID', TYPES.VarChar, (itemID === '') ? '' : _.trim(itemID))
+      .execute();
+
+    // Loop the records
+    for (let i = 0; i < regRA.length; i++) {
+      const thisRecord = regRA[i];
+
+      // If this has an option which is not among those to be included
+      if (itemOptionID.length > 0 && itemOptionID.indexOf(thisRecord.o) < 0) {
+        thisRecord._remove = true;
+      }
+
+      // Convert registration time to timezone
+      if (thisRecord.rt) {
+        thisRecord.rt = utcToTimezone(thisRecord.rt, zoneData.zoneName, dateFormat);
+      }
+    }
+
+    // Filter out the removed records
+    return _.filter(regRA, function(o) { return !o._remove; });
   } catch (error) {
     console.error('Error generating registrant report:', error);
     throw error;
@@ -518,14 +788,277 @@ export async function registrantReport(eventID, vert, body) {
 }
 
 /**
+ * Generate registrant item filter list
+ * Helper function to generate filter labels for export
+ */
+async function generateRegItemFilterList(eventID, feeFilterRA, vert) {
+  try {
+    const filtersObj = await getRegistrantFilters(eventID, vert);
+    const returnRA = [];
+    let category = {};
+    let item = {};
+    let option = {};
+
+    // Loop the filter options
+    for (let i = 0; i < filtersObj.cats.length; i++) {
+      category = _.assign({}, filtersObj.cats[i]);
+
+      // Loop the items
+      for (let j = 0; j < category.items.length; j++) {
+        item = _.assign({}, category.items[j]);
+
+        // If we have options
+        if (item.op && item.op.length > 0) {
+          // Create an all options filter description
+          returnRA.push({
+            f: Number(item.f),
+            o: 0,
+            desc: `${item.fm}: All`
+          });
+
+          // Then loop the options
+          for (let k = 0; k < item.op.length; k++) {
+            option = _.assign({}, item.op[k]);
+
+            // Create an option filter description
+            returnRA.push({
+              f: Number(item.f),
+              o: Number(option.o),
+              desc: `${item.fm}: ${option.on} ${option.sn}`
+            });
+          }
+        } else {
+          // Create an item filter description
+          returnRA.push({
+            f: Number(item.f),
+            o: 0,
+            desc: String(item.fm)
+          });
+        }
+      }
+    }
+
+    // Now match against feeFilterRA
+    const matchedLabels = [];
+    for (let i = 0; i < feeFilterRA.length; i++) {
+      const filter = _.concat([], feeFilterRA[i]);
+      const result = returnRA.filter(obj => obj.f === Number(filter[0]));
+
+      if (result.length) {
+        const matched = _.find(returnRA, {
+          f: Number(filter[0]),
+          o: Number(filter[1])
+        });
+        if (matched) {
+          matchedLabels.push(matched.desc || `Not found: f: ${filter[0]}, o: ${filter[1]}`);
+        }
+      }
+    }
+
+    // If the return array is empty
+    if (matchedLabels.length === 0) {
+      matchedLabels.push('All Registration Items');
+    }
+
+    return _.uniq(matchedLabels).sort().join(', ');
+  } catch (error) {
+    console.error('Error generating registrant item filter list:', error);
+    throw error;
+  }
+}
+
+/**
  * Registrant report export
- * NOTE: This is a placeholder - the actual implementation is very complex
+ * Generates export data with column mapping and filter information
  */
 export async function registrantReportExport(reportGUID, format, checkID, vert, session) {
   try {
-    // TODO: Implement full registrant report export logic
-    // This involves generating CSV, Excel, PDF, etc.
-    return { status: 'success', message: 'Export pending implementation' };
+    const isDefault = reportGUID.split('-')[0] === 'default';
+    
+    let defaultReport = {};
+    if (isDefault) {
+      defaultReport = {
+        reportDetails: {
+          eg: reportGUID.replace('default-', ''),
+          a: Number(session.affiliate_id),
+          lu: new Date(),
+          rsc: [
+            'c',
+            'bo|f',
+            'ul',
+            'uf',
+            'uc',
+            'rt',
+            'as',
+            'ast',
+            'ae',
+            'aet',
+            'fm&bo&desc',
+            'on&sn',
+            'sz',
+            'fl&dt',
+            'q',
+            'pr',
+            'q&pr',
+            'stl',
+            'q&pr&stl'
+          ],
+          rsf: {
+            p: 0,
+            f: 0,
+            pd_rng: [],
+            rt_rng: 'anytime',
+            tr: {
+              pd_rng: []
+            },
+            evfs: {
+              ist: '',
+              iet: ''
+            }
+          },
+          tmn: 'Default'
+        },
+        eventDetails: await getEventDetailsByGUID(
+          reportGUID.replace('default-', ''),
+          vert,
+          { affiliate_id: Number(session.affiliate_id) }
+        )
+      };
+    }
+
+    const reportDetail = isDefault
+      ? defaultReport
+      : await getReportDetailsByGUID(reportGUID, vert, session);
+
+    const fakeFormScope = {
+      _regDateRange: reportDetail.reportDetails.rsf.rt_rng,
+      _dateRangeRA: reportDetail.reportDetails.rsf.rt_rngRA,
+      _eventFeeID: reportDetail.reportDetails.rsf.f,
+      selectedCols: reportDetail.reportDetails.rsc
+    };
+
+    const reportRA = await registrantReport(
+      reportDetail.eventDetails[0].e,
+      vert,
+      fakeFormScope
+    );
+
+    const colsObj = {
+      'c': 'Attendee ID',
+      'bo|f': 'Item ID',
+      'ul': 'Last',
+      'uf': 'First',
+      'uc': 'Organization',
+      'rt': 'Reg Date',
+      'as': 'Item Start Date',
+      'ast': 'Item Start Time',
+      'ae': 'Item End Date',
+      'aet': 'Item End Time',
+      'fm&bo&desc': 'Item',
+      'on&sn': 'Options',
+      'sz': 'Size',
+      'fl&dt': 'Prompt',
+      'q': 'Quantity',
+      'pr': 'Price',
+      'q&pr': 'Item Total',
+      'stl': 'Fee',
+      'q&pr&stl': 'Grand Total'
+    };
+
+    const selectRA = [];
+    const colOrderRA = [
+      'c', 'bo|f', 'ul', 'uf', 'uc', 'rt', 'as', 'ast', 'ae', 'aet',
+      'fm&bo&desc', 'on&sn', 'sz', 'fl&dt', 'q', 'pr', 'q&pr', 'stl', 'q&pr&stl'
+    ];
+    const colsRA = reportDetail.reportDetails.rsc;
+    const defaultObj = {};
+
+    // Loop the columns in order of appearance
+    for (let i = 0; i < colOrderRA.length; i++) {
+      // If this column is among those selected for display
+      if (colsRA.indexOf(colOrderRA[i]) >= 0) {
+        const colName = colsObj[colOrderRA[i]];
+        // Create a SQL alias
+        selectRA.push(`[${colOrderRA[i]}] AS [${colName}]`);
+        // Also add it to the default object
+        defaultObj[colOrderRA[i]] = '';
+      }
+    }
+
+    // Determine the date range for this export
+    const dateRangeStr = String(reportDetail.reportDetails.rsf.rt_rng);
+    let dateRangeFilter = '';
+    const availableRanges = [
+      { val: 'anytime', lbl: 'Anytime' },
+      { val: 'today', lbl: 'Today' },
+      { val: 'yesterday', lbl: 'Yesterday' },
+      { val: 'this-month', lbl: 'This month' },
+      { val: 'custom-range', lbl: 'Custom range' }
+    ];
+
+    if (dateRangeStr === 'custom-range') {
+      dateRangeFilter = `${moment(reportDetail.reportDetails.rsf.rt_rngRA[0]).format('MMMM D, YYYY')} - ${moment(reportDetail.reportDetails.rsf.rt_rngRA[1]).format('MMMM D, YYYY')}`;
+    } else {
+      const rangeObj = _.find(availableRanges, { val: reportDetail.reportDetails.rsf.rt_rng });
+      const dateRangeObj = {};
+
+      // Generate the actual date ranges
+      if (dateRangeStr === 'today') {
+        dateRangeObj.start = moment().startOf('day');
+        dateRangeObj.end = moment().endOf('day');
+      } else if (dateRangeStr === 'yesterday') {
+        dateRangeObj.start = moment().subtract(1, 'days').startOf('day');
+        dateRangeObj.end = moment().subtract(1, 'days').endOf('day');
+      } else if (dateRangeStr === 'past-7') {
+        dateRangeObj.start = moment().subtract(7, 'days').startOf('day');
+        dateRangeObj.end = moment().endOf('day');
+      } else if (dateRangeStr === 'past-30') {
+        dateRangeObj.start = moment().subtract(30, 'days').startOf('day');
+        dateRangeObj.end = moment().endOf('day');
+      } else if (dateRangeStr === 'this-month') {
+        dateRangeObj.start = moment().startOf('month');
+        dateRangeObj.end = moment().endOf('day');
+      }
+
+      if (rangeObj && dateRangeObj.start) {
+        dateRangeFilter = `${rangeObj.lbl} (${moment(dateRangeObj.start).format('MMMM D, YYYY')} - ${moment(dateRangeObj.end).format('MMMM D, YYYY')})`;
+      } else {
+        dateRangeFilter = rangeObj ? rangeObj.lbl : 'Anytime';
+      }
+    }
+
+    // Generate filter list
+    const regItemFilterList = await generateRegItemFilterList(
+      Number(reportDetail.eventDetails[0].e),
+      reportDetail.reportDetails.rsf.f,
+      vert
+    );
+
+    // Create import-breaking info (metadata at end of export)
+    const importBreakingInfo = [];
+    const junkDataObj = {};
+
+    // Two empty rows
+    importBreakingInfo.push(_.assign({}, defaultObj));
+    importBreakingInfo.push(_.assign({}, defaultObj));
+
+    // Report filters info
+    junkDataObj[String(colOrderRA[0])] = 'Report Filters';
+    importBreakingInfo.push(_.assign({}, defaultObj, junkDataObj));
+
+    junkDataObj[String(colOrderRA[0])] = `Date Range: ${dateRangeFilter}`;
+    importBreakingInfo.push(_.assign({}, defaultObj, junkDataObj));
+
+    junkDataObj[String(colOrderRA[0])] = `Registration Items: ${regItemFilterList}`;
+    importBreakingInfo.push(_.assign({}, defaultObj, junkDataObj));
+
+    // Inject the report filters info into the end of the spreadsheet
+    const finalReportRA = _.concat([], reportRA, importBreakingInfo);
+
+    return {
+      selectRA,
+      reportRA: finalReportRA
+    };
   } catch (error) {
     console.error('Error exporting registrant report:', error);
     throw error;
@@ -534,12 +1067,34 @@ export async function registrantReportExport(reportGUID, format, checkID, vert, 
 
 /**
  * Get registrant transactions report
- * NOTE: This is a placeholder - the actual implementation is complex
+ * Gets transaction report using stored procedure
  */
 export async function getRegistrantTransactionsReport(affiliateID, eventID, keyword, fromDate, toDate, payMethod, vert) {
   try {
-    // TODO: Implement full registrant transactions report logic
-    return [];
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const results = await connection.sql(`
+      USE ${dbName};
+      EXEC dbo.node_registrantTransactionsReport 
+        @affiliateID,
+        @eventID,
+        @keyword,
+        @fromDate,
+        @toDate,
+        @transactionTypeID,
+        @paymentProcessor
+    `)
+    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
+    .parameter('eventID', TYPES.Int, Number(eventID))
+    .parameter('keyword', TYPES.VarChar, keyword || '')
+    .parameter('fromDate', TYPES.Date, fromDate || null)
+    .parameter('toDate', TYPES.Date, toDate || null)
+    .parameter('transactionTypeID', TYPES.Int, 0)  // Not used in Mantle version
+    .parameter('paymentProcessor', TYPES.VarChar, payMethod || '')
+    .execute();
+
+    return results;
   } catch (error) {
     console.error('Error getting registrant transactions report:', error);
     throw error;

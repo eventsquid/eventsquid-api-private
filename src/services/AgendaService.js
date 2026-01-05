@@ -4,8 +4,23 @@
  */
 
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
-import { toggleSponsorBinding, getAgendaSlotsByEventID } from '../functions/agenda.js';
+import {
+  toggleSponsorBinding,
+  getAgendaSlotsByEventID,
+  getSlotDataByID,
+  getSlotSpeakers,
+  getSlotSponsors,
+  getSlotTrackAssignmentsByEventID,
+  getAgendaSpeakersByEventID,
+  getMyItinerarySlotsByContestantID,
+  getSpeakerDocuments
+} from '../functions/agenda.js';
+import { getRegisteredAttendeeByUserID } from '../functions/attendees.js';
+import { getAllRatingConfigsByEventAndUser } from '../functions/ratings.js';
+import { checkUsageByEventAndAction, checkUsage, getRatingsConfigBySlotAndUser } from '../functions/veo.js';
+import { getRegItemByEventFeeID } from '../functions/regItems.js';
 import { getAccessibleResources } from '../functions/resources.js';
+import _eventService from './EventService.js';
 import moment from 'moment-timezone';
 import _ from 'lodash';
 
@@ -539,41 +554,237 @@ class AgendaService {
 
   /**
    * Get VEO agenda data
-   * Complex method - needs full implementation with event GUID lookup, attendee data, etc.
+   * Complex method with event GUID lookup, attendee data, slots, tracks, ratings, etc.
    */
   async getVEOAgendaData(eventGUID, userID, vert) {
-    // TODO: Full implementation - needs:
-    // - getEventDataByGUID
-    // - getRegisteredAttendeeByUserID
-    // - getAgendaSlotsByEventID
-    // - getSlotTrackAssignmentsByEventID
-    // - getMyItinerarySlotsByContestantID
-    // - getAllRatingConfigsByEventAndUser
-    // - getAgendaSpeakersByEventID
-    // - checkUsageByEventAndAction
-    console.log('getVEOAgendaData called - complex implementation pending');
-    return {
-      agendas: [],
-      tracks: [],
-      slots: []
-    };
+    try {
+      // Get eventID from event GUID
+      const eventData = await _eventService.getEventDataByGUID(eventGUID, { e: 1 }, vert);
+      if (!eventData) {
+        throw new Error('No matching event found for the given GUID');
+      }
+
+      // Get contestantID from eventID & userID & regComplete = 1
+      const attendee = await getRegisteredAttendeeByUserID(userID, eventData.e, vert);
+
+      // Grab all the slots for this event
+      let slots = await getAgendaSlotsByEventID(eventData.e, vert);
+      slots = slots.filter(slot => slot.veoConnectorEnabled);
+
+      // If the attendee has a profile, only allow reg-item-connected items from that bundle
+      if (attendee && attendee.p) {
+        const profiles = await _eventService.getEventProfiles(eventData.e, vert);
+        const profile = profiles.find(profile => profile.bundle_id == attendee.p);
+
+        if (profile && profile.bundle_cats) {
+          const bundle_fees = profile.bundle_cats.split(',').map(id => Number(id));
+          slots = slots.filter(slot => !slot.eventFeeID || bundle_fees.includes(slot.eventFeeID));
+        }
+      }
+
+      // Grab slot track assignments
+      const trackAssignments = await getSlotTrackAssignmentsByEventID(eventData.e, vert);
+
+      // Grab all the slots that this contestant has in their itinerary
+      let myItinerarySlots = {};
+      if (attendee) {
+        myItinerarySlots = await getMyItinerarySlotsByContestantID(attendee.c, vert);
+      }
+
+      // Grab rating settings
+      const ratingConfigs = await getAllRatingConfigsByEventAndUser(userID, eventData.e, vert);
+
+      const speakerData = await getAgendaSpeakersByEventID(eventData.e, vert);
+
+      // Gets an array ready for the full set of agendas
+      const agendasArray = [];
+      // Gets an array ready for the full set of tracks
+      let tracksArray = [];
+
+      const usages = await checkUsageByEventAndAction(eventData.e, userID, 'clicked-join-link', vert);
+
+      // Formats agenda slot data
+      slots = slots.map(slot => {
+        // NOTE: This should all get combined and defaulted to UTC in the future. For now, data is not in UTC
+        // Combine start data & time
+        let slotStartDate = moment(slot.date_slot, moment.ISO_8601);
+        let slotStartTime = moment(slot.time_slot, moment.ISO_8601);
+
+        if (slot.zoneName && slot.zoneName.length) {
+          slotStartDate = slotStartDate.tz(slot.zoneName, true);
+          slotStartTime = slotStartTime.tz(slot.zoneName, true);
+        } else {
+          slotStartDate = slotStartDate.utc(true);
+          slotStartTime = slotStartTime.utc(true);
+        }
+
+        // Generate end date/time by adding duration (in minutes) to the start datetime
+        let slotStart = moment(`${slotStartDate.format('YYYY-MM-DD')}T${slotStartTime.format('HH:mm:ss.SSS')}Z`);
+
+        if (slot.zoneName && slot.zoneName.length) {
+          slotStart = slotStart.tz(slot.zoneName, true);
+        }
+
+        slotStart = slotStart.utc();
+        const slotEnd = slotStart.clone().add(slot.slotDuration, 'minutes');
+
+        // Pull out tracks if any are assigned
+        if (trackAssignments[slot.slot_id]) {
+          trackAssignments[slot.slot_id].forEach(track => tracksArray.push(track));
+        }
+        // Pull out agenda
+        agendasArray.push({
+          id: slot.schedule_id,
+          name: slot.schedule_name,
+          order: Number(slot.scheduleOrder)
+        });
+
+        // Get the individual rating config
+        const ratingConfig = ratingConfigs.find(config => config.slot_id == slot.slot_id);
+        const clicked = usages.find(usage => usage.sli == slot.slot_id);
+
+        // Get speakers for this slot
+        const speakers = speakerData.filter(speaker => speaker.slotID == slot.slot_id);
+
+        return {
+          speakers,
+          clicked: clicked && clicked.ts ? true : false,
+          ratingConfig,
+          id: slot.slot_id,
+          ceuName: slot.CEUName,
+          start: slotStart,
+          end: slotEnd,
+          title: slot.slottitle,
+          description: slot.slotDescription,
+          showAll: slot.desktopShowAllText,
+          tracks: trackAssignments[slot.slot_id] || [],
+          zoneName: slot.zoneName,
+          agenda: slot.schedule_id,
+          agendaName: slot.schedule_name,
+          color: slot.slotColor,
+          veoEnabled: slot.veoConnectorEnabled,
+          hasCheckInCode: slot.checkInCode && slot.checkInCode.length ? true : false,
+          order: slot.scheduleOrder,
+          myItinerary: attendee ?
+            myItinerarySlots.favorites.includes(slot.slot_id)
+            || myItinerarySlots.regSlots.includes(slot.eventFeeID) : false
+        };
+      });
+
+      return {
+        agendas: _.sortBy(_.uniqWith(agendasArray, _.isEqual), 'order'),
+        tracks: _.uniqWith(tracksArray, _.isEqual),
+        slots: _.sortBy(slots, [
+          'order',
+          'agendaName',
+          'agenda',
+          'title'
+        ])
+      };
+    } catch (error) {
+      console.error('Error getting VEO agenda data:', error);
+      throw error;
+    }
   }
 
   /**
    * Get agenda slot
-   * Complex method - needs full implementation with slot data, speakers, sponsors, etc.
+   * Complex method with slot data, speakers, sponsors, documents, etc.
    */
   async getAgendaSlot(eventGUID, slotID, userID, vert) {
-    // TODO: Full implementation - needs:
-    // - getEventDataByGUID
-    // - getSlotDataByID
-    // - getRegItemByEventFeeID
-    // - getRegisteredAttendeeByUserID
-    // - getSlotSpeakers
-    // - getSlotSponsors
-    // - getSpeakerDocuments
-    console.log('getAgendaSlot called - complex implementation pending');
-    return {};
+    try {
+      // Get the event ID from the GUID
+      const eventData = await _eventService.getEventDataByGUID(eventGUID, { e: 1 }, vert);
+      
+      // Get Slot Data
+      let slot = await getSlotDataByID(slotID, vert);
+
+      // If there was no slot, or the slot doesn't belong to this event, return nothing
+      if (!slot || slot.eventID != eventData.e) {
+        return {};
+      }
+
+      // Grab the fee data
+      slot.fee = await getRegItemByEventFeeID(slot.eventFeeID, vert);
+      if (slot.fee) {
+        slot.ceu = slot.ceu || {};
+        slot.ceu.value = slot.fee.CEUValue || '';
+        slot.ceu.name = slot.fee.CEUName || '';
+        delete slot.fee['CEUValue'];
+        delete slot.fee['CEULabel'];
+        delete slot.fee['price'];
+      }
+
+      // Grab the attendee's data who is registered for this
+      const attendee = await getRegisteredAttendeeByUserID(userID, slot.eventID, vert);
+
+      slot.speakers = await getSlotSpeakers(slotID, vert);
+      slot.sponsors = await getSlotSponsors(slot.eventID, slotID, vert);
+
+      const speakerDocuments = await getSpeakerDocuments({
+        slotID,
+        userID,
+        website: 1,
+        vert
+      });
+      
+      const eventResources = await getAccessibleResources(
+        { showOnVeo: true },
+        userID,
+        slot.eventID,
+        vert
+      );
+
+      const filteredResources = eventResources.filter(resource => 
+        resource.slots && resource.slots.includes(slot.id)
+      );
+
+      // Fix naming
+      slot.documents = [...speakerDocuments, ...filteredResources].map(document => {
+        if ('uploadtitle' in document) {
+          document.uploadTitle = document.uploadtitle;
+        }
+        return document;
+      });
+
+      slot.ratingChecks = await getRatingsConfigBySlotAndUser(userID, slotID, vert);
+      if (slot.ratingChecks.length) {
+        slot.ratingChecks = slot.ratingChecks[0];
+      }
+
+      let contestantInfo = null;
+      if (attendee) {
+        contestantInfo = await getMyItinerarySlotsByContestantID(attendee.c, vert);
+      }
+
+      const clickedUsage = await checkUsage(slotID, userID, 'clicked-join-link', vert);
+      slot.clicked = clickedUsage.ts ? true : false;
+
+      slot.onItinerary = attendee ? 
+        contestantInfo.favorites.includes(slot.id)
+        || contestantInfo.regSlots.includes(slot.eventFeeID) : null;
+
+      let regItem = attendee ? 
+        contestantInfo.checkinData.filter(fee => fee.eventFeeID == slot.eventFeeID) : [];
+
+      if (regItem.length) {
+        regItem = regItem[0];
+        slot.checkedIn = regItem.checkedIn ? 
+          moment(regItem.checkedIn).utc(true).format() : '';
+        slot.checkedOut = regItem.checkedOut ? 
+          moment(regItem.checkedOut).utc(true).format() : '';
+      } else {
+        slot.checkedIn = '';
+        slot.checkedOut = '';
+      }
+
+      slot.attendeeID = attendee ? attendee.c : null;
+
+      return slot;
+    } catch (error) {
+      console.error('Error getting agenda slot:', error);
+      throw error;
+    }
   }
 
   /**

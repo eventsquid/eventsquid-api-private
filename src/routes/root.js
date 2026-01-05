@@ -79,6 +79,116 @@ export const jurisdictionsRoute = {
   })
 };
 
-// Note: /images/:vert route is complex and involves S3, MSSQL, and MongoDB
-// Will need to migrate separately after setting up AWS SDK and MSSQL connections
+/**
+ * POST /images/:vert
+ * Save an image to S3 and update MSSQL/MongoDB
+ */
+export const postImagesRoute = {
+  method: 'POST',
+  path: '/images/:vert',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const vert = request.pathParameters?.vert;
+      const body = request.body || {};
+      const session = request.session || request.user || {};
+      
+      // Validate required fields
+      if (!body.base64 || !body.type || !body.fileName || !body._guid) {
+        return errorResponse('Missing required fields: base64, type, fileName, _guid', 400);
+      }
+
+      // File type mapping
+      const fileTypes = {
+        jpg: { ext: 'jpg', type: 'image/jpeg' },
+        png: { ext: 'png', type: 'image/png' }
+      };
+
+      const fileType = fileTypes[body.type];
+      if (!fileType) {
+        return errorResponse('Invalid file type. Must be jpg or png', 400);
+      }
+
+      // Create buffer from base64
+      const base64Data = body.base64.replace(/^data:image\/\w+;base64,/, '');
+      const buf = Buffer.from(base64Data, 'base64');
+
+      // Construct filename
+      const fileName = `${body._guid}/${body.fileName}.${fileType.ext}`;
+      const S3_BASE_URL = process.env.S3_BASE_URL || 'https://s3-us-west-2.amazonaws.com/eventsquid/';
+      const logoURL = S3_BASE_URL + fileName;
+
+      // Upload to S3
+      const { uploadS3 } = await import('../utils/s3.js');
+      await uploadS3(buf, '', fileType.ext, fileType.type, fileName);
+
+      // Update database based on file type
+      const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
+      const { getDatabase } = await import('../utils/mongodb.js');
+      const connection = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+      const db = await getDatabase(null, vert);
+
+      // Handle different file types
+      if (body.fileName === 'org-logo') {
+        // Update affiliate record
+        const results = await connection.sql(`
+          USE ${dbName};
+          UPDATE b_affiliates
+          SET logo = @logoURL, logos3 = @logoURL
+          WHERE _guid = @guid;
+          SELECT affiliate_id FROM b_affiliates WHERE _guid = @guid;
+        `)
+        .parameter('logoURL', TYPES.VarChar, logoURL)
+        .parameter('guid', TYPES.UniqueIdentifier, body._guid)
+        .execute();
+
+        if (results.length) {
+          const eventsColl = db.collection('events');
+          await eventsColl.updateMany(
+            { '_id.a': Number(results[0].affiliate_id) },
+            { $set: { al3: logoURL } }
+          );
+        }
+      } else if (body.fileName === 'speaker-photo') {
+        // Update speaker record
+        await connection.sql(`
+          USE ${dbName};
+          UPDATE b_speakers
+          SET speaker_PhotoS3 = @photoURL
+          WHERE _guid = @guid
+        `)
+        .parameter('photoURL', TYPES.VarChar, logoURL)
+        .parameter('guid', TYPES.UniqueIdentifier, body._guid)
+        .execute();
+      } else if (body.fileName === 'avatars') {
+        // Validate user can only update their own avatar
+        const userID = Number(body.userID);
+        const sessionUserID = Number(session.user_id);
+        const actualUserID = Number(session.actualuser_id);
+        
+        if (userID !== sessionUserID && userID !== actualUserID) {
+          return errorResponse('Unauthorized: Cannot update avatar for another user', 403);
+        }
+
+        // Update user record
+        await connection.sql(`
+          USE ${dbName};
+          UPDATE b_users
+          SET avatar = @avatarURL, avatars3 = @avatarURL
+          WHERE user_id = @userID
+        `)
+        .parameter('avatarURL', TYPES.VarChar, logoURL)
+        .parameter('userID', TYPES.Int, userID)
+        .execute();
+      } else {
+        return errorResponse('Invalid fileName. Must be org-logo, speaker-photo, or avatars', 400);
+      }
+
+      return successResponse({ url: logoURL });
+    } catch (error) {
+      console.error('Error saving image:', error);
+      return errorResponse('Failed to save image', 500, error.message);
+    }
+  }))
+};
 

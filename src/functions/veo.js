@@ -191,6 +191,35 @@ export async function checkUsage(slotID, userID, actionID, vert) {
 }
 
 /**
+ * Check usage by event and action
+ */
+export async function checkUsageByEventAndAction(eventID, userID, actionID, vert) {
+  try {
+    const db = await getDatabase(null, vert);
+    const vtColl = db.collection('veo-tracking');
+
+    const vtResult = await vtColl
+      .find(
+        {
+          u: Number(userID),
+          e: Number(eventID),
+          act: actionID
+        },
+        {
+          projection: { _id: 0, ts: 1, sli: 1 }
+        }
+      )
+      .sort({ ts: -1 })
+      .toArray();
+
+    return vtResult;
+  } catch (error) {
+    console.error('Error checking usage by event and action:', error);
+    throw error;
+  }
+}
+
+/**
  * Set usage
  */
 export async function setUsage(eventID, slotID, actionID, session, vert) {

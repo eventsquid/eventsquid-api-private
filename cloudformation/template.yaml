@@ -34,7 +34,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-eventsquid-api-lambda-role'
+      RoleName: eventsquid-private-api-lambda-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -63,13 +63,13 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${Environment}-eventsquid-api:*'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/eventsquid-private-api:*'
 
   # Security Group for Lambda
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Sub '${Environment}-eventsquid-api-lambda-sg'
+      GroupName: eventsquid-private-api-lambda-sg
       GroupDescription: Security group for EventSquid API Lambda function
       VpcId: !Ref VpcId
       SecurityGroupEgress:
@@ -83,7 +83,7 @@ Resources:
   LambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${Environment}-eventsquid-api'
+      FunctionName: eventsquid-private-api
       Runtime: nodejs24.x
       Handler: src/handler.handler
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -115,7 +115,7 @@ Resources:
   ApiGatewayRestApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: !Sub '${Environment}-eventsquid-api'
+      Name: eventsquid-private-api
       ProtocolType: HTTP
       Description: Private API Gateway for EventSquid API
       # For private API, we'll use VPC endpoint or resource policy
@@ -177,7 +177,7 @@ Resources:
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/aws/lambda/${Environment}-eventsquid-api'
+      LogGroupName: '/aws/lambda/eventsquid-private-api'
       RetentionInDays: 14
 
 Outputs:
@@ -185,17 +185,17 @@ Outputs:
     Description: API Gateway endpoint URL
     Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
     Export:
-      Name: !Sub '${Environment}-eventsquid-api-url'
+      Name: eventsquid-private-api-url
 
   LambdaFunctionArn:
     Description: Lambda function ARN
     Value: !GetAtt LambdaFunction.Arn
     Export:
-      Name: !Sub '${Environment}-eventsquid-api-lambda-arn'
+      Name: eventsquid-private-api-lambda-arn
 
   LambdaFunctionName:
     Description: Lambda function name
     Value: !Ref LambdaFunction
     Export:
-      Name: !Sub '${Environment}-eventsquid-api-lambda-name'
+      Name: eventsquid-private-api-lambda-name
 

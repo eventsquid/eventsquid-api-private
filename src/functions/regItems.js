@@ -150,3 +150,88 @@ export async function updateRegItem(eventFeeID, data, vert) {
   return data;
 }
 
+/**
+ * Get registration item by event fee ID
+ */
+export async function getRegItemByEventFeeID(eventFeeID, vert) {
+  try {
+    if (!eventFeeID) return null;
+
+    const connection = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    let fee = await connection.sql(`
+      USE ${dbName};
+      SELECT 
+        checkInCode,
+        checkOutCode,
+        customFeeName as name,
+        CEUName,
+        CEUValue,
+        ISNULL(fee_price, 0) as price,
+        excludes,
+        extras,
+        ISNULL(classLimit, 0) classLimit,
+        (
+          SELECT count (1) as SessionCount
+          FROM contestant_fees cf
+          INNER JOIN eventContestant ec ON cf.contestant_id = ec.contestant_id 
+            and ec.regcomplete = 1
+          WHERE eventFeeID = @eventFeeID
+        ) as sessionCount
+      FROM event_fees
+      WHERE eventFeeID = @eventFeeID
+    `)
+    .parameter('eventFeeID', TYPES.Int, Number(eventFeeID))
+    .execute()
+    .then(results => results.map(fee => ({
+      ...fee,
+      checkInCode: fee.checkInCode || '',
+      checkOutCode: fee.checkOutCode || '',
+      excludes: fee.excludes ? fee.excludes.split(',') : [],
+      extras: fee.extras ? fee.extras.split(',') : [],
+      classLimitSpacesLeft: Number(fee.classLimit) != 0 ? Number(fee.classLimit) - Number(fee.sessionCount) : 999,
+      free: fee.price == 0
+    })));
+
+    if (!fee.length) return null;
+    fee = fee[0];
+
+    fee.options = await connection.sql(`
+      USE ${dbName};
+      SELECT
+        efto.optionID,
+        efto.subClassID,
+        efsc.option_name,
+        ISNULL(efto.limit, 0) AS subClassLimit,
+        (
+          SELECT COUNT(optionID) 
+          FROM contestant_fees_option cfo
+          WHERE cfo.optionID = efsc.optionID
+            AND cfo.eventFeeID = ef.eventFeeID
+        ) AS numSubClassesFilled
+      FROM event_fees ef 
+      JOIN event_fee_to_options efto ON ef.eventFeeID = efto.eventFeeID AND ef.event_id = efto.event_id 
+      JOIN event_fee_subClassOptions efsc ON efto.optionID = efsc.optionID
+      WHERE
+        ef.eventFeeID = @eventFeeID
+      ORDER BY
+        option_name
+    `)
+    .parameter('eventFeeID', TYPES.Int, Number(eventFeeID))
+    .execute()
+    .then(results => results.map(option => ({
+      id: option.optionID,
+      name: option.option_name,
+      limit: option.subClassLimit,
+      filled: option.numSubClassesFilled,
+      subClassID: option.subClassID
+    })));
+
+    return fee;
+  } catch (error) {
+    console.error('Error getting registration item by event fee ID:', error);
+    throw error;
+  }
+}
+
