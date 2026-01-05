@@ -88,6 +88,8 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
+                  - logs:DeleteLogGroup
+                  - logs:DescribeLogGroups
               - Effect: Allow
                 Resource: '*'
                 Action:

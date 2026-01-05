@@ -30,21 +30,6 @@ Parameters:
     Description: MongoDB database name
 
 Resources:
-  # IAM Role for API Gateway Logging
-  ApiGatewayLoggingRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: eventsquid-private-api-gateway-logging-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: apigateway.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
-
   # IAM Role for Lambda
   LambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -215,6 +200,7 @@ Resources:
   # CloudWatch Log Group for Lambda
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
     Properties:
       LogGroupName: '/aws/lambda/eventsquid-private-api'
       RetentionInDays: 14
@@ -222,6 +208,7 @@ Resources:
   # CloudWatch Log Group for API Gateway
   ApiGatewayLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
     Properties:
       LogGroupName: '/aws/apigateway/eventsquid-private-api'
       RetentionInDays: 14
