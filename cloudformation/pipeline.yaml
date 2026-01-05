@@ -194,34 +194,16 @@ Resources:
               runtime-versions:
                 nodejs: 24
               commands:
-                - echo "Installing dependencies..."
                 - npm ci
-            pre_build:
-              commands:
-                - echo "Running tests..."
-                - npm test || true
             build:
               commands:
-                - echo "Packaging Lambda function..."
                 - npm install --production
                 - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
-                - echo "Determining environment from branch..."
-                - export BRANCH_NAME=$(echo $CODEBUILD_SOURCE_VERSION | sed 's|refs/heads/||')
-                - echo "Branch: $BRANCH_NAME"
-                - export ENVIRONMENT=$(if [ "$BRANCH_NAME" = "main" ]; then echo "prod"; elif [ "$BRANCH_NAME" = "develop" ]; then echo "staging"; else echo "dev"; fi)
-                - echo "Environment: $ENVIRONMENT"
-                - echo "Verifying AWS credentials..."
-                - aws sts get-caller-identity || echo "Warning: Could not verify AWS credentials"
-                - echo "Deploying CloudFormation stack..."
-                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides Environment=${ENVIRONMENT} VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} MongoSecretName=${MONGO_SECRET_NAME} MongoDbName=${MONGO_DB_NAME} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
-                - echo "Updating Lambda function code..."
+                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides Environment=dev VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} MongoSecretName=${MONGO_SECRET_NAME} MongoDbName=${MONGO_DB_NAME} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
                 - aws lambda update-function-code --function-name eventsquid-private-api --zip-file fileb://function.zip --region ${AWS_REGION}
-                - echo "Updating Lambda function configuration..."
-                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=${ENVIRONMENT},MONGO_SECRET_NAME=${MONGO_SECRET_NAME},MONGO_DB_NAME=${MONGO_DB_NAME}}" --region ${AWS_REGION}
+                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=dev,MONGO_SECRET_NAME=${MONGO_SECRET_NAME},MONGO_DB_NAME=${MONGO_DB_NAME}}" --region ${AWS_REGION}
           artifacts:
-            files:
-              - function.zip
-              - '**/*'
+            files: '**/*'
 
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
