@@ -206,9 +206,9 @@ Resources:
                 - npm install --production
                 - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
                 - echo "Determining environment from branch..."
-                - 'BRANCH_NAME=${CODEBUILD_SOURCE_VERSION#refs/heads/}'
+                - export BRANCH_NAME=$(echo $CODEBUILD_SOURCE_VERSION | sed 's|refs/heads/||')
                 - echo "Branch: $BRANCH_NAME"
-                - test "$BRANCH_NAME" = "main" && export ENVIRONMENT=prod || test "$BRANCH_NAME" = "develop" && export ENVIRONMENT=staging || export ENVIRONMENT=dev
+                - export ENVIRONMENT=$(if [ "$BRANCH_NAME" = "main" ]; then echo "prod"; elif [ "$BRANCH_NAME" = "develop" ]; then echo "staging"; else echo "dev"; fi)
                 - echo "Environment: $ENVIRONMENT"
                 - echo "Verifying AWS credentials..."
                 - aws sts get-caller-identity || echo "Warning: Could not verify AWS credentials"
