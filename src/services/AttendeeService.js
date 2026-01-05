@@ -12,7 +12,6 @@ import EventService from './EventService.js';
 import { getRegItemsByEventID } from '../functions/regItems.js';
 import { getBiosByEventID } from '../functions/reports.js';
 import { utcToTimezone } from '../functions/conversions.js';
-import _ from 'lodash';
 
 class AttendeeService {
   /**
