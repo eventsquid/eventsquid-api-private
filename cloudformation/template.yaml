@@ -154,23 +154,7 @@ Resources:
         DetailedMetricsEnabled: true
       AccessLogSettings:
         DestinationArn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/eventsquid-private-api'
-        Format: |
-          {
-            "requestId": "$context.requestId",
-            "ip": "$context.identity.sourceIp",
-            "requestTime": "$context.requestTime",
-            "httpMethod": "$context.httpMethod",
-            "routeKey": "$context.routeKey",
-            "status": "$context.status",
-            "protocol": "$context.protocol",
-            "responseLength": "$context.responseLength",
-            "integrationLatency": "$context.integrationLatency",
-            "error": {
-              "message": "$context.error.message",
-              "messageString": "$context.error.messageString",
-              "validationErrorString": "$context.error.validationErrorString"
-            }
-          }
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency","errorMessage":"$context.error.message","errorMessageString":"$context.error.messageString"}'
 
   # Lambda Permission for API Gateway
   LambdaApiGatewayPermission:
