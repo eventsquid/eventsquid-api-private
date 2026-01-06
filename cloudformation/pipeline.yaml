@@ -20,23 +20,6 @@ Parameters:
     Type: String
     Description: ARN of the GitHub connection from AWS Connector
   
-  VpcId:
-    Type: AWS::EC2::VPC::Id
-    Description: VPC ID where the Lambda will be deployed
-  
-  SubnetIds:
-    Type: CommaDelimitedList
-    Description: Subnet IDs for Lambda function (comma-separated)
-  
-  MongoSecretName:
-    Type: String
-    Default: mongodb/eventsquid
-    Description: Name of the secret in Secrets Manager containing MongoDB connection string
-  
-  MongoDbName:
-    Type: String
-    Default: eventsquid
-    Description: MongoDB database name
 
 Resources:
   ArtifactBucket:
@@ -172,20 +155,8 @@ Resources:
           - Name: ARTIFACT_BUCKET
             Value: !Ref ArtifactBucket
             Type: PLAINTEXT
-          - Name: VPC_ID
-            Value: !Ref VpcId
-            Type: PLAINTEXT
-          - Name: SUBNET_IDS
-            Value: !Join [',', !Ref SubnetIds]
-            Type: PLAINTEXT
-          - Name: MONGO_SECRET_NAME
-            Value: !Ref MongoSecretName
-            Type: PLAINTEXT
-          - Name: MONGO_DB_NAME
-            Value: !Ref MongoDbName
-            Type: PLAINTEXT
           - Name: AWS_REGION
-            Value: !Ref AWS::Region
+            Value: us-west-2
             Type: PLAINTEXT
       Source:
         Type: CODEPIPELINE
@@ -201,10 +172,10 @@ Resources:
               commands:
                 - npm install --production
                 - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
-                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides Environment=dev VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} MongoSecretName=${MONGO_SECRET_NAME} MongoDbName=${MONGO_DB_NAME} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
+                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides Environment=dev --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
                 - aws lambda update-function-code --function-name eventsquid-private-api --zip-file fileb://function.zip --region ${AWS_REGION}
                 - aws lambda wait function-updated --function-name eventsquid-private-api --region ${AWS_REGION}
-                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=dev,MONGO_SECRET_NAME=${MONGO_SECRET_NAME},MONGO_DB_NAME=${MONGO_DB_NAME}}" --region ${AWS_REGION}
+                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=dev,AWS_REGION=us-west-2}" --region ${AWS_REGION}
           artifacts:
             files: '**/*'
 

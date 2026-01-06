@@ -68,20 +68,34 @@ This repository contains the migrated EventSquid API from Mantle to AWS Lambda w
 
 Before automated deployments, you need to create the initial stack:
 
+**Bash/Linux/Mac:**
 ```bash
 aws cloudformation create-stack \
   --stack-name eventsquid-private-api \
   --template-body file://cloudformation/template.yaml \
   --parameters \
     ParameterKey=Environment,ParameterValue=dev \
-    ParameterKey=VpcId,ParameterValue=vpc-xxxxx \
-    ParameterKey=SubnetIds,ParameterValue=subnet-xxxxx,subnet-yyyyy \
+    ParameterKey=VpcId,ParameterValue=vpc-38dc235f \
+    ParameterKey=SubnetIds,ParameterValue=subnet-3c625f4a,subnet-3a650c62,subnet-0a504b6e \
     ParameterKey=MongoSecretName,ParameterValue=mongodb/eventsquid \
     ParameterKey=MongoDbName,ParameterValue=eventsquid \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-west-2 \
   --profile eventsquid
 ```
+
+**PowerShell (Windows):**
+```powershell
+aws cloudformation create-stack `
+  --stack-name eventsquid-private-api `
+  --template-body file://cloudformation/template.yaml `
+  --parameters ParameterKey=Environment,ParameterValue=dev ParameterKey=VpcId,ParameterValue=vpc-38dc235f "ParameterKey=SubnetIds,ParameterValue='subnet-3c625f4a,subnet-3a650c62,subnet-0a504b6e'" ParameterKey=MongoSecretName,ParameterValue=mongodb/eventsquid ParameterKey=MongoDbName,ParameterValue=eventsquid `
+  --capabilities CAPABILITY_NAMED_IAM `
+  --region us-west-2 `
+  --profile eventsquid
+```
+
+**Note:** In PowerShell, use backticks (`) for line continuation, not backslashes (\). Also, quote the SubnetIds parameter value to prevent PowerShell from splitting on commas.
 
 ### 2. Configure AWS Secrets Manager
 

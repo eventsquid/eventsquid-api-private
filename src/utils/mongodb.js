@@ -21,19 +21,29 @@ async function getMongoConnectionString() {
     const command = new GetSecretValueCommand({ SecretId: secretName });
     const response = await secretsClient.send(command);
     
-    const secret = JSON.parse(response.SecretString);
+    // The secret may be a JSON object or a plain string (connection string)
+    let secretValue = response.SecretString;
     
-    // Support different secret formats
-    if (secret.connectionString) {
-      return secret.connectionString;
-    } else if (secret.uri) {
-      return secret.uri;
-    } else if (secret.mongodb_uri) {
-      return secret.mongodb_uri;
-    } else {
-      // Construct from individual components
-      const { host, port, database, username, password } = secret;
-      return `mongodb://${username}:${password}@${host}:${port || 27017}/${database}?authSource=admin`;
+    // Try to parse as JSON first
+    try {
+      const secret = JSON.parse(secretValue);
+      
+      // Support different secret formats
+      if (secret.connectionString) {
+        return secret.connectionString;
+      } else if (secret.uri) {
+        return secret.uri;
+      } else if (secret.mongodb_uri) {
+        return secret.mongodb_uri;
+      } else {
+        // Construct from individual components
+        const { host, port, database, username, password } = secret;
+        return `mongodb://${username}:${password}@${host}:${port || 27017}/${database}?authSource=admin`;
+      }
+    } catch (parseError) {
+      // If parsing fails, assume the secret is the connection string directly
+      // This handles cases where the secret is stored as: mongodb+srv://...
+      return secretValue;
     }
   } catch (error) {
     console.error('Error retrieving MongoDB secret:', error);
@@ -89,8 +99,36 @@ export async function connectToMongo() {
 }
 
 /**
+ * Map vertical code to full vertical name for secret lookup
+ * @param {string} vert - 2-letter vertical code
+ * @returns {string} Full vertical name in lowercase
+ */
+function getVerticalNameFromCode(vert) {
+  const vertCode = vert.toLowerCase();
+  
+  switch (vertCode) {
+    case 'es':
+      return 'eventsquid';
+    case 'ln':
+      return 'launchsquid';
+    case 'rc':
+      return 'rcflightdeck';
+    case 'kt':
+      return 'kindertales';
+    case 'ir':
+      return 'inreach';
+    case 'fi':
+      return 'fitsquid';
+    case 'cn':
+      return 'connect';
+    default:
+      return 'eventsquid'; // Default fallback
+  }
+}
+
+/**
  * Connect to MongoDB for a specific vertical
- * @param {string} vert - Vertical code (cm, cn, es, fd, ft, ir, kt, ln)
+ * @param {string} vert - Vertical code (es, ln, rc, kt, ir, fi, cn)
  * @returns {Promise<MongoClient>}
  */
 export async function connectToMongoByVertical(vert) {
@@ -111,28 +149,43 @@ export async function connectToMongoByVertical(vert) {
     }
   }
 
-  // Get connection string for this vertical
-  // Format: mongodb/eventsquid-{vert} or use environment variable
+  // Map vert code to full vertical name and construct secret name
+  // Format: mongodb/{verticalname} (e.g., mongodb/eventsquid, mongodb/launchsquid)
+  const verticalName = getVerticalNameFromCode(normalizedVert);
+  
+  // Priority: 1) Env var for specific vert, 2) Mapped secret name, 3) Default env var, 4) Default secret
   const secretName = process.env[`MONGO_SECRET_NAME_${normalizedVert.toUpperCase()}`] || 
-                    `mongodb/eventsquid-${normalizedVert}` ||
+                    `mongodb/${verticalName}` ||
                     process.env.MONGO_SECRET_NAME || 
                     'mongodb/eventsquid';
 
   try {
     const command = new GetSecretValueCommand({ SecretId: secretName });
     const response = await secretsClient.send(command);
-    const secret = JSON.parse(response.SecretString);
     
+    // The secret may be a JSON object or a plain string (connection string)
+    let secretValue = response.SecretString;
+    
+    // Try to parse as JSON first
     let connectionString;
-    if (secret.connectionString) {
-      connectionString = secret.connectionString;
-    } else if (secret.uri) {
-      connectionString = secret.uri;
-    } else if (secret.mongodb_uri) {
-      connectionString = secret.mongodb_uri;
-    } else {
-      const { host, port, database, username, password } = secret;
-      connectionString = `mongodb://${username}:${password}@${host}:${port || 27017}/${database}?authSource=admin`;
+    try {
+      const secret = JSON.parse(secretValue);
+      
+      // Support different secret formats
+      if (secret.connectionString) {
+        connectionString = secret.connectionString;
+      } else if (secret.uri) {
+        connectionString = secret.uri;
+      } else if (secret.mongodb_uri) {
+        connectionString = secret.mongodb_uri;
+      } else {
+        const { host, port, database, username, password } = secret;
+        connectionString = `mongodb://${username}:${password}@${host}:${port || 27017}/${database}?authSource=admin`;
+      }
+    } catch (parseError) {
+      // If parsing fails, assume the secret is the connection string directly
+      // This handles cases where the secret is stored as: mongodb+srv://...
+      connectionString = secretValue;
     }
 
     const options = {

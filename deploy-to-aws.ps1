@@ -51,10 +51,6 @@ aws cloudformation deploy `
     --stack-name eventsquid-private-api `
     --parameter-overrides `
         Environment=dev `
-        VpcId=vpc-38dc235f `
-        SubnetIds=subnet-3c625f4a,subnet-3a650c62,subnet-0a504b6e `
-        MongoSecretName=mongodb/eventsquid `
-        MongoDbName=eventsquid `
     --capabilities CAPABILITY_NAMED_IAM `
     --region us-west-2 `
     --profile eventsquid
@@ -71,7 +67,7 @@ aws lambda update-function-code `
 Write-Host "`n5. Updating Lambda function configuration..." -ForegroundColor Green
 aws lambda update-function-configuration `
     --function-name eventsquid-private-api `
-    --environment Variables="{NODE_ENV=dev,MONGO_SECRET_NAME=mongodb/eventsquid,MONGO_DB_NAME=eventsquid}" `
+    --environment Variables="{NODE_ENV=dev,AWS_REGION=us-west-2}" `
     --region us-west-2 `
     --profile eventsquid
 
