@@ -329,6 +329,60 @@ See [MIGRATION_STATUS.md](./MIGRATION_STATUS.md) for detailed migration status.
 - Check API Gateway integration configuration
 
 ### Deployment fails
+
+#### Error: "Credentials could not be loaded, please check your action inputs"
+
+This error occurs when GitHub Actions cannot find or access the AWS credentials. Here's how to fix it:
+
+1. **Verify GitHub Secrets are configured:**
+   - Go to your GitHub repository
+   - Navigate to: **Settings → Secrets and variables → Actions**
+   - Ensure the following secrets are set:
+     - `AWS_ACCESS_KEY_ID` - Must not be empty
+     - `AWS_SECRET_ACCESS_KEY` - Must not be empty
+     - `VPC_ID`
+     - `SUBNET_IDS`
+     - `MONGO_SECRET_NAME`
+     - `MONGO_DB_NAME`
+
+2. **Check secret values are not empty:**
+   - Click on each secret to verify it has a value
+   - Re-enter the values if they appear to be empty
+   - Make sure there are no extra spaces or newlines
+
+3. **Verify AWS IAM User/Key:**
+   - Ensure the AWS access key is valid and not expired
+   - Check that the IAM user has the necessary permissions:
+     - `lambda:UpdateFunctionCode`
+     - `lambda:UpdateFunctionConfiguration`
+     - `lambda:GetFunction`
+     - `cloudformation:CreateStack`
+     - `cloudformation:UpdateStack`
+     - `cloudformation:DescribeStacks`
+     - `iam:PassRole` (for Lambda execution role)
+   - Test the credentials locally:
+     ```bash
+     aws configure set aws_access_key_id YOUR_ACCESS_KEY
+     aws configure set aws_secret_access_key YOUR_SECRET_KEY
+     aws configure set region us-west-2
+     aws sts get-caller-identity
+     ```
+
+4. **Check if workflow is running from a fork:**
+   - GitHub Actions secrets are NOT available in workflows triggered by forks
+   - If this is a fork, you'll need to set up secrets in your fork's repository
+
+5. **Verify workflow file syntax:**
+   - The workflow file should reference secrets correctly: `${{ secrets.AWS_ACCESS_KEY_ID }}`
+   - Check that the "Configure AWS credentials" step is present in the workflow
+
+6. **Alternative: Use OIDC (Recommended for better security):**
+   Instead of access keys, you can use OpenID Connect (OIDC) for authentication:
+   - Configure an OIDC provider in AWS IAM
+   - Update the workflow to use `aws-actions/configure-aws-credentials@v4` with `role-to-assume` instead of access keys
+   - This eliminates the need to store long-lived access keys
+
+#### Other deployment issues:
 - Verify all GitHub secrets are set
 - Check AWS credentials have necessary permissions
 - Verify VPC and subnet IDs are correct
