@@ -57,14 +57,10 @@ This repository contains the migrated EventSquid API from Mantle to AWS Lambda w
 4. **Secrets Manager**: 
    - MongoDB connection string stored as a secret
    - MSSQL connection string stored as a secret (primary-mssql/event-squid)
-5. **GitHub Secrets** configured (for automated deployments):
-   - `AWS_ROLE_ARN` or `AWS_DEPLOY_ROLE_ARN` - IAM role ARN for OIDC authentication (recommended)
-   - `VPC_ID`
-   - `SUBNET_IDS` (comma-separated list)
-   - `MONGO_SECRET_NAME`
-   - `MONGO_DB_NAME`
-   - `SENDGRID_API_KEY` (for email functionality)
-   - `SENDGRID_SENDER` (default sender email)
+5. **AWS Secrets Manager** configured:
+   - MongoDB connection string stored as a secret
+   - MSSQL connection string stored as a secret (primary-mssql/event-squid)
+   - All secrets are managed in AWS Secrets Manager - no GitHub secrets needed
 
 ## Setup
 
@@ -87,20 +83,15 @@ aws cloudformation create-stack \
   --profile eventsquid
 ```
 
-### 2. Configure GitHub Secrets
+### 2. Configure AWS Secrets Manager
 
-In your GitHub repository, go to Settings → Secrets and variables → Actions, and add:
+All secrets are stored in AWS Secrets Manager. No GitHub secrets are needed since deployment is handled by AWS CodePipeline.
 
-- `AWS_ROLE_ARN` or `AWS_DEPLOY_ROLE_ARN`: IAM role ARN for OIDC authentication
-  - Format: `arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME`
-  - To find your role ARN, check with your AWS administrator or look for a role like `github-actions-deploy-role` or similar
-  - The role must have a trust policy allowing GitHub Actions OIDC provider
-- `VPC_ID`: Your VPC ID
-- `SUBNET_IDS`: Comma-separated subnet IDs (e.g., `subnet-123,subnet-456`)
-- `MONGO_SECRET_NAME`: Name of your MongoDB secret in Secrets Manager
-- `MONGO_DB_NAME`: MongoDB database name
+Ensure the following secrets exist in AWS Secrets Manager:
+- MongoDB connection string (referenced by `MongoSecretName` parameter)
+- MSSQL connection string (if needed)
 
-**Note:** The workflow uses OIDC (OpenID Connect) for authentication, which is more secure than access keys. If you need to set up the IAM role for OIDC, see the troubleshooting section below.
+The CodePipeline uses IAM roles with appropriate permissions to access these secrets during deployment.
 
 ### 3. MongoDB Secret Format
 
@@ -333,103 +324,28 @@ See [MIGRATION_STATUS.md](./MIGRATION_STATUS.md) for detailed migration status.
 
 ### Deployment fails
 
-#### Error: "Credentials could not be loaded, please check your action inputs"
+#### Error: "Credentials could not be loaded" or GitHub Actions deployment failures
 
-This error occurs when GitHub Actions cannot authenticate to AWS. The workflow uses OIDC (OpenID Connect) for authentication. Here's how to fix it:
+**This project uses AWS CodePipeline for deployment, not GitHub Actions.**
 
-1. **Verify GitHub Secrets are configured:**
-   - Go to your GitHub repository
-   - Navigate to: **Settings → Secrets and variables → Actions**
-   - Ensure the following secret is set:
-     - `AWS_ROLE_ARN` or `AWS_DEPLOY_ROLE_ARN` - IAM role ARN for OIDC authentication
-   - Also verify these are set:
-     - `VPC_ID`
-     - `SUBNET_IDS`
-     - `MONGO_SECRET_NAME`
-     - `MONGO_DB_NAME`
+If you're seeing GitHub Actions errors:
 
-2. **Find or Create the IAM Role for GitHub Actions:**
-   
-   The role ARN should look like: `arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME`
-   
-   **Option A: If the role already exists:**
-   - Ask your AWS administrator for the GitHub Actions deployment role ARN
-   - Or find it in AWS Console: IAM → Roles → look for roles like:
-     - `github-actions-deploy-role`
-     - `github-oidc-role`
-     - `eventsquid-github-deploy-role`
-   
-   **Option B: If you need to create the role:**
-   ```bash
-   # 1. Create the OIDC provider (if it doesn't exist)
-   aws iam create-open-id-connect-provider \
-     --url https://token.actions.githubusercontent.com \
-     --client-id-list sts.amazonaws.com \
-     --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
-   
-   # 2. Create the IAM role with trust policy
-   # Create a file trust-policy.json:
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Principal": {
-           "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
-         },
-         "Action": "sts:AssumeRoleWithWebIdentity",
-         "Condition": {
-           "StringEquals": {
-             "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-           },
-           "StringLike": {
-             "token.actions.githubusercontent.com:sub": "repo:YOUR_ORG/eventsquid-api-private:*"
-           }
-         }
-       }
-     ]
-   }
-   
-   # 3. Create the role
-   aws iam create-role \
-     --role-name github-actions-deploy-role \
-     --assume-role-policy-document file://trust-policy.json
-   
-   # 4. Attach necessary policies
-   aws iam attach-role-policy \
-     --role-name github-actions-deploy-role \
-     --policy-arn arn:aws:iam::aws:policy/AWSLambda_FullAccess
-   
-   aws iam attach-role-policy \
-     --role-name github-actions-deploy-role \
-     --policy-arn arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
-   
-   # 5. Get the role ARN
-   aws iam get-role --role-name github-actions-deploy-role --query 'Role.Arn' --output text
-   ```
+1. **The GitHub Actions workflow has been removed** - This project uses AWS CodePipeline which handles all deployment automatically
+2. **No GitHub secrets are needed** - CodePipeline uses IAM roles with appropriate permissions
+3. **Deployment is triggered automatically** when you push to the configured branch (main/develop)
 
-3. **Verify the IAM Role has necessary permissions:**
-   The role needs:
-   - `lambda:UpdateFunctionCode`
-   - `lambda:UpdateFunctionConfiguration`
-   - `lambda:GetFunction`
-   - `cloudformation:CreateStack`
-   - `cloudformation:UpdateStack`
-   - `cloudformation:DescribeStacks`
-   - `iam:PassRole` (for Lambda execution role)
-
-4. **Check if workflow is running from a fork:**
-   - GitHub Actions secrets are NOT available in workflows triggered by forks
-   - If this is a fork, you'll need to set up secrets in your fork's repository
-
-5. **Verify OIDC provider is configured:**
-   - The workflow requires `permissions: id-token: write` (already added)
-   - Ensure your AWS account has the GitHub OIDC provider configured
+**If deployment is failing, check:**
+- AWS CodePipeline status in the AWS Console
+- CodeBuild logs for build errors
+- Ensure the CodeStar Connection is properly configured and authorized
+- Verify the pipeline stack is deployed and active
 
 #### Other deployment issues:
-- Verify all GitHub secrets are set
-- Check AWS credentials have necessary permissions
-- Verify VPC and subnet IDs are correct
+- Check CodePipeline status in AWS Console
+- Review CodeBuild logs for specific error messages
+- Verify the CodeStar Connection is authorized and active
+- Ensure the pipeline CloudFormation stack is deployed
+- Verify VPC and subnet IDs are correct in the pipeline parameters
 
 ## Support
 
