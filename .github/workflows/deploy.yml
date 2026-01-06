@@ -28,6 +28,9 @@ jobs:
   deploy:
     name: Deploy Lambda Function
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     
     steps:
       - name: Checkout code
@@ -57,27 +60,10 @@ jobs:
           npm install --production
           zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
 
-      - name: Verify AWS secrets are set
-        run: |
-          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then
-            echo "❌ Error: AWS_ACCESS_KEY_ID secret is not set in GitHub repository settings"
-            echo "Please go to: Settings → Secrets and variables → Actions"
-            echo "And add the AWS_ACCESS_KEY_ID secret"
-            exit 1
-          fi
-          if [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
-            echo "❌ Error: AWS_SECRET_ACCESS_KEY secret is not set in GitHub repository settings"
-            echo "Please go to: Settings → Secrets and variables → Actions"
-            echo "And add the AWS_SECRET_ACCESS_KEY secret"
-            exit 1
-          fi
-          echo "✅ AWS secrets are configured"
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN || secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Determine environment

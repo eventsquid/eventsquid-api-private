@@ -58,8 +58,7 @@ This repository contains the migrated EventSquid API from Mantle to AWS Lambda w
    - MongoDB connection string stored as a secret
    - MSSQL connection string stored as a secret (primary-mssql/event-squid)
 5. **GitHub Secrets** configured (for automated deployments):
-   - `AWS_ACCESS_KEY_ID`
-   - `AWS_SECRET_ACCESS_KEY`
+   - `AWS_ROLE_ARN` or `AWS_DEPLOY_ROLE_ARN` - IAM role ARN for OIDC authentication (recommended)
    - `VPC_ID`
    - `SUBNET_IDS` (comma-separated list)
    - `MONGO_SECRET_NAME`
@@ -92,12 +91,16 @@ aws cloudformation create-stack \
 
 In your GitHub repository, go to Settings → Secrets and variables → Actions, and add:
 
-- `AWS_ACCESS_KEY_ID`: Your AWS access key
-- `AWS_SECRET_ACCESS_KEY`: Your AWS secret key
+- `AWS_ROLE_ARN` or `AWS_DEPLOY_ROLE_ARN`: IAM role ARN for OIDC authentication
+  - Format: `arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME`
+  - To find your role ARN, check with your AWS administrator or look for a role like `github-actions-deploy-role` or similar
+  - The role must have a trust policy allowing GitHub Actions OIDC provider
 - `VPC_ID`: Your VPC ID
 - `SUBNET_IDS`: Comma-separated subnet IDs (e.g., `subnet-123,subnet-456`)
 - `MONGO_SECRET_NAME`: Name of your MongoDB secret in Secrets Manager
 - `MONGO_DB_NAME`: MongoDB database name
+
+**Note:** The workflow uses OIDC (OpenID Connect) for authentication, which is more secure than access keys. If you need to set up the IAM role for OIDC, see the troubleshooting section below.
 
 ### 3. MongoDB Secret Format
 
@@ -332,55 +335,96 @@ See [MIGRATION_STATUS.md](./MIGRATION_STATUS.md) for detailed migration status.
 
 #### Error: "Credentials could not be loaded, please check your action inputs"
 
-This error occurs when GitHub Actions cannot find or access the AWS credentials. Here's how to fix it:
+This error occurs when GitHub Actions cannot authenticate to AWS. The workflow uses OIDC (OpenID Connect) for authentication. Here's how to fix it:
 
 1. **Verify GitHub Secrets are configured:**
    - Go to your GitHub repository
    - Navigate to: **Settings → Secrets and variables → Actions**
-   - Ensure the following secrets are set:
-     - `AWS_ACCESS_KEY_ID` - Must not be empty
-     - `AWS_SECRET_ACCESS_KEY` - Must not be empty
+   - Ensure the following secret is set:
+     - `AWS_ROLE_ARN` or `AWS_DEPLOY_ROLE_ARN` - IAM role ARN for OIDC authentication
+   - Also verify these are set:
      - `VPC_ID`
      - `SUBNET_IDS`
      - `MONGO_SECRET_NAME`
      - `MONGO_DB_NAME`
 
-2. **Check secret values are not empty:**
-   - Click on each secret to verify it has a value
-   - Re-enter the values if they appear to be empty
-   - Make sure there are no extra spaces or newlines
+2. **Find or Create the IAM Role for GitHub Actions:**
+   
+   The role ARN should look like: `arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME`
+   
+   **Option A: If the role already exists:**
+   - Ask your AWS administrator for the GitHub Actions deployment role ARN
+   - Or find it in AWS Console: IAM → Roles → look for roles like:
+     - `github-actions-deploy-role`
+     - `github-oidc-role`
+     - `eventsquid-github-deploy-role`
+   
+   **Option B: If you need to create the role:**
+   ```bash
+   # 1. Create the OIDC provider (if it doesn't exist)
+   aws iam create-open-id-connect-provider \
+     --url https://token.actions.githubusercontent.com \
+     --client-id-list sts.amazonaws.com \
+     --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+   
+   # 2. Create the IAM role with trust policy
+   # Create a file trust-policy.json:
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Principal": {
+           "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+         },
+         "Action": "sts:AssumeRoleWithWebIdentity",
+         "Condition": {
+           "StringEquals": {
+             "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+           },
+           "StringLike": {
+             "token.actions.githubusercontent.com:sub": "repo:YOUR_ORG/eventsquid-api-private:*"
+           }
+         }
+       }
+     ]
+   }
+   
+   # 3. Create the role
+   aws iam create-role \
+     --role-name github-actions-deploy-role \
+     --assume-role-policy-document file://trust-policy.json
+   
+   # 4. Attach necessary policies
+   aws iam attach-role-policy \
+     --role-name github-actions-deploy-role \
+     --policy-arn arn:aws:iam::aws:policy/AWSLambda_FullAccess
+   
+   aws iam attach-role-policy \
+     --role-name github-actions-deploy-role \
+     --policy-arn arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+   
+   # 5. Get the role ARN
+   aws iam get-role --role-name github-actions-deploy-role --query 'Role.Arn' --output text
+   ```
 
-3. **Verify AWS IAM User/Key:**
-   - Ensure the AWS access key is valid and not expired
-   - Check that the IAM user has the necessary permissions:
-     - `lambda:UpdateFunctionCode`
-     - `lambda:UpdateFunctionConfiguration`
-     - `lambda:GetFunction`
-     - `cloudformation:CreateStack`
-     - `cloudformation:UpdateStack`
-     - `cloudformation:DescribeStacks`
-     - `iam:PassRole` (for Lambda execution role)
-   - Test the credentials locally:
-     ```bash
-     aws configure set aws_access_key_id YOUR_ACCESS_KEY
-     aws configure set aws_secret_access_key YOUR_SECRET_KEY
-     aws configure set region us-west-2
-     aws sts get-caller-identity
-     ```
+3. **Verify the IAM Role has necessary permissions:**
+   The role needs:
+   - `lambda:UpdateFunctionCode`
+   - `lambda:UpdateFunctionConfiguration`
+   - `lambda:GetFunction`
+   - `cloudformation:CreateStack`
+   - `cloudformation:UpdateStack`
+   - `cloudformation:DescribeStacks`
+   - `iam:PassRole` (for Lambda execution role)
 
 4. **Check if workflow is running from a fork:**
    - GitHub Actions secrets are NOT available in workflows triggered by forks
    - If this is a fork, you'll need to set up secrets in your fork's repository
 
-5. **Verify workflow file syntax:**
-   - The workflow file should reference secrets correctly: `${{ secrets.AWS_ACCESS_KEY_ID }}`
-   - Check that the "Configure AWS credentials" step is present in the workflow
-
-6. **Alternative: Use OIDC (Recommended for better security):**
-   Instead of access keys, you can use OpenID Connect (OIDC) for authentication:
-   - Configure an OIDC provider in AWS IAM
-   - Update the workflow to use `aws-actions/configure-aws-credentials@v4` with `role-to-assume` instead of access keys
-   - This eliminates the need to store long-lived access keys
+5. **Verify OIDC provider is configured:**
+   - The workflow requires `permissions: id-token: write` (already added)
+   - Ensure your AWS account has the GitHub OIDC provider configured
 
 #### Other deployment issues:
 - Verify all GitHub secrets are set
