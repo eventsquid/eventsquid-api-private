@@ -36,7 +36,7 @@
     "uuid": "^11.0.3",
     "axios": "^1.7.9",
     "qr-image": "^3.2.0",
-    "mssql": "^10.0.0",
+    "mssql": "^12.2.0",
     "@touch4it/ical-timezones": "^1.5.0",
     "twilio": "^5.3.5",
     "authorizenet": "^1.0.7",
