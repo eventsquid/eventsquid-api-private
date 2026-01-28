@@ -107,7 +107,7 @@ Resources:
                   - ec2:DescribeSubnets
                   - ec2:DescribeSecurityGroups
               - Effect: Allow
-                Resource: !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:eventsquid-private-api-errors-*
+                Resource: '*'
                 Action:
                   - sns:GetTopicAttributes
               - Effect: Allow
