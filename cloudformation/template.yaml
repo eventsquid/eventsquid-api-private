@@ -24,7 +24,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: eventsquid-private-api-lambda-role
+      RoleName: !Sub eventsquid-private-api-lambda-role-${Environment}
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -70,7 +70,7 @@ Resources:
   LambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: eventsquid-private-api
+      FunctionName: !Sub eventsquid-private-api-${Environment}
       Runtime: nodejs24.x
       Handler: src/handler.handler
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -116,7 +116,7 @@ Resources:
     Properties:
       ApiId: !Ref ApiGatewayRestApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations'
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:eventsquid-private-api-${Environment}:live-${Environment}/invocations'
       PayloadFormatVersion: '2.0'
 
   # API Gateway Route - Catch all
@@ -163,14 +163,14 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: '/aws/lambda/eventsquid-private-api'
+      LogGroupName: !Sub '/aws/lambda/eventsquid-private-api-${Environment}'
       RetentionInDays: 14
 
   # SNS Topic for Error Notifications
   ErrorNotificationTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: eventsquid-private-api-errors
+      TopicName: !Sub eventsquid-private-api-errors-${Environment}
       DisplayName: EventSquid Private API Errors
       Tags:
         - Key: Environment
@@ -206,23 +206,23 @@ Outputs:
     Description: API Gateway endpoint URL
     Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
     Export:
-      Name: eventsquid-private-api-url
+      Name: !Sub eventsquid-private-api-url-${Environment}
 
   LambdaFunctionArn:
     Description: Lambda function ARN
     Value: !GetAtt LambdaFunction.Arn
     Export:
-      Name: eventsquid-private-api-lambda-arn
+      Name: !Sub eventsquid-private-api-lambda-arn-${Environment}
 
   LambdaFunctionName:
     Description: Lambda function name
     Value: !Ref LambdaFunction
     Export:
-      Name: eventsquid-private-api-lambda-name
+      Name: !Sub eventsquid-private-api-lambda-name-${Environment}
 
   ErrorNotificationTopicArn:
     Description: SNS Topic ARN for error notifications
     Value: !Ref ErrorNotificationTopic
     Export:
-      Name: eventsquid-private-api-error-topic-arn
+      Name: !Sub eventsquid-private-api-error-topic-arn-${Environment}
 

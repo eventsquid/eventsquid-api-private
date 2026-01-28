@@ -15,6 +15,11 @@ Parameters:
     Type: String
     Description: GitHub branch name
     Default: main
+
+  DeploymentEnvironment:
+    Type: String
+    Description: Deployment stage name (e.g. dev, v1)
+    Default: dev
   
   GitHubConnectionArn:
     Type: String
@@ -158,6 +163,9 @@ Resources:
           - Name: AWS_REGION
             Value: us-west-2
             Type: PLAINTEXT
+          - Name: DEPLOY_ENV
+            Value: !Ref DeploymentEnvironment
+            Type: PLAINTEXT
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
@@ -172,10 +180,12 @@ Resources:
               commands:
                 - npm install --production
                 - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
-                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides Environment=dev --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
-                - aws lambda update-function-code --function-name eventsquid-private-api --zip-file fileb://function.zip --region ${AWS_REGION}
-                - aws lambda wait function-updated --function-name eventsquid-private-api --region ${AWS_REGION}
-                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=dev}" --region ${AWS_REGION}
+                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api-${DEPLOY_ENV} --parameter-overrides Environment=${DEPLOY_ENV} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
+                - aws lambda update-function-code --function-name eventsquid-private-api-${DEPLOY_ENV} --zip-file fileb://function.zip --region ${AWS_REGION}
+                - aws lambda wait function-updated --function-name eventsquid-private-api-${DEPLOY_ENV} --region ${AWS_REGION}
+                - aws lambda update-function-configuration --function-name eventsquid-private-api-${DEPLOY_ENV} --environment Variables="{NODE_ENV=${DEPLOY_ENV}}" --region ${AWS_REGION}
+                - VERSION=$(aws lambda publish-version --function-name eventsquid-private-api-${DEPLOY_ENV} --region ${AWS_REGION} --query 'Version' --output text)
+                - aws lambda update-alias --function-name eventsquid-private-api-${DEPLOY_ENV} --name live-${DEPLOY_ENV} --function-version $VERSION --region ${AWS_REGION} || aws lambda create-alias --function-name eventsquid-private-api-${DEPLOY_ENV} --name live-${DEPLOY_ENV} --function-version $VERSION --region ${AWS_REGION}
           artifacts:
             files: '**/*'
 
