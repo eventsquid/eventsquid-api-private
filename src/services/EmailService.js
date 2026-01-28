@@ -99,10 +99,11 @@ class EmailService {
       const userIDsRA = _.map(detailsRA, 'tou').filter(id => id);
 
       if (userIDsRA.length > 0) {
-        const connection = await getConnection(vert);
+        const sql = await getConnection(vert);
         const dbName = getDatabaseName(vert);
 
-        const userDetailsRA = await connection.sql(`
+        const request = new sql.Request();
+        const result = await request.query(`
           USE ${dbName};
           SELECT
             user_firstname AS uf,
@@ -110,7 +111,8 @@ class EmailService {
             [user_id] AS u
           FROM b_users
           WHERE user_id IN (${userIDsRA.join(',')})
-        `).execute();
+        `);
+        const userDetailsRA = result.recordset;
 
         // Loop the email details
         for (let i = 0; i < detailsRA.length; i++) {
@@ -239,10 +241,12 @@ class EmailService {
       // Gets a list of mailIDs for grabbing data from mailLog table in SQL
       const mailIDs = emailLogs.length ? _.map(emailLogs, 'mi') : [0];
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const emailsRA = await connection.sql(`
+      const request = new sql.Request();
+      request.input('affiliateID', sql.Int, Number(affiliateID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT TOP 100
           m.mailID,
@@ -261,9 +265,8 @@ class EmailService {
         WHERE m.affiliate_id = @affiliateID
         AND m.mailID IN (${mailIDs.join(',')})
         ORDER BY m.sendDate DESC
-      `)
-      .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-      .execute();
+      `);
+      const emailsRA = result.recordset;
 
       const maxEmailID = (Array.isArray(emailsRA) && emailsRA.length
         ? _.maxBy(emailsRA, 'mailID').mailID
@@ -354,7 +357,7 @@ class EmailService {
 
       if (!emailLogs.length) return [];
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Gets a list of mailIDs for grabbing data from mailLog table in SQL
@@ -362,7 +365,8 @@ class EmailService {
       // Gets a list of userIDs for grabbing the admin's data from b_users
       const adminIDs = _.map(emailLogs, 'fmu');
 
-      const mailData = await connection.sql(`
+      const request1 = new sql.Request();
+      const result1 = await request1.query(`
         USE ${dbName};
         SELECT
           mailID,
@@ -374,27 +378,31 @@ class EmailService {
           sendDescription
         FROM mailLog
         WHERE mailID IN (${mailIDs.join(',')})
-      `).execute();
+      `);
+      const mailData = result1.recordset;
 
-      const adminData = await connection.sql(`
+      const request2 = new sql.Request();
+      const result2 = await request2.query(`
         USE ${dbName};
         SELECT
           user_id,
           user_firstname + ' ' + user_lastname as adminName
         FROM b_users
         WHERE user_id IN (${adminIDs.join(',')})
-      `).execute();
+      `);
+      const adminData = result2.recordset;
 
-      const eventZone = await connection.sql(`
+      const request3 = new sql.Request();
+      request3.input('eventID', sql.Int, Number(id));
+      const result3 = await request3.query(`
         USE ${dbName};
         SELECT TOP 1
           ISNULL(tz.zoneName, '') zoneName
         FROM b_events e
         LEFT JOIN b_timezones tz on tz.timeZoneID = e.timeZone_id
         WHERE event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(id))
-      .execute();
+      `);
+      const eventZone = result3.recordset;
 
       const zoneName = eventZone.length ? eventZone[0].zoneName : '';
 
@@ -573,11 +581,12 @@ class EmailService {
         };
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Generate SQL query to grab all the mail data from SQL
-      const mailData = await connection.sql(`
+      const sqlRequest = new sql.Request();
+      const result = await sqlRequest.query(`
         USE ${dbName};
         SELECT
           m.mailID,
@@ -596,7 +605,8 @@ class EmailService {
         FROM mailLog m
         WHERE m.mailID IN (${_.map(logs, 'mi').join(',')})
         ORDER BY m.sendDate desc
-      `).execute();
+      `);
+      const mailData = result.recordset;
 
       // Map through the mongo records and grab appropriate SQL data
       logs = logs.map(log => {

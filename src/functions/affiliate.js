@@ -12,10 +12,12 @@ import _ from 'lodash';
  */
 export async function populateAffMerchant(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    await request.query(`
       USE ${dbName};
       IF NOT EXISTS (
         SELECT affiliate_id FROM affiliateMerchant WHERE affiliate_id = @affiliateID
@@ -23,9 +25,7 @@ export async function populateAffMerchant(affiliateID, vert) {
       BEGIN
         INSERT INTO affiliateMerchant (affiliate_id) VALUES (@affiliateID)
       END
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
   } catch (error) {
     console.error('Error populating affiliate merchant:', error);
     throw error;
@@ -37,10 +37,12 @@ export async function populateAffMerchant(affiliateID, vert) {
  */
 export async function getGatewaysSQL(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT
         payMethod,
@@ -74,9 +76,8 @@ export async function getGatewaysSQL(affiliateID, vert) {
         [auth_sandbox]
       FROM affiliateMerchant
       WHERE affiliate_id = @affiliateID
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     if (!results || !results.length) {
       return { gatewaysRA: [], enabledGatwaysRA: [] };
@@ -233,17 +234,17 @@ export async function getGateways(affiliateID, vert) {
  */
 export async function resetPaymentProcessor(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    await request.query(`
       USE ${dbName};
       UPDATE affiliateMerchant
       SET payMethod = NULL
       WHERE affiliate_id = @affiliateID
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
 
     return { success: true };
   } catch (error) {
@@ -258,20 +259,20 @@ export async function resetPaymentProcessor(affiliateID, vert) {
 export async function updateGatewayDefaults(affiliateID, isDefault, vert) {
   try {
     if (Number(affiliateID) > 0 && isDefault) {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
       const gateways = db.collection('gateways');
 
       // Update payMethod in SQL
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('affiliateID', sql.Int, Number(affiliateID));
+      await request.query(`
         USE ${dbName};
         UPDATE affiliateMerchant
         SET payMethod = ''
         WHERE affiliate_id = @affiliateID
-      `)
-      .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-      .execute();
+      `);
 
       // Set all gateway defaults to false in MongoDB
       await gateways.updateMany(
@@ -298,25 +299,37 @@ export async function updateGateway(affiliateID, gatewayID, form, vert) {
       const gateways = db.collection('gateways');
 
       // Map gatewayID to payment method
+      // Note: PayZang and Vantiv use lowercase in MongoDB (matching old codebase)
+      // Stripe and others use capitalized format
       const gatewayMap = {
         'stripe': 'Stripe',
         'authnet': 'AuthNet',
         'paypalexpress': 'PayPalExpress',
         'paypalpayflow': 'PayPalPayflow',
-        'payzang': 'PayZang',
-        'vantiv-worldpay': 'Vantiv-Worldpay'
+        'payzang': 'payzang',  // Lowercase to match existing MongoDB documents
+        'vantiv-worldpay': 'vantiv-worldpay'  // Lowercase to match existing MongoDB documents
       };
 
       const pm = gatewayMap[gatewayID.toLowerCase()] || gatewayID;
 
       // Update gateway in MongoDB
+      // Exclude fields that we set explicitly or shouldn't be updated
+      // Note: 'pm' is already declared above, so we exclude it from form without destructuring it
+      const { lu, a: aFromForm, pm: pmFromForm, _id, initialIsDefault, isNew, ...formWithoutExcluded } = form;
+      
+      // Explicitly remove any remaining instances of excluded fields to prevent conflicts
+      delete formWithoutExcluded.lu;
+      delete formWithoutExcluded.a;
+      delete formWithoutExcluded.pm;
+      delete formWithoutExcluded._id;
+      delete formWithoutExcluded.initialIsDefault;  // Exclude initialIsDefault - it's only used for UI state
+      delete formWithoutExcluded.isNew;  // Exclude isNew - it's only used for UI state to track if gateway is new
+      
       const updateObj = {
         $currentDate: { lu: { $type: 'date' } },
         $set: {
-          ...form,
-          isDefault: form.isDefault || false,
-          a: Number(affiliateID),
-          pm: pm
+          ...formWithoutExcluded,
+          isDefault: form.isDefault || false
         },
         $setOnInsert: {
           a: Number(affiliateID),
@@ -336,17 +349,17 @@ export async function updateGateway(affiliateID, gatewayID, form, vert) {
 
       // If this is set as default, update MSSQL payMethod
       if (form.isDefault) {
-        const connection = await getConnection(vert);
+        const sql = await getConnection(vert);
         const dbName = getDatabaseName(vert);
-        await connection.sql(`
+        const request = new sql.Request();
+        request.input('affiliateID', sql.Int, Number(affiliateID));
+        request.input('payMethod', sql.VarChar, gatewayID.toLowerCase());
+        await request.query(`
           USE ${dbName};
           UPDATE affiliateMerchant
           SET payMethod = @payMethod
           WHERE affiliate_id = @affiliateID
-        `)
-        .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-        .parameter('payMethod', TYPES.VarChar, gatewayID.toLowerCase())
-        .execute();
+        `);
       }
 
       return { success: true, gatewayID, message: 'Gateway updated successfully' };
@@ -366,17 +379,19 @@ export async function deleteGateway(affiliateID, gatewayID, vert) {
     if (Number(affiliateID) > 0) {
       const db = await getDatabase(null, vert);
       const gateways = db.collection('gateways');
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Map gatewayID to payment method
+      // Note: PayZang and Vantiv use lowercase in MongoDB (matching old codebase)
+      // Stripe and others use capitalized format
       const gatewayMap = {
         'stripe': 'Stripe',
         'authnet': 'AuthNet',
         'paypalexpress': 'PayPalExpress',
         'paypalpayflow': 'PayPalPayflow',
-        'payzang': 'PayZang',
-        'vantiv-worldpay': 'Vantiv-Worldpay'
+        'payzang': 'payzang',  // Lowercase to match existing MongoDB documents
+        'vantiv-worldpay': 'vantiv-worldpay'  // Lowercase to match existing MongoDB documents
       };
 
       const pm = gatewayMap[gatewayID.toLowerCase()] || gatewayID;
@@ -389,11 +404,11 @@ export async function deleteGateway(affiliateID, gatewayID, vert) {
       });
 
       // Mark gateway as deleted in MongoDB
-      await gateways.updateOne(
+      // Match old behavior: use updateMany (old code didn't check isDeleted in the query)
+      await gateways.updateMany(
         {
           a: Number(affiliateID),
-          pm: pm,
-          isDeleted: { $exists: false }
+          pm: pm
         },
         {
           $set: { isDeleted: true },
@@ -460,14 +475,13 @@ export async function deleteGateway(affiliateID, gatewayID, vert) {
 
       if (updateFields.length > 0) {
         sqlQry += updateFields.join(', ') + ' WHERE affiliate_id = @affiliateID';
-        await connection.sql(sqlQry)
-          .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-          .execute();
+        const request = new sql.Request();
+        request.input('affiliateID', sql.Int, Number(affiliateID));
+        await request.query(sqlQry);
       }
 
-      return { success: true, gatewayID, message: 'Gateway deleted successfully' };
+      // Match old behavior: don't return anything (old code returns undefined)
     }
-    return { success: false, message: 'Invalid affiliate ID' };
   } catch (error) {
     console.error('Error deleting gateway:', error);
     throw error;

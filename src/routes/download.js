@@ -3,10 +3,8 @@
  * Public endpoint - no auth required
  */
 
-import { successResponse, errorResponse } from '../utils/response.js';
-import DownloadService from '../services/DownloadService.js';
-
-const _downloadService = new DownloadService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _downloadService from '../services/DownloadService.js';
 
 /**
  * GET /download/:fileGUID/:checkID
@@ -22,7 +20,7 @@ export const downloadFileRoute = {
       if (result && result.statusCode) {
         return result;
       }
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error downloading file:', error);
       return errorResponse('Failed to download file', 500, error.message);

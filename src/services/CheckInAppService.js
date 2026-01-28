@@ -5,9 +5,7 @@
 
 import { getDatabase } from '../utils/mongodb.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
-import EventService from './EventService.js';
-
-const _eventService = new EventService();
+import _eventService from './EventService.js';
 
 class CheckInAppService {
   /**
@@ -17,21 +15,22 @@ class CheckInAppService {
     try {
       const eventID = Number(request.pathParameters.eventID);
       const vert = request.vert;
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Get event preferences
-      const eventPreferences = await connection.sql(`
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('eventID', sql.Int, eventID);
+      const result = await sqlRequest.query(`
         USE ${dbName};
         SELECT autoAdvance, autoAdvanceRevert, multiDayCheckIn
         FROM b_events
         WHERE event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .execute();
+      `);
+      const eventPreferences = result.recordset;
 
       // Get reg items
-      const regItems = await this.getRegItemsByEventID(eventID, vert, connection, dbName);
+      const regItems = await this.getRegItemsByEventID(eventID, vert, sql, dbName);
 
       // Get event duration
       const eventDuration = await _eventService.getEventDuration(eventID, vert);
@@ -52,9 +51,11 @@ class CheckInAppService {
   /**
    * Get reg items by event ID
    */
-  async getRegItemsByEventID(eventID, vert, connection, dbName) {
+  async getRegItemsByEventID(eventID, vert, sql, dbName) {
     try {
-      const regItems = await connection.sql(`
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('eventID', sql.Int, Number(eventID));
+      const result = await sqlRequest.query(`
         USE ${dbName};
         SELECT 
           ef.eventFeeID, 
@@ -75,11 +76,9 @@ class CheckInAppService {
         FULL OUTER JOIN event_fee_groups efg ON ef.group_id = efg.group_id
         WHERE ef.event_id = @eventID AND (invisible IS NULL OR invisible != 1)
         ORDER BY fee_type_id
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
 
-      return regItems;
+      return result.recordset;
     } catch (error) {
       console.error('Error getting reg items by event ID:', error);
       throw error;
@@ -161,19 +160,19 @@ class CheckInAppService {
           return {};
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Update MSSQL
-      await connection.sql(`
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('updatedValue', valueType, updatedValue);
+      sqlRequest.input('conditionValue', sql.Int, conditionValue);
+      await sqlRequest.query(`
         USE ${dbName};
         UPDATE ${table}
         SET ${column} = @updatedValue
         WHERE ${condition} = @conditionValue
-      `)
-      .parameter('updatedValue', valueType, updatedValue)
-      .parameter('conditionValue', TYPES.Int, conditionValue)
-      .execute();
+      `);
 
       // If updating event_fees, sync to MongoDB
       if (table === 'event_fees') {

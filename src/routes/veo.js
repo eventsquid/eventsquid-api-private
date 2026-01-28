@@ -6,10 +6,9 @@
 import { createResponse } from '../utils/response.js';
 import { authenticate, verticalCheck } from '../middleware/auth.js';
 import VEOService from '../services/VEOService.js';
-import EventService from '../services/EventService.js';
+import eventService from '../services/EventService.js';
 
 const veoService = new VEOService();
-const eventService = new EventService();
 
 // Get share URL by event ID
 export const getShareURLByEventIDRoute = {

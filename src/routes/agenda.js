@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import AgendaService from '../services/AgendaService.js';
-
-const _agendaService = new AgendaService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _agendaService from '../services/AgendaService.js';
 
 /**
  * GET /agenda/agendaSlots/:eventID
@@ -19,7 +17,8 @@ export const getAgendaSlotsRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _agendaService.getAgendaData(request);
-      return successResponse(result);
+      // Return data directly without wrapper (matching old codebase behavior)
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting agenda data:', error);
       return errorResponse('Failed to get agenda data', 500, error.message);
@@ -43,7 +42,7 @@ export const addSponsorToSlotRoute = {
       }
       
       const result = await _agendaService.addSponsorToSlot(eventID, slotID, sponsorID, request.vert);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error adding sponsor to slot:', error);
       return errorResponse('Failed to add sponsor to slot', 500, error.message);
@@ -72,7 +71,7 @@ export const toggleSponsorSlotBindingRoute = {
         Number(sponsorID),
         request.vert
       );
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error toggling sponsor slot binding:', error);
       return errorResponse('Failed to toggle sponsor slot binding', 500, error.message);
@@ -96,7 +95,7 @@ export const removeSponsorFromSlotRoute = {
       }
       
       const result = await _agendaService.removeSponsorFromSlot(eventID, slotID, sponsorID, request.vert);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error removing sponsor from slot:', error);
       return errorResponse('Failed to remove sponsor from slot', 500, error.message);
@@ -115,7 +114,7 @@ export const getGroupedAgendaSlotsRoute = {
     try {
       const eventID = request.pathParameters.eventID;
       const data = await _agendaService.getAgendaSlotData(eventID, request.vert);
-      return successResponse(data);
+      return createResponse(200, data);
     } catch (error) {
       console.error('Error getting grouped agenda slots:', error);
       return errorResponse('Failed to get grouped agenda slots', 500, error.message);
@@ -135,7 +134,7 @@ export const getVEOAgendaDataRoute = {
       const eventGUID = request.pathParameters.eventGUID;
       const userID = request.session?.user_id;
       const data = await _agendaService.getVEOAgendaData(eventGUID, userID, request.vert);
-      return successResponse(data);
+      return createResponse(200, data);
     } catch (error) {
       console.error('Error getting VEO agenda data:', error);
       return errorResponse('Failed to get VEO agenda data', 500, error.message);
@@ -156,7 +155,7 @@ export const getAgendaSlotRoute = {
       const slotID = request.pathParameters.slotID;
       const userID = request.session?.user_id;
       const data = await _agendaService.getAgendaSlot(eventGUID, slotID, userID, request.vert);
-      return successResponse(data);
+      return createResponse(200, data);
     } catch (error) {
       console.error('Error getting agenda slot:', error);
       return errorResponse('Failed to get agenda slot', 500, error.message);
@@ -190,7 +189,7 @@ export const getMobileSlotResourcesRoute = {
         resource.resource_type.indexOf('video-embed-') === -1
       );
       
-      return successResponse(data);
+      return createResponse(200, data);
     } catch (error) {
       console.error('Error getting mobile slot resources:', error);
       return errorResponse('Failed to get mobile slot resources', 500, error.message);

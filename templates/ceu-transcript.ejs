@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CE Transcript</title>
+    <style>
+      :root {
+        --main-font-color: #707070;
+        --dark-font: #5a5757;
+        --light-font: #ffffff;
+        --light-gray: #f8f8f8;
+        --black: #000;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        border-spacing: 0;
+      }
+
+      html,
+      body {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+
+      body {
+        padding: 1rem;
+      }
+
+      /* Remove default margin */
+      body,
+      h1,
+      h2,
+      h3,
+      h4,
+      p,
+      figure,
+      blockquote,
+      dl,
+      dd {
+        color: var(--main-font-color);
+        margin: 0;
+        font-family: Helvetica Neue, sans-serif;
+      }
+      input[type="checkbox"] {
+        height: 1rem;
+        width: 1rem;
+      }
+      /* Header Stuff */
+      #header {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--main-font-color);
+        margin-bottom: 0.5rem;
+        padding-bottom: 1.5rem;
+        position: relative;
+      }
+
+      #personal-info {
+        display: flex;
+        flex-direction: column;
+        position:absolute;
+        left:0;
+        font-size: .9em;
+      }
+
+      #logo-holder {
+        z-index: -1;
+        width: 100%;
+        justify-content: center;
+        align-items: center;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .logo {
+        height: 100px;
+        width: auto;
+      }
+
+      #document-label {
+        text-align: right;
+        right:0;
+        position:absolute;
+      }
+
+      /* Details Stuff */
+      #details {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 2rem;
+      }
+
+      .host-details {
+        margin-left: auto;
+      }
+
+      .round-box {
+        border-radius: 7px;
+        background: var(--light-gray);
+        padding: 1rem;
+        font-size: 14px !important;
+        width: 33%;
+      }
+
+      .round-box input[type="checkbox"] {
+        margin-right: 10px;
+      }
+      .round-box p {
+        display: inline-block;
+      }
+
+      .round-box.host-details {
+          display: flex;
+          flex-direction: column;
+      }
+
+      .checkbox-group {
+          display: flex;
+          align-items: center;
+      }
+
+      /* Table Stuff */
+      #table {
+        flex: 1;
+        width: 100%;
+        font-size: .9em;
+      }
+      th {
+        font-weight: normal;
+      }
+      #table table {
+        width: 100%;
+        page-break-inside: auto;
+        font-weight: normal;
+      }
+
+      #table table tr {
+        page-break-inside: avoid;
+        page-break-after: auto;
+      }
+
+      #table thead tr {
+        text-align: left;
+      }
+
+      .data-body tr td {
+        padding: 0.75rem 0 0.75rem 0.75rem;
+      }
+
+      #table #column-boxes th {
+        padding: 0 0.75rem;
+      }
+      #table #column-boxes th input {
+        margin-bottom: .5rem;
+      }
+      #table #column-names {
+        background: var(--dark-font);
+        color: var(--light-font);
+      }
+
+      #table #column-names th {
+        padding: 0.75rem 0.75rem;
+        font-size: .9em;
+        font-weight: bold;
+      }
+
+      #table tbody.data-body tr:nth-child(even) {
+        background-color: var(--light-gray);
+      }
+
+      /* Footer stuff */
+      .footer-content {
+        text-align: right;
+        font-size: .7em;
+        margin-top: 25px;
+        page-break-inside: avoid;
+      }
+
+      .footer-content p {
+        font-size: 13px;
+        margin: 0.5rem 0;
+      }
+
+      #official-text {
+        padding: 1rem;
+        font-size: 1em;
+        text-align: center;
+        color: var(--black);
+      }
+
+      .dark-text {
+        color: var(--dark-font);
+        font-weight: bold;
+        font-size: 1.2em;
+      }
+
+      .bold-label {
+        font-weight: bold;
+      }
+      table {
+        page-break-inside: auto;
+        display: table;
+      }
+      tr {
+        page-break-inside: avoid;
+        page-break-after: auto;
+      }
+      #main-head {
+        display: table-header-group;
+      }
+
+      @page {
+        size: A4 landscape;
+      }
+
+      .table-container {
+        height: auto;
+      }
+
+      .transcript-summary {
+        padding:20px;
+        background:#eee;
+      }
+
+      .transcript-summary table {
+        width: 480;
+        margin: auto;
+        border-collapse: collapse;
+        font-size: .9em;
+      }
+
+      .transcript-summary thead {
+        border-bottom: 1px solid var(--black);
+        text-align: left;
+      }
+
+      .transcript-summary .text-center {
+        text-align: center;
+      }
+
+      .transcript-summary .text-right {
+        text-align: right;
+      }
+
+      .transcript-summary .total-awarded-header {
+        width: 8rem;
+        text-align: right;
+      }
+
+      .main-foot {
+        display: none;
+      }
+
+      footer {
+        position: relative;
+        bottom: 0;
+        width: 100%;
+        left: 0;
+        padding: 1rem;
+      }
+
+      @media print {
+        footer {
+          position: fixed;
+          bottom: 0;
+          padding: 0;
+          width: 100%;
+        }
+        body {
+          padding: 0;
+          margin-bottom: 50px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="pdf-header">
+      <div id="header">
+        <div id="personal-info">
+          <table>
+            <thead>
+              <tr>
+                <% if(editMode){ %>
+                <th></th>
+                <% } %>
+                <th></th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% if(editMode || nameInHeader){ %>
+                <tr>
+                  <% if(editMode){ %>
+                  <td>
+                    <input <% if (nameInHeader) { %> checked <% } %> type="checkbox" onchange="emitEvent('nameInHeader', Number(this.checked))"/>
+                  </td>
+                  <% } %>
+                  <td class="bold-label">Name:</td>
+                  <td><%= username %></td>
+                </tr>
+              <% } %>
+              <% if(editMode || emailInHeader){ %>
+                <tr>
+                  <% if(editMode){ %>
+                  <td>
+                    <input <% if (emailInHeader) { %> checked <% } %> type="checkbox" onchange="emitEvent('emailInHeader', Number(this.checked))"/>
+                  </td>
+                  <% } %>
+                  <td class="bold-label">Email:</td>
+                  <td><%= useremail %></td>
+                </tr>
+              <% } %>
+              <% if(editMode || mobileHeader){ %>
+                <tr>
+                  <% if(editMode){ %>
+                  <td>
+                    <input <% if (mobileHeader) { %> checked <% } %> type="checkbox" onchange="emitEvent('mobileHeader', Number(this.checked))"/>
+                  </td>
+                  <% } %>
+                  <td class="bold-label">Mobile:</td>
+                  <td><%= usermobile %></td>
+                </tr>
+              <% } %>
+              <% if(editMode || phoneInHeader){ %>
+                <tr>
+                  <% if(editMode){ %>
+                  <td>
+                    <input <% if (phoneInHeader) { %> checked <% } %> type="checkbox" onchange="emitEvent('phoneInHeader', Number(this.checked))"/>
+                  </td>
+                  <% } %>
+                  <td class="bold-label">Phone:</td>
+                  <td><%= userphone %></td>
+                </tr>
+              <% } %>
+              <% if(editMode || orgInHeader){ %>
+                <tr>
+                  <% if(editMode){ %>
+                  <td>
+                    <input <% if (orgInHeader) { %> checked <% } %> type="checkbox" onchange="emitEvent('orgInHeader', Number(this.checked))"/>
+                  </td>
+                  <% } %>
+                  <td class="bold-label">Org:</td>
+                  <td><%= userorg %></td>
+                </tr>
+              <% } %>
+            </tbody>
+          </table>
+        </div>
+        <div id="logo-holder">
+          <img class="logo" src="<%= editMode && !logo ? 'https://via.placeholder.com/150' : logo %>" />
+          <% if(showOrgBelowLogo){ %><p class="dark-text"><%= affiliatename %></p><% } %>
+        </div>
+        <div id="document-label">
+          <h2 class="dark-text">OFFICIAL TRANSCRIPT</h2>
+          <p><%= generatedDate %></p>
+        </div>
+      </div>
+      <div id="details">
+        <% if(editMode || (custom_field_1 || custom_field_2)){ %>
+        <div class="round-box">
+          <p class="bold-label">Recipient Details</p>
+          <br />
+          <table>
+            <thead>
+              <th></th>
+              <th></th>
+            </thead>
+            <tbody>
+              <% if(editMode || custom_field_1){ %>
+                <tr>
+                  <td class="bold-label"><%= editMode ? 'Custom Field 1:' : custom_field_1.label + ':' %></td>
+                  <td><%= editMode ? '[value]' : custom_field_1.value %></td>
+                </tr>
+              <% } %>
+              <% if(editMode || custom_field_2){ %>
+                <tr>
+                  <td class="bold-label"><%= editMode ? 'Custom Field 2:' : custom_field_2.label + ':'%></td>
+                  <td><%= editMode ? '[value]' : custom_field_2.value %></td>
+                </tr>
+              <% } %>
+            </tbody>
+          </table>
+        </div>
+        <% } %>
+        <% if(editMode || (orgInHostDetails || orgPhoneInHostDetails)){ %>
+        <div class="round-box host-details">
+          <p class="bold-label">Host Details</p>
+          <div class="checkbox-group">
+            <% if(editMode){ %>
+              <input <% if (orgInHostDetails) { %> checked <% } %> type="checkbox" onchange="emitEvent('orgInHostDetails', Number(this.checked))"/>
+            <% } %>
+
+            <% if(editMode || orgInHostDetails){ %>
+              <p><%= editMode ? (orgName ? orgName : 'Default Org Name') : (orgName ? orgName : '') %></p>
+            <% } %>
+          </div>
+          <div class="checkbox-group">
+            <% if(editMode){ %>
+              <input <% if (orgPhoneInHostDetails) { %> checked <% } %> type="checkbox" onchange="emitEvent('orgPhoneInHostDetails', Number(this.checked))"/>
+            <% } %>
+            <% if(editMode || orgPhoneInHostDetails){ %>
+              <p><%= editMode ? (orgPhone ? orgPhone : 'Default Org Phone') : (orgPhone ? orgPhone : '') %></p>
+            <% } %>
+          </div>
+          <div class="checkbox-group">
+            <% if(editMode){ %>
+              <input <% if (orgContactInHostDetails) { %> checked <% } %> type="checkbox" onchange="emitEvent('orgContactInHostDetails', Number(this.checked))"/>
+            <% } %>
+            <% if(editMode || orgContactInHostDetails){ %>
+              <p><%= editMode ? (orgContact ? orgContact : 'Default Org Contact') : (orgContact ? orgContact : '') %></p>
+            <% } %>
+          </div>
+          <br />
+        </div>
+        <% } %>
+      </div>
+    </div>
+    <div class="table-container">
+      <table id="table">
+        <thead id="main-head">
+          <% if(editMode){ %>
+          <tr id="column-boxes">
+            <th>
+              <input <% if (showColDate == 1) { %> checked <% } %> type="checkbox" onchange="emitEvent('showColDate', Number(this.checked))">
+            </th>
+            <th colspan="2">
+              <input <% if (showColEvent == 1) { %> checked <% } %> type="checkbox" onchange="emitEvent('showColEvent', Number(this.checked))">
+            </th>
+            <th colspan="2">
+              <input <% if (showColSession == 1) { %> checked <% } %> type="checkbox" onchange="emitEvent('showColSession', Number(this.checked))">
+            </th>
+            <th colspan="2">
+              <input <% if (showColCategory == 1) { %> checked <% } %> type="checkbox" onchange="emitEvent('showColCategory', Number(this.checked))">
+            </th>
+            <th>
+              <input <% if (showColCode == 1) { %> checked <% } %> type="checkbox" onchange="emitEvent('showColCode', Number(this.checked))">
+            </th>
+            <th>
+              <input <% if (showColVal == 1) { %> checked <% } %> type="checkbox" onchange="emitEvent('showColVal', Number(this.checked))">
+            </th>
+          </tr>
+          <% } %>
+          <tr id="column-names">
+            <% if (editMode || showColDate) { %>
+              <th colspan="">Date</th>
+            <% } %>
+            <% if (editMode || showColEvent) { %>
+              <th colspan="2">Event</th>
+            <% } %>
+            <% if (editMode || showColSession) { %>
+              <th colspan="2">Session</th>
+            <% } %>
+            <% if (editMode || showColCategory) { %>
+              <th colspan="2">Category</th>
+            <% } %>
+            <% if (editMode || showColCode) { %>
+              <th colspan="">Code</th>
+            <% } %>
+            <% if (editMode || showColVal) { %>
+              <th colspan=""><%= (ceuValueLabel) %></th>
+            <% } %>
+            <!--
+            <% if (editMode || showColCheckInOut) { %>
+              <th>Check-In/Out</th>
+            <% } %>
+            -->
+          </tr>
+        </thead>
+        <tbody class="data-body">
+          <tr>
+            <td>
+              <div class="head-spacer"></div>
+            </td>
+          </tr>
+          <% if (rows && rows.length > 0) { %>
+            <% rows.forEach(row => {%>
+              <tr>
+                <% if (editMode || showColDate) { %>
+                  <td colspan=""><%= row.sessionDate %></td>
+                <% } %>
+                <% if (editMode || showColEvent) { %>
+                  <td colspan="2"><%= row.eventname %></td>
+                <% } %>
+                <% if (editMode || showColSession) { %>
+                  <td colspan="2"><%= row.sessionname %></td>
+                <% } %>
+                <% if (editMode || showColCategory) { %>
+                  <td colspan="2"><%= row.categoryname %></td>
+                <% } %>
+                <% if (editMode || showColCode) { %>
+                  <td colspan=""><%= row.code %></td>
+                <% } %>
+                <% if (editMode || showColVal) { %>
+                  <td colspan=""><%= row.value %></td>
+                <% } %>
+                <!---
+                <% if (editMode || showColCheckInOut && (row.checkin && row.checkout)) { %>
+                  <td><%= row.checkin %> / <%= row.checkout %></td>
+                <% } %>
+                -->
+              </tr>
+            <% });%>
+          <% }%>
+        </tbody>
+        <tfoot class="main-foot">
+          <tr>
+            <td colspan="7">
+              <div class="footer-space"></div>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="transcript-summary">
+      <% if (rows && rows.length > 0) { %>
+        <table>
+          <thead>
+            <tr>
+              <th colspan="2"><strong><%= ceuAcronym ? ceuAcronym : 'CEU' %></strong></th>
+              <th class="text-center total-awarded-header"><strong>Total Awarded</strong></th>
+            </tr>
+          </thead>
+          <% var uniqueRows = [...new Set(rows.map(item => item.categoryname + item.code))]; %>
+          <% uniqueRows.forEach(row => {%>
+            <% var total = 0; %>
+            <% rows.forEach(row2 => {%>
+              <% if (row == row2.categoryname + row2.code) { %>
+                <% total += parseFloat(row2.value) || 0 %>
+              <% } %>
+            <% });%>
+            <tr>
+              <!-- rename "row" by its item.categoryname + ' - ' + item.code if item.code exists-->
+              <% var rowName = row; %>
+              <% rows.forEach(item => {%>
+                <% if (row == item.categoryname + item.code) { %>
+                  <% rowName = item.categoryname %>
+                  <% if (item.code) { %>
+                    <% rowName = item.categoryname + ' - ' + item.code %>
+                  <% } %>
+                <% } %>
+              <% });%>
+              <td colspan="2"><%= rowName %></td>
+              <td class="text-right"><%= Number(total).toFixed(2) %> <%= ceuValueLabel %></td>
+            </tr>
+          <% });%>
+        </table>
+      <% }%>
+    </div>
+    <div class="footer-content" style="padding-top: 10px;">
+      <% if (langBlock || editMode) { %>
+        <div id="official-text"><%- editMode ? (langBlock ? langBlock : 'Official text may be placed on the bottom of each page.') : langBlock %></div>
+      <% } %>    
+    </div>
+  </body>
+
+  <script>
+    var updateForm = parent.handleUpdate;
+    function emitEvent(name, value) {
+      updateForm({ name, value });
+    }
+    document.getElementsByClassName("footer-space")[0].style.height =
+      document.getElementsByClassName("footer-content")[0].clientHeight + "px";
+  </script>
+</html>

@@ -3,10 +3,8 @@
  */
 
 import { requireAuth } from '../middleware/auth.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import VerificationService from '../services/VerificationService.js';
-
-const _verificationService = new VerificationService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _verificationService from '../services/VerificationService.js';
 
 /**
  * POST /verify
@@ -18,7 +16,7 @@ export const verifyCodeRoute = {
   handler: requireAuth(async (request) => {
     try {
       const result = await _verificationService.verifyCode(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error verifying code:', error);
       return errorResponse('Failed to verify code', 500, error.message);

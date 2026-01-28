@@ -13,10 +13,12 @@ class ContactScanAppService {
     try {
       const eventID = Number(request.pathParameters.eventID);
       const vert = request.vert;
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const eventPreferences = await connection.sql(`
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('eventID', sql.Int, eventID);
+      const result = await sqlRequest.query(`
         USE ${dbName};
         SELECT
             scanAppActive,
@@ -26,22 +28,24 @@ class ContactScanAppService {
             b_events e
         WHERE
             e.event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .execute();
+      `);
+      const eventPreferences = result.recordset;
 
-      // Parse apiFields JSON string if present
-      if (eventPreferences.length && eventPreferences[0].apiFields) {
-        try {
-          eventPreferences[0].apiFields = JSON.parse(eventPreferences[0].apiFields);
-        } catch (e) {
-          eventPreferences[0].apiFields = [];
+      // Parse apiFields JSON string if present, otherwise set to null
+      if (eventPreferences.length) {
+        if (eventPreferences[0].apiFields) {
+          try {
+            const parsed = JSON.parse(eventPreferences[0].apiFields);
+            eventPreferences[0].apiFields = Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+          } catch (e) {
+            eventPreferences[0].apiFields = null;
+          }
+        } else {
+          eventPreferences[0].apiFields = null;
         }
-      } else if (eventPreferences.length) {
-        eventPreferences[0].apiFields = [];
       }
 
-      return eventPreferences.length ? eventPreferences[0] : {};
+      return eventPreferences;
     } catch (error) {
       console.error('Error getting contact scan app preferences:', error);
       throw error;
@@ -60,10 +64,14 @@ class ContactScanAppService {
       const eventID = Number(request.pathParameters.eventID);
       const vert = request.vert;
       const body = request.body || {};
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      await connection.sql(`
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('scanAppActive', sql.Bit, body.scanAppActive);
+      sqlRequest.input('scanAppCode', sql.VarChar, body.scanAppCode);
+      sqlRequest.input('eventID', sql.Int, eventID);
+      await sqlRequest.query(`
         USE ${dbName};
         UPDATE
             b_events
@@ -72,11 +80,7 @@ class ContactScanAppService {
             scanAppCode = @scanAppCode
         WHERE
             event_id = @eventID
-      `)
-      .parameter('scanAppActive', TYPES.Bit, body.scanAppActive)
-      .parameter('scanAppCode', TYPES.VarChar, body.scanAppCode)
-      .parameter('eventID', TYPES.Int, eventID)
-      .execute();
+      `);
 
       return {
         message: 'Settings updated!',
@@ -100,29 +104,29 @@ class ContactScanAppService {
       const eventID = Number(request.pathParameters.eventID);
       const vert = request.vert;
       const checkedNames = Array.isArray(request.body) ? request.body : [];
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Delete existing API preferences
-      await connection.sql(`
+      const deleteRequest = new sql.Request();
+      deleteRequest.input('eventID', sql.Int, eventID);
+      await deleteRequest.query(`
         USE ${dbName};
         DELETE FROM contactScanAppAPI WHERE event_id = @eventID;
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .execute();
+      `);
 
       // Insert new API preferences
       for (let i = 0; i < checkedNames.length; i++) {
-        await connection.sql(`
+        const insertRequest = new sql.Request();
+        insertRequest.input('mongoField', sql.VarChar, checkedNames[i]);
+        insertRequest.input('eventID', sql.Int, eventID);
+        await insertRequest.query(`
           USE ${dbName};
           INSERT INTO contactScanAppAPI
           (endPoint, event_id, mongoField)
           VALUES
           ('attendees', @eventID, @mongoField)
-        `)
-        .parameter('mongoField', TYPES.VarChar, checkedNames[i])
-        .parameter('eventID', TYPES.Int, eventID)
-        .execute();
+        `);
       }
 
       return {

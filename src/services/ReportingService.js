@@ -153,7 +153,8 @@ class ReportingService {
         id: reportID
       });
 
-      return layout || {};
+      // Return as array (empty array if not found)
+      return layout ? [layout] : [];
     } catch (error) {
       console.error('Error finding report layout:', error);
       throw error;

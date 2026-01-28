@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import APIService from '../services/APIService.js';
-
-const _apiService = new APIService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _apiService from '../services/APIService.js';
 
 /**
  * DELETE /api/permissions/:userID
@@ -19,7 +17,7 @@ export const deletePermissionsRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _apiService.deletePermissions(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error deleting permissions:', error);
       return errorResponse('Failed to delete permissions', 500, error.message);
@@ -38,7 +36,7 @@ export const savePermissionsRoute = {
     try {
       if (request.session) {
         const result = await _apiService.savePermissions(request, request.body);
-        return successResponse(result);
+        return createResponse(200, result);
       } else {
         return errorResponse('This endpoint requires an affiliate ID. If you are using a dev token, no session is tied to this connection', 400);
       }

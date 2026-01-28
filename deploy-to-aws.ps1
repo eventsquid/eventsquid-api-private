@@ -52,24 +52,39 @@ aws cloudformation deploy `
     --parameter-overrides `
         Environment=dev `
     --capabilities CAPABILITY_NAMED_IAM `
-    --region us-west-2 `
-    --profile eventsquid
+    --region us-west-2
 
 # Step 4: Update Lambda function code
 Write-Host "`n4. Updating Lambda function code..." -ForegroundColor Green
 aws lambda update-function-code `
     --function-name eventsquid-private-api `
     --zip-file fileb://function.zip `
-    --region us-west-2 `
-    --profile eventsquid
+    --region us-west-2
 
-# Step 5: Update Lambda configuration
+# Step 5: Update Lambda configuration (preserve existing environment variables)
 Write-Host "`n5. Updating Lambda function configuration..." -ForegroundColor Green
+
+# Get current environment variables
+$currentConfig = aws lambda get-function-configuration --function-name eventsquid-private-api --region us-west-2 | ConvertFrom-Json
+$currentEnvVars = @{}
+
+# Preserve existing environment variables
+if ($currentConfig.Environment.Variables) {
+    $currentConfig.Environment.Variables.PSObject.Properties | ForEach-Object {
+        $currentEnvVars[$_.Name] = $_.Value
+    }
+}
+
+# Update/add NODE_ENV
+$currentEnvVars["NODE_ENV"] = "dev"
+
+# Build environment variables string
+$envVarsString = ($currentEnvVars.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ","
+
 aws lambda update-function-configuration `
     --function-name eventsquid-private-api `
-    --environment Variables="{NODE_ENV=dev,AWS_REGION=us-west-2}" `
-    --region us-west-2 `
-    --profile eventsquid
+    --environment Variables="{$envVarsString}" `
+    --region us-west-2
 
 # Cleanup
 Write-Host "`nCleaning up..." -ForegroundColor Yellow

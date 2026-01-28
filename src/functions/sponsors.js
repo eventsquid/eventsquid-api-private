@@ -4,23 +4,24 @@
  */
 
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
+import { getEventResources } from './resources.js';
 
 /**
  * Create sponsor
  */
 export async function createSponsor(sponsor, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const COLUMN_TYPES = {
-      hostAffiliate_id: TYPES.Int,
-      affiliate_name: TYPES.VarChar,
-      affiliate_website: TYPES.VarChar,
-      contact_name: TYPES.VarChar,
-      defaultSponsorEmail: TYPES.VarChar,
-      affiliate_phone: TYPES.VarChar,
-      logos3: TYPES.VarChar
+      hostAffiliate_id: sql.Int,
+      affiliate_name: sql.VarChar,
+      affiliate_website: sql.VarChar,
+      contact_name: sql.VarChar,
+      defaultSponsorEmail: sql.VarChar,
+      affiliate_phone: sql.VarChar,
+      logos3: sql.VarChar
     };
 
     if (!sponsor.affiliate_name || !sponsor.affiliate_name.length) {
@@ -34,7 +35,12 @@ export async function createSponsor(sponsor, vert) {
     const values = columns.map(key => `@${key}`).join(', ');
     const columnNames = columns.join(', ');
 
-    let query = connection.sql(`
+    const request = new sql.Request();
+    for (const key of columns) {
+      request.input(key, COLUMN_TYPES[key], sponsor[key]);
+    }
+
+    const result = await request.query(`
       USE ${dbName};
       INSERT INTO b_sponsors (
           ${columnNames}
@@ -44,12 +50,7 @@ export async function createSponsor(sponsor, vert) {
       );
       SELECT * FROM b_sponsors WHERE sponsorID = @@identity;
     `);
-
-    for (const key of columns) {
-      query = query.parameter(key, COLUMN_TYPES[key], sponsor[key]);
-    }
-
-    const results = await query.execute();
+    const results = result.recordset;
     const newSponsor = results[0];
 
     return { success: true, sponsor: newSponsor };
@@ -64,17 +65,17 @@ export async function createSponsor(sponsor, vert) {
  */
 export async function updateSponsor(sponsorID, data, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const COLUMN_TYPES = {
-      affiliate_name: TYPES.VarChar,
-      affiliate_website: TYPES.VarChar,
-      contact_name: TYPES.VarChar,
-      defaultSponsorEmail: TYPES.VarChar,
-      affiliate_phone: TYPES.VarChar,
-      logos3: TYPES.VarChar,
-      logo: TYPES.VarChar
+      affiliate_name: sql.VarChar,
+      affiliate_website: sql.VarChar,
+      contact_name: sql.VarChar,
+      defaultSponsorEmail: sql.VarChar,
+      affiliate_phone: sql.VarChar,
+      logos3: sql.VarChar,
+      logo: sql.VarChar
     };
 
     const updateFields = Object.keys(data)
@@ -86,21 +87,21 @@ export async function updateSponsor(sponsorID, data, vert) {
       throw new Error('No valid columns to update');
     }
 
-    let updateRequest = connection.sql(`
+    const request = new sql.Request();
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+
+    for (const key in data) {
+      if (key in COLUMN_TYPES) {
+        request.input(key, COLUMN_TYPES[key], data[key]);
+      }
+    }
+
+    await request.query(`
       USE ${dbName};
       UPDATE b_sponsors
       SET ${updateFields}
       WHERE sponsorID = @sponsorID;
-    `)
-    .parameter('sponsorID', TYPES.Int, Number(sponsorID));
-
-    for (const key in data) {
-      if (key in COLUMN_TYPES) {
-        updateRequest = updateRequest.parameter(key, COLUMN_TYPES[key], data[key]);
-      }
-    }
-
-    await updateRequest.execute();
+    `);
 
     return data;
   } catch (error) {
@@ -114,10 +115,12 @@ export async function updateSponsor(sponsorID, data, vert) {
  */
 export async function getAffiliateSponsors(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const sponsors = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT
           s.logo,
@@ -130,9 +133,8 @@ export async function getAffiliateSponsors(affiliateID, vert) {
       FROM b_sponsors s
       WHERE s.hostAffiliate_id = @affiliateID
       ORDER BY s.affiliate_name
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const sponsors = result.recordset;
 
     return sponsors;
   } catch (error) {
@@ -146,16 +148,16 @@ export async function getAffiliateSponsors(affiliateID, vert) {
  */
 export async function deleteAffiliateSponsor(sponsorID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+    await request.query(`
       USE ${dbName};
       DELETE FROM b_sponsors
       WHERE sponsorID = @sponsorID
-    `)
-    .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-    .execute();
+    `);
 
     return { success: true };
   } catch (error) {
@@ -166,14 +168,15 @@ export async function deleteAffiliateSponsor(sponsorID, vert) {
 
 /**
  * Get event sponsors
- * Note: This is a simplified version - full version needs getEventResources
  */
 export async function getEventSponsors(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const sponsors = await connection.sql(`
+    const request1 = new sql.Request();
+    request1.input('eventID', sql.Int, Number(eventID));
+    const result1 = await request1.query(`
       USE ${dbName};
       SELECT
           s.logo,
@@ -206,30 +209,31 @@ export async function getEventSponsors(eventID, vert) {
       WHERE es.event_id = @eventID
       AND es.sponsorID IS NOT NULL
       ORDER BY es.sponsor_order;
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const sponsors = result1.recordset;
 
-    const slotAssignments = await connection.sql(`
+    const request2 = new sql.Request();
+    request2.input('eventID', sql.Int, Number(eventID));
+    const result2 = await request2.query(`
       USE ${dbName};
       SELECT *
       FROM slotSponsor
       WHERE event_id = @eventID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const slotAssignments = result2.recordset;
 
-    const liveMeetingDates = await connection.sql(`
+    const request3 = new sql.Request();
+    request3.input('eventID', sql.Int, Number(eventID));
+    const result3 = await request3.query(`
       USE ${dbName};
       SELECT *
       FROM sponsorLiveMeetingDates
       WHERE event_id = @eventID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const liveMeetingDates = result3.recordset;
 
-    // TODO: Get resources when getEventResources is implemented
-    // const resources = await getEventResources(Number(eventID), [], vert);
+    // Get all event resources
+    const resources = await getEventResources(Number(eventID), [], vert);
 
     return sponsors.map(sponsor => {
       sponsor['slots'] = slotAssignments
@@ -237,9 +241,13 @@ export async function getEventSponsors(eventID, vert) {
         .map(slot => slot.slot_id);
       sponsor['liveMeetings'] = liveMeetingDates
         .filter(meeting => meeting.event_sponsor_id === sponsor.event_sponsor_id);
-      sponsor['resources'] = []; // TODO: Add when getEventResources is implemented
-        // .filter(resource => resource.sponsorID === sponsor.sponsorID)
-        // .map(resource => ({title: resource.uploadTitle, docType: resource.uploadType, resourceType: resource.resource_type}));
+      sponsor['resources'] = resources
+        .filter(resource => resource.sponsorID === sponsor.sponsorID)
+        .map(resource => ({
+          title: resource.uploadTitle,
+          docType: resource.uploadType,
+          resourceType: resource.resource_type
+        }));
       
       sponsor.webLogoClickAction = Number(sponsor.webLogoClickAction);
       sponsor.veoLogoClickAction = Number(sponsor.veoLogoClickAction);
@@ -264,17 +272,18 @@ export async function getEventSponsors(eventID, vert) {
  */
 export async function getEventSponsorLevels(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const levels = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT * FROM b_sponsorLevels 
       WHERE event_id = @eventID 
       ORDER BY level_order ASC, level_id DESC;
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const levels = result.recordset;
 
     return levels;
   } catch (error) {
@@ -288,14 +297,20 @@ export async function getEventSponsorLevels(eventID, vert) {
  */
 export async function createEventSponsorLevel(eventID, name, description = '', iconSize, iconsPerRow, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     if (!name) return { success: false, message: 'Must provide a name' };
     if (!iconSize) return { success: false, message: 'Must provide an iconSize' };
     if (!iconsPerRow) return { success: false, message: 'Must provide an iconsPerRow' };
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('name', sql.VarChar, name);
+    request.input('description', sql.VarChar, description);
+    request.input('iconSize', sql.Int, Number(iconSize));
+    request.input('iconsPerRow', sql.Int, Number(iconsPerRow));
+    const result = await request.query(`
       USE ${dbName};
       INSERT INTO b_sponsorLevels (
           event_id,
@@ -311,13 +326,8 @@ export async function createEventSponsorLevel(eventID, name, description = '', i
           @iconsPerRow
       );
       SELECT * FROM b_sponsorLevels WHERE level_id = @@identity;
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('name', TYPES.VarChar, name)
-    .parameter('description', TYPES.VarChar, description)
-    .parameter('iconSize', TYPES.Int, Number(iconSize))
-    .parameter('iconsPerRow', TYPES.Int, Number(iconsPerRow))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return { success: true, level: results.length ? results[0] : {} };
   } catch (error) {
@@ -331,14 +341,14 @@ export async function createEventSponsorLevel(eventID, name, description = '', i
  */
 export async function updateSponsorLevel(levelID, data, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const COLUMN_TYPES = {
-      level_name: TYPES.VarChar,
-      level_description: TYPES.VarChar,
-      iconsPerRow: TYPES.Int,
-      iconSize: TYPES.Int
+      level_name: sql.VarChar,
+      level_description: sql.VarChar,
+      iconsPerRow: sql.Int,
+      iconSize: sql.Int
     };
 
     const updateFields = Object.keys(data)
@@ -350,21 +360,21 @@ export async function updateSponsorLevel(levelID, data, vert) {
       throw new Error('No valid columns to update');
     }
 
-    let updateRequest = connection.sql(`
+    const request = new sql.Request();
+    request.input('levelID', sql.Int, Number(levelID));
+
+    for (const key in data) {
+      if (key in COLUMN_TYPES) {
+        request.input(key, COLUMN_TYPES[key], data[key]);
+      }
+    }
+
+    await request.query(`
       USE ${dbName};
       UPDATE b_sponsorLevels
       SET ${updateFields}
       WHERE level_id = @levelID
-    `)
-    .parameter('levelID', TYPES.Int, Number(levelID));
-
-    for (const key in data) {
-      if (key in COLUMN_TYPES) {
-        updateRequest = updateRequest.parameter(key, COLUMN_TYPES[key], data[key]);
-      }
-    }
-
-    await updateRequest.execute();
+    `);
     return { success: true };
   } catch (error) {
     console.error('Error updating sponsor level:', error);
@@ -377,16 +387,16 @@ export async function updateSponsorLevel(levelID, data, vert) {
  */
 export async function deleteEventSponsorLevel(levelID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('levelID', sql.Int, Number(levelID));
+    await request.query(`
       USE ${dbName};
       DELETE FROM b_sponsorLevels WHERE level_id = @levelID;
       DELETE FROM event_sponsor WHERE level_id = @levelID;
-    `)
-    .parameter('levelID', TYPES.Int, Number(levelID))
-    .execute();
+    `);
 
     return { success: true };
   } catch (error) {
@@ -400,20 +410,20 @@ export async function deleteEventSponsorLevel(levelID, vert) {
  */
 export async function moveEventSponsorLevel(eventID, levelID, sortOrder, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('levelID', sql.Int, Number(levelID));
+    request.input('sortOrder', sql.Int, Number(sortOrder));
+    await request.query(`
       USE ${dbName};
       EXEC dbo.node_moveSponsorLevel
           @eventID,
           @levelID,
           @sortOrder
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('levelID', TYPES.Int, Number(levelID))
-    .parameter('sortOrder', TYPES.Int, Number(sortOrder))
-    .execute();
+    `);
 
     return { success: true };
   } catch (error) {
@@ -427,22 +437,22 @@ export async function moveEventSponsorLevel(eventID, levelID, sortOrder, vert) {
  */
 export async function moveEventSponsor(eventID, sponsorID, levelID, sortOrder, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+    request.input('levelID', sql.Int, Number(levelID));
+    request.input('sortOrder', sql.Int, Number(sortOrder));
+    await request.query(`
       USE ${dbName};
       EXEC dbo.node_moveEventSponsor
           @eventID,
           @sponsorID,
           @levelID,
           @sortOrder
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-    .parameter('levelID', TYPES.Int, Number(levelID))
-    .parameter('sortOrder', TYPES.Int, Number(sortOrder))
-    .execute();
+    `);
 
     return { success: true };
   } catch (error) {
@@ -456,10 +466,14 @@ export async function moveEventSponsor(eventID, sponsorID, levelID, sortOrder, v
  */
 export async function addSponsorToLevel(sponsorID, levelID, affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+    request.input('levelID', sql.Int, Number(levelID));
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       INSERT INTO event_sponsor (
           sponsorID,
@@ -475,11 +489,8 @@ export async function addSponsorToLevel(sponsorID, levelID, affiliateID, vert) {
           @affiliateID
       );
       SELECT * FROM event_sponsor WHERE event_sponsor_id = @@identity;
-    `)
-    .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-    .parameter('levelID', TYPES.Int, Number(levelID))
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results[0];
   } catch (error) {
@@ -493,16 +504,16 @@ export async function addSponsorToLevel(sponsorID, levelID, affiliateID, vert) {
  */
 export async function removeSponsorFromLevel(levelID, sponsorID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('levelID', sql.Int, Number(levelID));
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+    await request.query(`
       USE ${dbName};
       DELETE FROM event_sponsor WHERE level_id = @levelID AND sponsorID = @sponsorID;
-    `)
-    .parameter('levelID', TYPES.Int, Number(levelID))
-    .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-    .execute();
+    `);
 
     return { success: true };
   } catch (error) {
@@ -516,23 +527,23 @@ export async function removeSponsorFromLevel(levelID, sponsorID, vert) {
  */
 export async function updateEventSponsor(sponsorID, levelID, data, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const COLUMN_TYPES = {
-      sponsorPromo: TYPES.VarChar,
-      hideOnOverview: TYPES.Int,
-      featureOnMobile: TYPES.Int,
-      showOrgNameUnderLogo: TYPES.Bit,
-      logoDescriptionOrLabel: TYPES.VarChar,
-      webLogoClickAction: TYPES.TinyInt,
-      veoLogoClickAction: TYPES.TinyInt,
-      veoDisplayOnRollup: TYPES.Bit,
-      veoShowNameUnderLogo: TYPES.Bit,
-      displayLogoGrayscale: TYPES.Bit,
-      showPhraseUnderLogo: TYPES.Bit,
-      instantContactActive: TYPES.Int,
-      liveMeetingLink: TYPES.VarChar
+      sponsorPromo: sql.VarChar,
+      hideOnOverview: sql.Int,
+      featureOnMobile: sql.Int,
+      showOrgNameUnderLogo: sql.Bit,
+      logoDescriptionOrLabel: sql.VarChar,
+      webLogoClickAction: sql.TinyInt,
+      veoLogoClickAction: sql.TinyInt,
+      veoDisplayOnRollup: sql.Bit,
+      veoShowNameUnderLogo: sql.Bit,
+      displayLogoGrayscale: sql.Bit,
+      showPhraseUnderLogo: sql.Bit,
+      instantContactActive: sql.Int,
+      liveMeetingLink: sql.VarChar
     };
 
     const updateFields = Object.keys(data)
@@ -544,23 +555,23 @@ export async function updateEventSponsor(sponsorID, levelID, data, vert) {
       throw new Error('No valid columns to update');
     }
 
-    let updateRequest = connection.sql(`
+    const request = new sql.Request();
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+    request.input('levelID', sql.Int, Number(levelID));
+
+    for (const key in data) {
+      if (key in COLUMN_TYPES) {
+        request.input(key, COLUMN_TYPES[key], data[key]);
+      }
+    }
+
+    await request.query(`
       USE ${dbName};
       UPDATE event_sponsor
       SET ${updateFields}
       WHERE sponsorID = @sponsorID
           AND level_id = @levelID;
-    `)
-    .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-    .parameter('levelID', TYPES.Int, Number(levelID));
-
-    for (const key in data) {
-      if (key in COLUMN_TYPES) {
-        updateRequest = updateRequest.parameter(key, COLUMN_TYPES[key], data[key]);
-      }
-    }
-
-    await updateRequest.execute();
+    `);
     return data;
   } catch (error) {
     console.error('Error updating event sponsor:', error);
@@ -573,7 +584,7 @@ export async function updateEventSponsor(sponsorID, levelID, data, vert) {
  */
 export async function addLiveMeeting(eventID, sponsorID, meetings, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     let qryStr = `USE ${dbName};`;
@@ -603,18 +614,19 @@ export async function addLiveMeeting(eventID, sponsorID, meetings, vert) {
         );`;
     }
 
-    let query = connection.sql(qryStr);
+    const request = new sql.Request();
     
     meetings.forEach((meeting, index) => {
-      query = query.parameter(`eventID${index}`, TYPES.Int, Number(eventID));
-      query = query.parameter(`sponsorID${index}`, TYPES.Int, Number(sponsorID));
-      query = query.parameter(`startDateLocal${index}`, TYPES.VarChar, meeting.startDateLocal);
-      query = query.parameter(`endDateLocal${index}`, TYPES.VarChar, meeting.endDateLocal);
-      query = query.parameter(`startDateUTC${index}`, TYPES.DateTime, new Date(meeting.startDateUTC));
-      query = query.parameter(`endDateUTC${index}`, TYPES.DateTime, new Date(meeting.endDateUTC));
+      request.input(`eventID${index}`, sql.Int, Number(eventID));
+      request.input(`sponsorID${index}`, sql.Int, Number(sponsorID));
+      request.input(`startDateLocal${index}`, sql.VarChar, meeting.startDateLocal);
+      request.input(`endDateLocal${index}`, sql.VarChar, meeting.endDateLocal);
+      request.input(`startDateUTC${index}`, sql.DateTime, new Date(meeting.startDateUTC));
+      request.input(`endDateUTC${index}`, sql.DateTime, new Date(meeting.endDateUTC));
     });
 
-    const results = await query.execute();
+    const result = await request.query(qryStr);
+    const results = result.recordset;
     return results;
   } catch (error) {
     console.error('Error adding live meeting:', error);
@@ -627,15 +639,15 @@ export async function addLiveMeeting(eventID, sponsorID, meetings, vert) {
  */
 export async function deleteLiveMeeting(meetingID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('meetingID', sql.Int, Number(meetingID));
+    await request.query(`
       USE ${dbName};
       DELETE FROM sponsorLiveMeetingDates WHERE meeting_id = @meetingID;
-    `)
-    .parameter('meetingID', TYPES.Int, Number(meetingID))
-    .execute();
+    `);
 
     return { success: true };
   } catch (error) {

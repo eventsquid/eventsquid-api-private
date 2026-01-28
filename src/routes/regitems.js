@@ -4,12 +4,9 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import RegItemsService from '../services/RegItemsService.js';
-import EventService from '../services/EventService.js';
-
-const _regItemsService = new RegItemsService();
-const _eventService = new EventService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _regItemsService from '../services/RegItemsService.js';
+import _eventService from '../services/EventService.js';
 
 /**
  * GET /regitems/:eventID/fees
@@ -26,7 +23,7 @@ export const getEventFeesRoute = {
         request.queryStringParameters || {},
         request.vert
       );
-      return successResponse(fees);
+      return createResponse(200, fees);
     } catch (error) {
       console.error('Error getting event fees:', error);
       return errorResponse('Failed to get event fees', 500, error.message);
@@ -51,7 +48,7 @@ export const updateEventFeeRoute = {
       );
       
       await _eventService.updateRegItems(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating event fee:', error);
       return errorResponse('Failed to update event fee', 500, error.message);
@@ -70,7 +67,7 @@ export const deleteRegItemCEURoute = {
     try {
       const ceuEventFeeID = Number(request.pathParameters.ceuEventFeeID);
       const result = await _regItemsService.deleteRegItemCEU(ceuEventFeeID, request.vert);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error deleting reg item CEU:', error);
       return errorResponse('Failed to delete reg item CEU', 500, error.message);
@@ -93,7 +90,7 @@ export const updateRegItemCEURoute = {
         ceuEventFeeID,
         request.vert
       );
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating reg item CEU:', error);
       return errorResponse('Failed to update reg item CEU', 500, error.message);
@@ -116,7 +113,7 @@ export const addRegItemCEURoute = {
         eventFeeID,
         request.vert
       );
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error adding reg item CEU:', error);
       return errorResponse('Failed to add reg item CEU', 500, error.message);
@@ -134,14 +131,15 @@ export const clearCheckInOutCodesRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const eventID = Number(request.pathParameters.eventID);
-      const result = await _regItemsService.clearCheckInOutCodes(
+      await _regItemsService.clearCheckInOutCodes(
         eventID,
         request.body,
         request.vert
       );
       
       await _eventService.updateRegItems(request);
-      return successResponse(result);
+      // Match old codebase: return empty array
+      return createResponse(200, []);
     } catch (error) {
       console.error('Error clearing check-in/out codes:', error);
       return errorResponse('Failed to clear codes', 500, error.message);
@@ -166,7 +164,7 @@ export const generateCheckInOutCodesRoute = {
       );
       
       await _eventService.updateRegItems(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error generating check-in/out codes:', error);
       return errorResponse('Failed to generate codes', 500, error.message);

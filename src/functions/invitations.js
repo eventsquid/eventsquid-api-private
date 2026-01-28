@@ -10,10 +10,12 @@ import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
  */
 export async function getInvitationCounts(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const countsResults = await connection.sql(`
+    const request1 = new sql.Request();
+    request1.input('eventID', sql.Int, Number(eventID));
+    const result1 = await request1.query(`
       USE ${dbName};
       SELECT 
           SUM(decline) as declineTotal,
@@ -26,11 +28,12 @@ export async function getInvitationCounts(eventID, vert) {
           ) as totalInvited
       FROM b_invitees 
       WHERE event_id = @eventID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const countsResults = result1.recordset;
 
-    const acceptsResults = await connection.sql(`
+    const request2 = new sql.Request();
+    request2.input('eventID', sql.Int, Number(eventID));
+    const result2 = await request2.query(`
       USE ${dbName};
       SELECT COUNT(1) as total
       FROM b_invitees i
@@ -39,9 +42,8 @@ export async function getInvitationCounts(eventID, vert) {
               SELECT user_id FROM eventContestant WHERE event_id = @eventID AND regComplete = 1
           ) 
       WHERE event_id = @eventID and ISNULL(i.decline,0) = 0
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const acceptsResults = result2.recordset;
 
     const counts = countsResults.length ? countsResults[0] : {};
     const accepts = acceptsResults.length ? acceptsResults[0] : {};
@@ -66,10 +68,13 @@ export async function getInvitationCounts(eventID, vert) {
  */
 export async function getEventsWithInviteesByAffiliate(eventID, affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const events = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT DISTINCT(i.event_id), e.event_title, e.event_begins
       FROM b_invitees i
@@ -77,10 +82,8 @@ export async function getEventsWithInviteesByAffiliate(eventID, affiliateID, ver
       WHERE e.affiliate_id = @affiliateID
           AND i.event_id <> @eventID
       ORDER BY e.event_title
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const events = result.recordset;
 
     return events;
   } catch (error) {
@@ -94,10 +97,12 @@ export async function getEventsWithInviteesByAffiliate(eventID, affiliateID, ver
  */
 export async function auditInvitees(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    await request.query(`
       USE ${dbName};
       UPDATE b_invitees
       SET decline = null
@@ -109,9 +114,7 @@ export async function auditInvitees(eventID, vert) {
               INNER JOIN eventContestant ec on ec.user_id = u.user_id
               WHERE ec.event_id = @eventID and ec.regComplete = 1
           )
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
 
     return {
       message: 'Successfully audited invitees'
@@ -127,7 +130,7 @@ export async function auditInvitees(eventID, vert) {
  */
 export async function getInviteeList(filter, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const keywordFilter = filter.keyword && filter.keyword.length
@@ -179,7 +182,17 @@ export async function getInviteeList(filter, vert) {
       }
     }
 
-    let query = connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(filter.eventID));
+
+    if (filter.keyword && filter.keyword.length) {
+      request.input('keyword', sql.VarChar, `%${filter.keyword}%`);
+    }
+    if (filter.profile && filter.profile.length && filter.profile !== 'noprofile') {
+      request.input('profile', sql.VarChar, filter.profile);
+    }
+
+    const result = await request.query(`
       USE ${dbName};
       SELECT
           count(*) over() as totalCount,
@@ -216,17 +229,8 @@ export async function getInviteeList(filter, vert) {
           invitee_lastname
       OFFSET ${Number(filter.skip)} ROWS
       FETCH NEXT ${Number(filter.amount)} ROWS ONLY;
-    `)
-    .parameter('eventID', TYPES.Int, Number(filter.eventID));
-
-    if (filter.keyword && filter.keyword.length) {
-      query = query.parameter('keyword', TYPES.VarChar, `%${filter.keyword}%`);
-    }
-    if (filter.profile && filter.profile.length && filter.profile !== 'noprofile') {
-      query = query.parameter('profile', TYPES.VarChar, filter.profile);
-    }
-
-    const invitees = await query.execute();
+    `);
+    const invitees = result.recordset;
 
     return {
       invitees,
@@ -243,10 +247,12 @@ export async function getInviteeList(filter, vert) {
  */
 export async function getTemplates(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const templates = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT 
           templateText,
@@ -270,9 +276,8 @@ export async function getTemplates(affiliateID, vert) {
       WHERE affiliate_id = @affiliateID
           and templateText is not null
           and eventInvite = 1
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const templates = result.recordset;
 
     return templates;
   } catch (error) {
@@ -286,16 +291,16 @@ export async function getTemplates(affiliateID, vert) {
  */
 export async function deleteTemplate(recordID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('recordID', sql.Int, Number(recordID));
+    await request.query(`
       USE ${dbName};
       DELETE emailTemplates
       WHERE recordID = @recordID
-    `)
-    .parameter('recordID', TYPES.Int, Number(recordID))
-    .execute();
+    `);
 
     return {
       deletedTemplate: recordID

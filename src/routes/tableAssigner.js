@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import TableAssignerService from '../services/TableAssignerService.js';
-
-const _tableAssignerService = new TableAssignerService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _tableAssignerService from '../services/TableAssignerService.js';
 
 /**
  * POST /tableAssigner/config/:vert
@@ -26,7 +24,7 @@ export const saveTableAssignerConfigRoute = {
         request.pathParameters,
         request.body?.[1]
       );
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error saving table assigner config:', error);
       return errorResponse('Failed to save config', 500, error.message);
@@ -47,7 +45,8 @@ export const getTableAssignerConfigsByEventRoute = {
         request.pathParameters,
         request.body
       );
-      return successResponse(result);
+      // Return the array directly without wrapper
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting table assigner configs:', error);
       return errorResponse('Failed to get configs', 500, error.message);
@@ -72,7 +71,7 @@ export const updateTableAssignerConfigRoute = {
         request.pathParameters,
         request.body?.[1]
       );
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating table assigner config:', error);
       return errorResponse('Failed to update config', 500, error.message);
@@ -90,7 +89,7 @@ export const getTableAssignerConfigRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _tableAssignerService.findTableAssignerConfig(request.pathParameters);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting table assigner config:', error);
       return errorResponse('Failed to get config', 500, error.message);
@@ -109,7 +108,7 @@ export const deleteTableAssignerConfigRoute = {
     try {
       let result = await _tableAssignerService.deleteTableAssignerConfig(request.pathParameters);
       result = await _tableAssignerService.deleteTableAssignerData(request.pathParameters);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error deleting table assigner config:', error);
       return errorResponse('Failed to delete config', 500, error.message);
@@ -130,7 +129,7 @@ export const addTableAssignerAssignmentRoute = {
         request.pathParameters,
         request.body
       );
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error adding table assigner assignment:', error);
       return errorResponse('Failed to add assignment', 500, error.message);
@@ -151,7 +150,7 @@ export const updateTableAssignerAssignmentRoute = {
         request.pathParameters,
         request.body
       );
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating table assigner assignment:', error);
       return errorResponse('Failed to update assignment', 500, error.message);
@@ -169,7 +168,7 @@ export const getTableAssignerAssignmentRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _tableAssignerService.findTableAssignerData(request.pathParameters);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting table assigner assignment:', error);
       return errorResponse('Failed to get assignment', 500, error.message);
@@ -187,7 +186,8 @@ export const getTableAssignerAssignmentByEventRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _tableAssignerService.findTableAssignerDataByEvent(request.pathParameters);
-      return successResponse(result);
+      // Return the array directly without wrapper
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting table assigner assignment by event:', error);
       return errorResponse('Failed to get assignment by event', 500, error.message);
@@ -205,7 +205,7 @@ export const deleteTableAssignerAssignmentRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _tableAssignerService.deleteTableAssignerData(request.pathParameters);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error deleting table assigner assignment:', error);
       return errorResponse('Failed to delete assignment', 500, error.message);
@@ -223,7 +223,7 @@ export const cancelAttendeeTableAssignmentRoute = {
   handler: requireAuth(async (request) => {
     try {
       const result = await _tableAssignerService.cancelAttendee(request.pathParameters);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error canceling attendee table assignment:', error);
       return errorResponse('Failed to cancel assignment', 500, error.message);

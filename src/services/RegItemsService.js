@@ -40,10 +40,11 @@ class RegItemsService {
     }
 
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const categories = await connection.sql(`
+      const request = new sql.Request();
+      const result = await request.query(`
         USE ${dbName};
         SELECT 
             cc.ceuID,
@@ -66,8 +67,8 @@ class RegItemsService {
         LEFT JOIN ceu_categories cc ON cc.ceuID = cef.ceuID 
             AND ISNULL(cc.archived, 0) = 0
         WHERE cef.eventFeeID IN (${eventFeeIDs.join(',')})
-      `)
-      .execute();
+      `);
+      const categories = result.recordset;
 
       return categories.reduce((acc, curr) => {
         curr.profiles = curr.profiles ? JSON.parse(curr.profiles) : [];
@@ -87,25 +88,26 @@ class RegItemsService {
    */
   async checkCeAvailability(ceuEventFeeID, eventFeeID, ceuID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      let query = connection.sql(`
+      const request = new sql.Request();
+      request.input('eventFeeID', sql.Int, Number(eventFeeID));
+      request.input('ceuID', sql.Int, Number(ceuID));
+      if (ceuEventFeeID) {
+        request.input('ceuEventFeeID', sql.Int, Number(ceuEventFeeID));
+      }
+
+      const qryStr = `
         USE ${dbName};
         SELECT TOP 1 *
         FROM ceu_event_fees
         WHERE eventFeeID = @eventFeeID
             AND ceuID = @ceuID
             ${ceuEventFeeID ? 'AND ceuEventFeeID != @ceuEventFeeID' : ''}
-      `)
-      .parameter('eventFeeID', TYPES.Int, Number(eventFeeID))
-      .parameter('ceuID', TYPES.Int, Number(ceuID));
-
-      if (ceuEventFeeID) {
-        query = query.parameter('ceuEventFeeID', TYPES.Int, Number(ceuEventFeeID));
-      }
-
-      const results = await query.execute();
+      `;
+      const result = await request.query(qryStr);
+      const results = result.recordset;
       return results.length === 0;
     } catch (error) {
       console.error('Error checking CE availability:', error);
@@ -130,16 +132,16 @@ class RegItemsService {
    */
   async deleteRegItemCEU(ceuEventFeeID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('ceuEventFeeID', sql.Int, Number(ceuEventFeeID));
+      await request.query(`
         USE ${dbName};
         DELETE FROM ceu_event_fees 
         WHERE ceuEventFeeID = @ceuEventFeeID
-      `)
-      .parameter('ceuEventFeeID', TYPES.Int, Number(ceuEventFeeID))
-      .execute();
+      `);
 
       return { success: true };
     } catch (error) {
@@ -154,7 +156,7 @@ class RegItemsService {
   async updateRegItemCEU(body, ceuEventFeeID, vert) {
     try {
       const { value, ceuID, eventFeeID } = body;
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       const ceAvailable = await this.checkCeAvailability(ceuEventFeeID, eventFeeID, ceuID, vert);
@@ -166,16 +168,16 @@ class RegItemsService {
         };
       }
 
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('ceuEventFeeID', sql.Int, Number(ceuEventFeeID));
+      request.input('value', sql.Float, Number(value));
+      request.input('ceuID', sql.Int, Number(ceuID));
+      await request.query(`
         USE ${dbName};
         UPDATE ceu_event_fees
         SET ceuValue = @value, ceuID = @ceuID
         WHERE ceuEventFeeID = @ceuEventFeeID
-      `)
-      .parameter('ceuEventFeeID', TYPES.Int, Number(ceuEventFeeID))
-      .parameter('value', TYPES.Float, Number(value))
-      .parameter('ceuID', TYPES.Int, Number(ceuID))
-      .execute();
+      `);
 
       return { success: true };
     } catch (error) {
@@ -190,7 +192,7 @@ class RegItemsService {
   async addRegItemCeu(body, eventFeeID, vert) {
     try {
       const { value, ceuID } = body;
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       const ceAvailable = await this.checkCeAvailability(null, eventFeeID, ceuID, vert);
@@ -202,7 +204,11 @@ class RegItemsService {
         };
       }
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventFeeID', sql.Int, Number(eventFeeID));
+      request.input('value', sql.Float, Number(value));
+      request.input('ceuID', sql.Int, Number(ceuID));
+      const result = await request.query(`
         USE ${dbName};
         INSERT INTO ceu_event_fees (
             eventFeeID,
@@ -214,13 +220,9 @@ class RegItemsService {
             @value
         );
         SELECT @@identity as id
-      `)
-      .parameter('eventFeeID', TYPES.Int, Number(eventFeeID))
-      .parameter('value', TYPES.Float, Number(value))
-      .parameter('ceuID', TYPES.Int, Number(ceuID))
-      .execute();
+      `);
 
-      const id = results[0].id;
+      const id = result.recordset[0].id;
       const ceus = await this.getRegItemCEUs([eventFeeID], vert);
       const ceuList = ceus[eventFeeID] || [];
 
@@ -250,7 +252,7 @@ class RegItemsService {
         return { success: false, message: "Fields array must include 'in' or 'out'." };
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Build update fields
@@ -262,15 +264,15 @@ class RegItemsService {
         updates.push("checkOutCode = ''");
       }
 
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      await request.query(`
         USE ${dbName};
         UPDATE event_fees
         SET ${updates.join(', ')}
         WHERE eventFeeID IN (${body.ids.join(',')})
             AND event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
 
       return { success: true };
     } catch (error) {
@@ -295,7 +297,7 @@ class RegItemsService {
         return { success: false, message: "Fields array must include 'in' or 'out'." };
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       let qryString = `USE ${dbName}; `;
@@ -323,22 +325,21 @@ class RegItemsService {
         `;
       });
 
-      let updateQry = connection.sql(qryString);
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
 
       // Add parameters to the query
       updateValues.forEach(param => {
         if (param.checkin) {
-          updateQry = updateQry.parameter(`checkin${param.index}`, TYPES.VarChar, param.checkin.toString());
+          request.input(`checkin${param.index}`, sql.VarChar, param.checkin.toString());
         }
         if (param.checkout) {
-          updateQry = updateQry.parameter(`checkout${param.index}`, TYPES.VarChar, param.checkout.toString());
+          request.input(`checkout${param.index}`, sql.VarChar, param.checkout.toString());
         }
-        updateQry = updateQry.parameter(`fee${param.index}`, TYPES.Int, param.id);
+        request.input(`fee${param.index}`, sql.Int, param.id);
       });
 
-      await updateQry
-        .parameter('eventID', TYPES.Int, Number(eventID))
-        .execute();
+      await request.query(qryString);
 
       return {
         updates: updateValues.reduce((acc, curr) => {

@@ -3,10 +3,8 @@
  * Public API endpoints - no auth required
  */
 
-import { successResponse, errorResponse } from '../utils/response.js';
-import QRService from '../services/QRService.js';
-
-const _qrService = new QRService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _qrService from '../services/QRService.js';
 
 /**
  * GET /qr/mobileAttendeeQR/:vert/:attendeeGUID
@@ -22,7 +20,7 @@ export const generateMobileAttendeeQRRoute = {
       if (result && result.statusCode) {
         return result;
       }
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error generating mobile attendee QR:', error);
       return errorResponse('Failed to generate QR code', 500, error.message);
@@ -43,7 +41,7 @@ export const generateMobileSpecQRRoute = {
       if (result && result.statusCode) {
         return result;
       }
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error generating mobile spec QR:', error);
       return errorResponse('Failed to generate QR code', 500, error.message);
@@ -64,7 +62,7 @@ export const generateCheckinSpecQRRoute = {
       if (result && result.statusCode) {
         return result;
       }
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error generating check-in spec QR:', error);
       return errorResponse('Failed to generate QR code', 500, error.message);

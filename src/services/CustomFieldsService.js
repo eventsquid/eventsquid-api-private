@@ -15,7 +15,7 @@ class CustomFieldsService {
     try {
       const db = await getDatabase(null, vert);
       const eventsCollection = db.collection('events');
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Get events from MongoDB that use this question
@@ -25,7 +25,10 @@ class CustomFieldsService {
       ).toArray();
 
       // Get the updated question from MSSQL
-      const updatedQuestionResults = await connection.sql(`
+      const questionRequest = new sql.Request();
+      questionRequest.input('fieldID', sql.Int, fieldID);
+      questionRequest.input('affiliateID', sql.Int, affiliateID);
+      const updatedQuestionResult = await questionRequest.query(`
         USE ${dbName};
         SELECT DISTINCT
             RTRIM(LTRIM( cf.fieldLabel )) AS fl,
@@ -54,15 +57,14 @@ class CustomFieldsService {
                 ), 1, 1, '') + ']')) AS pfi
         FROM Custom_Fields AS cf
         WHERE cf.field_id = @fieldID
-      `)
-      .parameter('fieldID', TYPES.Int, fieldID)
-      .parameter('affiliateID', TYPES.Int, affiliateID)
-      .execute();
-
+      `);
+      const updatedQuestionResults = updatedQuestionResult.recordset;
       const updatedQuestion = updatedQuestionResults[0];
 
       // Get options from MSSQL
-      const options = await connection.sql(`
+      const optionsRequest = new sql.Request();
+      optionsRequest.input('fieldID', sql.Int, fieldID);
+      const optionsResult = await optionsRequest.query(`
         USE ${dbName};
         SELECT
             o.[field_ID] AS fid,
@@ -76,9 +78,8 @@ class CustomFieldsService {
             JOIN dbo.[custom_fieldOptions] AS o ON f.[field_id] = o.[field_ID]
         WHERE f.field_ID = @fieldID
         ORDER BY o.field_ID, ISNULL( o.optionOrder, 999 ), o.optionValue
-      `)
-      .parameter('fieldID', TYPES.Int, fieldID)
-      .execute();
+      `);
+      const options = optionsResult.recordset;
 
       // Parse the profile array, which comes back as a JSON string
       if (updatedQuestion && updatedQuestion.pfi) {
@@ -135,21 +136,21 @@ class CustomFieldsService {
    */
   async getCustomFieldsByEvent(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const fields = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, eventID);
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT cf.*
         FROM b_events_to_custom_fields etc
         JOIN Custom_Fields cf on cf.field_id = etc.field_id
         WHERE etc.event_id = @eventID
             AND cf.active = 1
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .execute();
+      `);
 
-      return fields;
+      return result.recordset;
     } catch (error) {
       console.error('Error getting custom fields by event:', error);
       throw error;

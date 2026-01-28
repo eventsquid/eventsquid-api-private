@@ -4,7 +4,7 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
 import { utcToTimezone, timezoneToUTC } from '../functions/conversions.js';
 import RootService from '../services/RootService.js';
 
@@ -27,7 +27,7 @@ export const utcToEventZoneRoute = {
       
       const convertedDate = utcToTimezone(new Date(date), zone, format || 'YYYY-MM-DD HH:mm:ss');
       
-      return successResponse({ date: convertedDate });
+      return createResponse(200, { date: convertedDate });
     } catch (error) {
       console.error('Error in utcToEventZone:', error);
       return errorResponse('Failed to convert timezone', 500, error.message);
@@ -52,7 +52,7 @@ export const timezoneToUTCRoute = {
       
       const utcDate = timezoneToUTC(new Date(date), zone, format || 'YYYY-MM-DD HH:mm:ss');
       
-      return successResponse({ date: utcDate });
+      return createResponse(200, { date: utcDate });
     } catch (error) {
       console.error('Error in timezoneToUTC:', error);
       return errorResponse('Failed to convert to UTC', 500, error.message);
@@ -71,7 +71,7 @@ export const jurisdictionsRoute = {
     try {
       const jurisdictions = await _rootService.getJurisdictions();
       
-      return successResponse(jurisdictions);
+      return createResponse(200, jurisdictions);
     } catch (error) {
       console.error('Error getting jurisdictions:', error);
       return errorResponse('Failed to get jurisdictions', 500, error.message);
@@ -124,23 +124,24 @@ export const postImagesRoute = {
       // Update database based on file type
       const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
       const { getDatabase } = await import('../utils/mongodb.js');
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
 
       // Handle different file types
       if (body.fileName === 'org-logo') {
         // Update affiliate record
-        const results = await connection.sql(`
+        const request = new sql.Request();
+        request.input('logoURL', sql.VarChar, logoURL);
+        request.input('guid', sql.UniqueIdentifier, body._guid);
+        const result = await request.query(`
           USE ${dbName};
           UPDATE b_affiliates
           SET logo = @logoURL, logos3 = @logoURL
           WHERE _guid = @guid;
           SELECT affiliate_id FROM b_affiliates WHERE _guid = @guid;
-        `)
-        .parameter('logoURL', TYPES.VarChar, logoURL)
-        .parameter('guid', TYPES.UniqueIdentifier, body._guid)
-        .execute();
+        `);
+        const results = result.recordset;
 
         if (results.length) {
           const eventsColl = db.collection('events');
@@ -151,15 +152,15 @@ export const postImagesRoute = {
         }
       } else if (body.fileName === 'speaker-photo') {
         // Update speaker record
-        await connection.sql(`
+        const request = new sql.Request();
+        request.input('photoURL', sql.VarChar, logoURL);
+        request.input('guid', sql.UniqueIdentifier, body._guid);
+        await request.query(`
           USE ${dbName};
           UPDATE b_speakers
           SET speaker_PhotoS3 = @photoURL
           WHERE _guid = @guid
-        `)
-        .parameter('photoURL', TYPES.VarChar, logoURL)
-        .parameter('guid', TYPES.UniqueIdentifier, body._guid)
-        .execute();
+        `);
       } else if (body.fileName === 'avatars') {
         // Validate user can only update their own avatar
         const userID = Number(body.userID);
@@ -171,20 +172,20 @@ export const postImagesRoute = {
         }
 
         // Update user record
-        await connection.sql(`
+        const request = new sql.Request();
+        request.input('avatarURL', sql.VarChar, logoURL);
+        request.input('userID', sql.Int, userID);
+        await request.query(`
           USE ${dbName};
           UPDATE b_users
           SET avatar = @avatarURL, avatars3 = @avatarURL
           WHERE user_id = @userID
-        `)
-        .parameter('avatarURL', TYPES.VarChar, logoURL)
-        .parameter('userID', TYPES.Int, userID)
-        .execute();
+        `);
       } else {
         return errorResponse('Invalid fileName. Must be org-logo, speaker-photo, or avatars', 400);
       }
 
-      return successResponse({ url: logoURL });
+      return createResponse(200, { url: logoURL });
     } catch (error) {
       console.error('Error saving image:', error);
       return errorResponse('Failed to save image', 500, error.message);

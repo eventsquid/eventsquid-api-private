@@ -11,28 +11,30 @@ import _ from 'lodash';
  */
 export async function getSessionBySlotID(eventID, userID, slotID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     // Get speaker ratings
-    const speakersRA = await connection.sql(`
+    const request1 = new sql.Request();
+    request1.input('eventID', sql.Int, Number(eventID));
+    request1.input('userID', sql.Int, Number(userID));
+    request1.input('slotID', sql.Int, Number(slotID));
+    const result1 = await request1.query(`
       USE ${dbName};
       EXEC [dbo].[node_getSpeakerRatingsByEventID-userID-SlotID] @eventID, @userID, @slotID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('userID', TYPES.Int, Number(userID))
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .execute();
+    `);
+    const speakersRA = result1.recordset;
 
     // Get session ratings
-    const sessionRA = await connection.sql(`
+    const request2 = new sql.Request();
+    request2.input('eventID', sql.Int, Number(eventID));
+    request2.input('userID', sql.Int, Number(userID));
+    request2.input('slotID', sql.Int, Number(slotID));
+    const result2 = await request2.query(`
       USE ${dbName};
       EXEC [dbo].[node_getSessionRatingsByEventID-userID-SlotID] @eventID, @userID, @slotID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('userID', TYPES.Int, Number(userID))
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .execute();
+    `);
+    const sessionRA = result2.recordset;
 
     const sessionObj = sessionRA[0] || {};
 
@@ -59,11 +61,24 @@ export async function getSessionBySlotID(eventID, userID, slotID, vert) {
  */
 export async function saveSessionBySlotID(eventID, userID, slotID, form, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     // Save session ratings
-    const sessionSave = await connection.sql(`
+    const request = new sql.Request();
+    request.input('overallrating', sql.Float, Number(form.overall));
+    request.input('contentrating', sql.Float, Number(form.content));
+    request.input('materialsrating', sql.Float, Number(form.materials));
+    request.input('haveagainrating', sql.Float, Number(form.haveagain));
+    request.input('experiencerating', sql.Float, Number(form.experience));
+    request.input('deliveryrating', sql.Float, Number(form.delivery));
+    request.input('comments', sql.VarChar, _.trim(form.comments));
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('userID', sql.Int, Number(userID));
+    request.input('eventFeeID', sql.Int, Number(form.eventFeeID));
+    request.input('slotID', sql.Int, Number(slotID));
+    request.input('source', sql.VarChar, _.trim(form.source));
+    const result = await request.query(`
       USE ${dbName};
       EXEC [dbo].[node_saveSessionRatingsBySlotID-eventID-userID-eventFeeID]
           @eventID,
@@ -78,20 +93,8 @@ export async function saveSessionBySlotID(eventID, userID, slotID, form, vert) {
           @deliveryrating,
           @comments,
           @source
-    `)
-    .parameter('overallrating', TYPES.Float, Number(form.overall))
-    .parameter('contentrating', TYPES.Float, Number(form.content))
-    .parameter('materialsrating', TYPES.Float, Number(form.materials))
-    .parameter('haveagainrating', TYPES.Float, Number(form.haveagain))
-    .parameter('experiencerating', TYPES.Float, Number(form.experience))
-    .parameter('deliveryrating', TYPES.Float, Number(form.delivery))
-    .parameter('comments', TYPES.VarChar, _.trim(form.comments))
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('userID', TYPES.Int, Number(userID))
-    .parameter('eventFeeID', TYPES.Int, Number(form.eventFeeID))
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .parameter('source', TYPES.VarChar, _.trim(form.source))
-    .execute();
+    `);
+    const sessionSave = result.recordset;
 
     const saveRA = [sessionSave];
 
@@ -115,10 +118,22 @@ export async function saveSessionBySlotID(eventID, userID, slotID, form, vert) {
  */
 export async function saveSpeaker(eventID, userID, form, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const result = await connection.sql(`
+    const request = new sql.Request();
+    request.input('overallrating', sql.Float, Number(form.overall));
+    request.input('contentrating', sql.Float, Number(form.content));
+    request.input('materialsrating', sql.Float, Number(form.materials));
+    request.input('haveagainrating', sql.Float, Number(form.haveagain));
+    request.input('experiencerating', sql.Float, Number(form.experience));
+    request.input('deliveryrating', sql.Float, Number(form.delivery));
+    request.input('comments', sql.VarChar, _.trim(form.comments));
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('userID', sql.Int, Number(userID));
+    request.input('speakerID', sql.Int, Number(form.speakerID));
+    request.input('source', sql.VarChar, _.trim(form.source));
+    const result = await request.query(`
       USE ${dbName};
       EXEC [dbo].[node_saveSpeakerRatingsBySpeakerID-eventID-userID]
           @eventID,
@@ -132,19 +147,7 @@ export async function saveSpeaker(eventID, userID, form, vert) {
           @deliveryrating,
           @comments,
           @source
-    `)
-    .parameter('overallrating', TYPES.Float, Number(form.overall))
-    .parameter('contentrating', TYPES.Float, Number(form.content))
-    .parameter('materialsrating', TYPES.Float, Number(form.materials))
-    .parameter('haveagainrating', TYPES.Float, Number(form.haveagain))
-    .parameter('experiencerating', TYPES.Float, Number(form.experience))
-    .parameter('deliveryrating', TYPES.Float, Number(form.delivery))
-    .parameter('comments', TYPES.VarChar, _.trim(form.comments))
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('userID', TYPES.Int, Number(userID))
-    .parameter('speakerID', TYPES.Int, Number(form.speakerID))
-    .parameter('source', TYPES.VarChar, _.trim(form.source))
-    .execute();
+    `);
 
     return result;
   } catch (error) {
@@ -158,15 +161,16 @@ export async function saveSpeaker(eventID, userID, form, vert) {
  */
 export async function getRatingsConfigByEventID(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const ratingConfigRA = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_getRatingsConfigByEventID @eventID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const ratingConfigRA = result.recordset;
 
     const defaultConfig = {
       showcomments: true,
@@ -214,16 +218,17 @@ export async function getRatingsConfigByEventID(eventID, vert) {
  */
 export async function getAllRatingConfigsByEventAndUser(userID, eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('userID', sql.Int, Number(userID));
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_getAllRatingConfigsByEventAndUser @userID, @eventID
-    `)
-    .parameter('userID', TYPES.Int, Number(userID))
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results.map(result => {
       if (!result.reviews_on && result.reviewable_speakers > 0) {

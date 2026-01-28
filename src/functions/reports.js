@@ -10,6 +10,7 @@ import _ from 'lodash';
 import moment from 'moment-timezone';
 import { utcToTimezone, timezoneToUTCDateObj } from '../functions/conversions.js';
 import EventService from '../services/EventService.js';
+import { sendEmail } from './sendgrid.js';
 
 /**
  * Get event details by GUID
@@ -88,11 +89,12 @@ export async function getReportDetailsByGUID(reportGUID, vert, session) {
  */
 export async function getReportingMenu(eventID, affiliateID, user_admin_level, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     // Get application settings
-    const applicationRA = await connection.sql(`
+    const request1 = new sql.Request();
+    const result1 = await request1.query(`
       USE ${dbName};
       SELECT
         LOWER(RTRIM(LTRIM(attribute_name))) AS [key],
@@ -110,7 +112,8 @@ export async function getReportingMenu(eventID, affiliateID, user_admin_level, v
         'sitename',
         'tableAssigner'
       )
-    `).execute();
+    `);
+    const applicationRA = result1.recordset;
 
     const application = {};
     for (let i = 0; i < applicationRA.length; i++) {
@@ -119,7 +122,10 @@ export async function getReportingMenu(eventID, affiliateID, user_admin_level, v
     }
 
     // Get event details
-    const getEventRA = await connection.sql(`
+    const request2 = new sql.Request();
+    request2.input('eventID', sql.Int, Number(eventID));
+    request2.input('affiliateID', sql.Int, Number(affiliateID));
+    const result2 = await request2.query(`
       USE ${dbName};
       SELECT
         allowbringing,
@@ -145,10 +151,8 @@ export async function getReportingMenu(eventID, affiliateID, user_admin_level, v
         INNER JOIN b_affiliates a ON a.affiliate_id = e.affiliate_id
       WHERE e.event_id = @eventID
         AND e.affiliate_id = @affiliateID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const getEventRA = result2.recordset;
 
     const getEvent = getEventRA[0] || {};
 
@@ -170,15 +174,16 @@ export async function getReportingMenu(eventID, affiliateID, user_admin_level, v
  */
 export async function getBiosByEventID(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const bioRA = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_getBiosByEventID @eventID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const bioRA = result.recordset;
 
     // Clean up bios - remove nulls and clean HTML
     for (let i = 0; i < bioRA.length; i++) {
@@ -288,24 +293,27 @@ export async function findEventReportConfig(request) {
       return {};
     }
 
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     // Get event booths
-    const eventBooths = await connection.sql(`
+    const request1 = new sql.Request();
+    request1.input('eventID', sql.Int, Number(eventIDs[0].e));
+    const result1 = await request1.query(`
       USE ${dbName};
       SELECT COUNT(record_id) AS boothCount
       FROM eventBooths
       WHERE event_id = @eventID
         AND ISNULL(contestant_id, 0) > 0
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventIDs[0].e))
-    .execute();
+    `);
+    const eventBooths = result1.recordset;
 
     const boothCount = Number(eventBooths[0]?.boothCount || 0);
 
     // Get bundles
-    const profileToItemsQry = await connection.sql(`
+    const request2 = new sql.Request();
+    request2.input('eventID', sql.Int, Number(eventIDs[0].e));
+    const result2 = await request2.query(`
       USE ${dbName};
       SELECT
         bundle_id,
@@ -314,9 +322,8 @@ export async function findEventReportConfig(request) {
       FROM event_fee_bundles
       WHERE event_id = @eventID
         AND ISNULL(bundle_active, 0) = 1
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventIDs[0].e))
-    .execute();
+    `);
+    const profileToItemsQry = result2.recordset;
 
     const profileToItemsObj = {};
     profileToItemsQry.forEach((profile) => {
@@ -623,9 +630,10 @@ async function generateDateRangeFilters(dateRangeStr, dateRangeRA, zoneName) {
  */
 export async function registrantReport(eventID, vert, body) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
-    const _eventService = new EventService();
+    // EventService is exported as an instance, not a class
+    const _eventService = EventService;
 
     const zoneData = await _eventService.getEventTimezoneData(eventID, vert);
     const dateFormat = 'MM-DD-YYYY h:mm A z';
@@ -757,12 +765,13 @@ export async function registrantReport(eventID, vert, body) {
     }
 
     // Execute query
-    regRA = await connection.sql(qryStr)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('regStart', TYPES.DateTime, (regStart === null || !regStart) ? null : new Date(regStart))
-      .parameter('regEnd', TYPES.DateTime, (regEnd === null || !regEnd) ? null : new Date(regEnd))
-      .parameter('itemID', TYPES.VarChar, (itemID === '') ? '' : _.trim(itemID))
-      .execute();
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('regStart', sql.DateTime, (regStart === null || !regStart) ? null : new Date(regStart));
+    request.input('regEnd', sql.DateTime, (regEnd === null || !regEnd) ? null : new Date(regEnd));
+    request.input('itemID', sql.VarChar, (itemID === '') ? '' : _.trim(itemID));
+    const result = await request.query(qryStr);
+    regRA = result.recordset;
 
     // Loop the records
     for (let i = 0; i < regRA.length; i++) {
@@ -774,8 +783,20 @@ export async function registrantReport(eventID, vert, body) {
       }
 
       // Convert registration time to timezone
+      // OLD CODE BEHAVIOR: MSSQL DATETIME from stored procedure is timezone-naive
+      // The stored procedure returns rt in the event's local timezone (not UTC)
+      // When Node.js receives it as a Date object, it may be interpreted as UTC
+      // So we need to parse it as if it's already in the event timezone
       if (thisRecord.rt) {
-        thisRecord.rt = utcToTimezone(thisRecord.rt, zoneData.zoneName, dateFormat);
+        if (zoneData.zoneName && zoneData.zoneName.length) {
+          // Convert Date to string and parse as if it's already in the event timezone
+          // This avoids the UTC conversion that was causing the 6-hour offset
+          const dateStr = moment(thisRecord.rt).format('YYYY-MM-DD HH:mm:ss');
+          thisRecord.rt = moment.tz(dateStr, zoneData.zoneName).format(dateFormat);
+        } else {
+          // No timezone, format as-is
+          thisRecord.rt = moment(thisRecord.rt).format(dateFormat);
+        }
       }
     }
 
@@ -1071,10 +1092,19 @@ export async function registrantReportExport(reportGUID, format, checkID, vert, 
  */
 export async function getRegistrantTransactionsReport(affiliateID, eventID, keyword, fromDate, toDate, payMethod, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    // OLD CODE BEHAVIOR: The stored procedure only accepts 6 parameters (not transactionTypeID)
+    // Parameters: @affiliateID, @eventID, @keyword, @fromDate, @toDate, @paymentProcessor
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('keyword', sql.VarChar, keyword || '');
+    request.input('fromDate', sql.Date, fromDate || null);
+    request.input('toDate', sql.Date, toDate || null);
+    request.input('paymentProcessor', sql.VarChar, payMethod || '');
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_registrantTransactionsReport 
         @affiliateID,
@@ -1082,17 +1112,9 @@ export async function getRegistrantTransactionsReport(affiliateID, eventID, keyw
         @keyword,
         @fromDate,
         @toDate,
-        @transactionTypeID,
         @paymentProcessor
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('keyword', TYPES.VarChar, keyword || '')
-    .parameter('fromDate', TYPES.Date, fromDate || null)
-    .parameter('toDate', TYPES.Date, toDate || null)
-    .parameter('transactionTypeID', TYPES.Int, 0)  // Not used in Mantle version
-    .parameter('paymentProcessor', TYPES.VarChar, payMethod || '')
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results;
   } catch (error) {
@@ -1131,18 +1153,37 @@ export async function saveRegistrantTemplate(eventID, vert, body, session) {
       templateData._id = templateData.idg;
 
       await templatesColl.insertOne(templateData);
-      return { status: 'success', idg: templateData.idg };
     } else {
       // Update existing template
+      // Remove 'lu' from templateData since we're using $currentDate to set it
+      const { lu, ...updateData } = templateData;
       await templatesColl.updateOne(
         { idg: body.idg, e: Number(eventID) },
         {
-          $set: templateData,
+          $set: updateData,
           $currentDate: { lu: { $type: 'date' } }
         }
       );
-      return { status: 'success', idg: body.idg };
     }
+
+    // OLD CODE BEHAVIOR: After saving, return the full templates list (not just success message)
+    // Fetch and return all templates for this event
+    const templatesRA = await templatesColl.find({
+      e: Number(eventID),
+      ty: 'registrant',
+      _x: { $ne: true }
+    }, {
+      projection: { _id: 0, idg: 1, lu: 1, rsc: 1, rsf: 1, nm: 1, tmn: 1, pvt: 1, own: 1 }
+    })
+    .sort({ tmn: 1 })
+    .toArray();
+
+    // Loop the templates and verify ownership
+    for (let i = 0; i < templatesRA.length; i++) {
+      templatesRA[i].isOwner = (Number(templatesRA[i].own.u) === Number(session.user_id));
+    }
+
+    return templatesRA;
   } catch (error) {
     console.error('Error saving registrant template:', error);
     throw error;
@@ -1196,6 +1237,31 @@ export async function shareTemplate(body, session) {
         $currentDate: { lu: { $type: 'date' } }
       }
     );
+
+    // OLD CODE BEHAVIOR: Send email notification when sharing template
+    if (body.email && body.reportURL) {
+      const emailSubject = `${body.fromName || 'Eventsquid'} shared a report: ${body.reportName || 'Report'}`;
+      const emailHtml = `
+        <div>
+          <p>${body.fromName || 'A user'} has shared a report with you:</p>
+          <p><strong>${body.reportName || 'Report'}</strong></p>
+          <p><a href="${body.reportURL}">View Report</a></p>
+          <p>Eventsquid</p>
+        </div>
+      `;
+
+      try {
+        await sendEmail({
+          to: body.email,
+          fromName: body.fromName || 'Eventsquid',
+          subject: emailSubject,
+          html: emailHtml
+        });
+      } catch (emailError) {
+        // Log email error but don't fail the share operation
+        console.error('Error sending share template email:', emailError);
+      }
+    }
 
     return { status: 'success', message: 'Template sharing updated' };
   } catch (error) {

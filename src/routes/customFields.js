@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import CustomFieldsService from '../services/CustomFieldsService.js';
-
-const _customFieldsService = new CustomFieldsService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _customFieldsService from '../services/CustomFieldsService.js';
 
 /**
  * POST /customFields/:fieldID
@@ -23,7 +21,7 @@ export const saveCustomFieldRoute = {
       const vert = request.vert;
       
       const result = await _customFieldsService.saveChanges(affiliateID, fieldID, vert);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error saving custom field:', error);
       return errorResponse('Failed to save custom field', 500, error.message);
@@ -50,7 +48,7 @@ export const getCustomFieldsByEventRoute = {
         results = results.filter(field => field.fieldInput === type);
       }
       
-      return successResponse(results);
+      return createResponse(200, results);
     } catch (error) {
       console.error('Error getting custom fields:', error);
       return errorResponse('Failed to get custom fields', 500, error.message);

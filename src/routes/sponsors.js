@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import SponsorsService from '../services/SponsorsService.js';
-
-const _sponsorService = new SponsorsService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _sponsorService from '../services/SponsorsService.js';
 
 /**
  * POST /sponsors
@@ -20,7 +18,7 @@ export const createSponsorRoute = {
     try {
       const affiliateID = Number(request.session?.affiliate_id);
       const response = await _sponsorService.createSponsor(affiliateID, request.body, request.vert);
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error creating sponsor:', error);
       return errorResponse('Failed to create sponsor', 500, error.message);
@@ -40,7 +38,7 @@ export const updateSponsorRoute = {
       const sponsorID = Number(request.pathParameters.sponsorID);
       const { field, data } = request.body || {};
       const response = await _sponsorService.updateSponsorField(sponsorID, field, data, request.vert);
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error updating sponsor:', error);
       return errorResponse('Failed to update sponsor', 500, error.message);
@@ -59,7 +57,7 @@ export const getAffiliateSponsorsRoute = {
     try {
       const affiliateID = Number(request.pathParameters.affiliateID);
       const sponsors = await _sponsorService.getAffiliateSponsors(affiliateID, request.vert);
-      return successResponse(sponsors);
+      return createResponse(200, sponsors);
     } catch (error) {
       console.error('Error getting affiliate sponsors:', error);
       return errorResponse('Failed to get affiliate sponsors', 500, error.message);
@@ -79,7 +77,7 @@ export const getSponsorLogoRoute = {
       const { filename } = request.body || {};
       const s3domain = request.headers?.s3domain;
       const logo = await _sponsorService.getSponsorLogo(filename, s3domain);
-      return successResponse(logo);
+      return createResponse(200, logo);
     } catch (error) {
       console.error('Error getting sponsor logo:', error);
       return errorResponse('Failed to get sponsor logo', 500, error.message);
@@ -98,7 +96,7 @@ export const deleteSponsorRoute = {
     try {
       const sponsorID = Number(request.pathParameters.sponsorID);
       const response = await _sponsorService.deleteAffiliateSponsor(sponsorID, request.vert);
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error deleting sponsor:', error);
       return errorResponse('Failed to delete sponsor', 500, error.message);
@@ -117,7 +115,7 @@ export const getEventSponsorsRoute = {
     try {
       const eventID = Number(request.pathParameters.eventID);
       const sponsors = await _sponsorService.getEventSponsors(eventID, request.vert);
-      return successResponse(sponsors);
+      return createResponse(200, sponsors);
     } catch (error) {
       console.error('Error getting event sponsors:', error);
       return errorResponse('Failed to get event sponsors', 500, error.message);
@@ -138,7 +136,7 @@ export const getEventSponsorRoute = {
       const sponsorID = Number(request.pathParameters.sponsorID);
       const levelID = Number(request.pathParameters.levelID);
       const sponsor = await _sponsorService.getEventSponsor(eventID, sponsorID, levelID, request.vert);
-      return successResponse(sponsor);
+      return createResponse(200, sponsor);
     } catch (error) {
       console.error('Error getting event sponsor:', error);
       return errorResponse('Failed to get event sponsor', 500, error.message);
@@ -168,7 +166,7 @@ export const getEventSponsorResourcesRoute = {
         sponsorID,
         vert
       );
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting event sponsor resources:', error);
       return errorResponse('Failed to get event sponsor resources', 500, error.message);
@@ -193,7 +191,7 @@ export const moveEventSponsorRoute = {
         Number(sortOrder),
         request.vert
       );
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error moving event sponsor:', error);
       return errorResponse('Failed to move event sponsor', 500, error.message);
@@ -213,7 +211,7 @@ export const updateEventSponsorRoute = {
       const sponsorID = Number(request.pathParameters.sponsorID);
       const levelID = Number(request.pathParameters.levelID);
       const response = await _sponsorService.updateEventSponsor(sponsorID, levelID, request.body, request.vert);
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error updating event sponsor:', error);
       return errorResponse('Failed to update event sponsor', 500, error.message);
@@ -229,7 +227,7 @@ export const getEventSponsorLevelsRoute = {
     try {
       const eventID = Number(request.pathParameters.eventID);
       const levels = await _sponsorService.getEventSponsorLevels(eventID, request.vert);
-      return successResponse(levels);
+      return createResponse(200, levels);
     } catch (error) {
       console.error('Error getting event sponsor levels:', error);
       return errorResponse('Failed to get event sponsor levels', 500, error.message);
@@ -245,7 +243,7 @@ export const createSponsorLevelRoute = {
       const eventID = Number(request.pathParameters.eventID);
       const newLevel = await _sponsorService.createSponsorLevel(eventID, request.body, request.vert);
       if (newLevel.success) {
-        return successResponse(newLevel);
+        return createResponse(200, newLevel);
       } else {
         return errorResponse(newLevel.message || 'Failed to create sponsor level', 400);
       }
@@ -268,7 +266,7 @@ export const moveSponsorLevelRoute = {
         Number(sortOrder),
         request.vert
       );
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error moving sponsor level:', error);
       return errorResponse('Failed to move sponsor level', 500, error.message);
@@ -289,7 +287,7 @@ export const addSponsorToLevelRoute = {
         affiliateID,
         request.vert
       );
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error adding sponsor to level:', error);
       return errorResponse('Failed to add sponsor to level', 500, error.message);
@@ -304,7 +302,7 @@ export const updateSponsorLevelRoute = {
     try {
       const levelID = Number(request.pathParameters.levelID);
       const response = await _sponsorService.updateSponsorLevel(levelID, request.body, request.vert);
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error updating sponsor level:', error);
       return errorResponse('Failed to update sponsor level', 500, error.message);
@@ -319,7 +317,7 @@ export const deleteSponsorLevelRoute = {
     try {
       const levelID = Number(request.pathParameters.levelID);
       const response = await _sponsorService.deleteSponsorLevel(levelID, request.vert);
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error deleting sponsor level:', error);
       return errorResponse('Failed to delete sponsor level', 500, error.message);
@@ -335,7 +333,7 @@ export const removeSponsorFromLevelRoute = {
       const levelID = Number(request.pathParameters.levelID);
       const sponsorID = Number(request.pathParameters.sponsorID);
       const response = await _sponsorService.removeSponsorFromLevel(levelID, sponsorID, request.vert);
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error removing sponsor from level:', error);
       return errorResponse('Failed to remove sponsor from level', 500, error.message);
@@ -356,7 +354,7 @@ export const addLiveMeetingRoute = {
         meetings,
         request.vert
       );
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error adding live meeting:', error);
       return errorResponse('Failed to add live meeting', 500, error.message);
@@ -371,7 +369,7 @@ export const deleteLiveMeetingRoute = {
     try {
       const meetingID = Number(request.pathParameters.meetingID);
       const response = await _sponsorService.deleteLiveMeeting(meetingID, request.vert);
-      return successResponse(response);
+      return createResponse(200, response);
     } catch (error) {
       console.error('Error deleting live meeting:', error);
       return errorResponse('Failed to delete live meeting', 500, error.message);

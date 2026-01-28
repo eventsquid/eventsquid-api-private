@@ -81,17 +81,17 @@ class SponsorsService {
 
       // If clearing email, deactivate instant contact on all event sponsors
       if (updateField === 'defaultSponsorEmail' && updateValue && !updateValue.length) {
-        const connection = await getConnection(vert);
+        const sql = await getConnection(vert);
         const dbName = getDatabaseName(vert);
 
-        await connection.sql(`
+        const request = new sql.Request();
+        request.input('sponsorID', sql.Int, Number(sponsorID));
+        await request.query(`
           USE ${dbName};
           UPDATE event_sponsor
           SET instantContactActive = 0
           WHERE sponsorID = @sponsorID;
-        `)
-        .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-        .execute();
+        `);
       }
 
       return await updateSponsor(sponsorID, updateObj, vert);

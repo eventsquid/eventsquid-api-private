@@ -11,7 +11,7 @@ class RootService {
    */
   async getJurisdictions() {
     try {
-      const connection = await getConnection(null); // Use default connection
+      const sql = await getConnection(null); // Use default connection
       
       const query = `
         USE EventsquidCommon;
@@ -23,8 +23,9 @@ class RootService {
         LEFT JOIN Countries c on c.countryID = s.countryID
       `;
       
-      const results = await connection.sql(query).execute();
-      return results;
+      const request = new sql.Request();
+      const result = await request.query(query);
+      return result.recordset;
     } catch (error) {
       console.error('Error getting jurisdictions:', error);
       throw error;

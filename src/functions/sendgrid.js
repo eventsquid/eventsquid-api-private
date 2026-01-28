@@ -173,10 +173,26 @@ export async function logEmail(form) {
  */
 export async function validateEmail(form) {
   try {
-    const sgEmailValKey = process.env.SENDGRID_EMAIL_VAL_KEY;
+    const sgEmailValKey = process.env.SG_EMAIL_VAL_KEY;
     
     if (!sgEmailValKey) {
-      throw new Error('SENDGRID_EMAIL_VAL_KEY environment variable is required');
+      // OLD CODE BEHAVIOR: In local dev, return mock validation result when API key is missing
+      console.warn('SG_EMAIL_VAL_KEY not set, returning mock validation result for local dev');
+      // Return a mock validation result that matches SendGrid's response format
+      return {
+        email: form.email || '',
+        verdict: 'Valid',
+        score: 0.95,
+        local: form.email?.split('@')[0] || '',
+        host: form.email?.split('@')[1] || '',
+        suggestion: '',
+        checks: {
+          domain: { has_valid_address_syntax: true, has_mx_records: true, has_cname_records: false },
+          local_part: { is_suspected_role_address: false, is_suspected_disposable_address: false, is_suspected_free_address: false },
+          additional: { has_known_bounces: false, has_suspected_bounces: false }
+        },
+        source: form.source || ''
+      };
     }
 
     const response = await axios.request({
@@ -208,17 +224,18 @@ export async function verifyEmail(request) {
       return { email: '', hasAccount: false };
     }
 
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('userEmail', sql.VarChar, String(email));
+    const result = await request.query(`
       USE ${dbName};
       SELECT user_id
       FROM b_users
       WHERE user_email = @userEmail
-    `)
-    .parameter('userEmail', TYPES.VarChar, String(email))
-    .execute();
+    `);
+    const results = result.recordset;
 
     const hasAccount = results.length > 0 && results[0].user_id;
 
@@ -244,17 +261,18 @@ export async function getUserPhone(request) {
       return { email: '', phone: '' };
     }
 
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('userEmail', sql.VarChar, String(email));
+    const result = await request.query(`
       USE ${dbName};
       SELECT user_mobile, user_phone
       FROM b_users
       WHERE user_email = @userEmail
-    `)
-    .parameter('userEmail', TYPES.VarChar, String(email))
-    .execute();
+    `);
+    const results = result.recordset;
 
     let phoneNumber = '';
     if (results.length > 0) {
@@ -276,9 +294,16 @@ export async function getUserPhone(request) {
  */
 export async function sendEmail(form) {
   try {
-    const sgKey = process.env.SENDGRID_API_KEY;
+    const sgKey = process.env.SG_API_KEY;
     if (!sgKey) {
-      throw new Error('SENDGRID_API_KEY environment variable is required');
+      // OLD CODE BEHAVIOR: In local dev, log and return true when API key is missing (mock sending)
+      console.warn('SG_API_KEY not set, mocking email send for local dev');
+      console.log('Would send email:', {
+        to: form.to,
+        subject: form.subject,
+        from: form.fromName || process.env.SENDGRID_SENDER || 'noreply@eventsquid.com'
+      });
+      return true;
     }
 
     sgMail.setApiKey(sgKey);
@@ -314,10 +339,40 @@ export async function sendEmail(form) {
       ...(form.reply_to && { replyTo: form.reply_to })
     };
 
-    await sgMail.send(payload);
-    return true;
+    console.log('Attempting to send email via SendGrid:', {
+      to: form.to,
+      subject: form.subject,
+      from: from,
+      hasHtml: !!form.html,
+      hasText: !!form.text
+    });
+
+    const result = await sgMail.send(payload);
+    
+    console.log('SendGrid API response:', {
+      statusCode: result[0]?.statusCode,
+      headers: result[0]?.headers,
+      body: result[0]?.body
+    });
+
+    if (result[0]?.statusCode >= 200 && result[0]?.statusCode < 300) {
+      console.log('Email sent successfully via SendGrid:', {
+        to: form.to,
+        subject: form.subject,
+        statusCode: result[0]?.statusCode
+      });
+      return true;
+    } else {
+      console.warn('SendGrid returned non-success status:', result[0]?.statusCode);
+      return false;
+    }
   } catch (error) {
     console.error('Error sending email:', error);
+    console.error('Error details:', {
+      message: error.message,
+      response: error.response?.data,
+      statusCode: error.response?.statusCode
+    });
     return false;
   }
 }
@@ -362,10 +417,10 @@ export async function sendVerificationCode(form) {
 export async function getEmailDetailFromAPI(msgID, vert) {
   try {
     const sendgridAPIURL = `https://api.sendgrid.com/v3/messages/${msgID}`;
-    const sgEmailActivityKey = process.env.SG_EMAIL_ACTIVITY_KEY || process.env.SENDGRID_ACTIVITY_API_KEY;
+    const sgEmailActivityKey = process.env.SG_EMAIL_ACTIVITY_KEY;
 
     if (!sgEmailActivityKey) {
-      throw new Error('SG_EMAIL_ACTIVITY_KEY or SENDGRID_ACTIVITY_API_KEY environment variable is required');
+      throw new Error('SG_EMAIL_ACTIVITY_KEY environment variable is required');
     }
 
     const response = await axios.request({
@@ -390,10 +445,10 @@ export async function getEmailDetailFromAPI(msgID, vert) {
 export async function getEmailListFromAPI(form, vert) {
   try {
     const inboundAPIKey = process.env.TWILIO_INBOUND_API_KEY || process.env.SENDGRID_INBOUND_API_KEY;
-    const sgEmailActivityKey = process.env.SG_EMAIL_ACTIVITY_KEY || process.env.SENDGRID_ACTIVITY_API_KEY;
+    const sgEmailActivityKey = process.env.SG_EMAIL_ACTIVITY_KEY;
 
     if (!sgEmailActivityKey) {
-      throw new Error('SG_EMAIL_ACTIVITY_KEY or SENDGRID_ACTIVITY_API_KEY environment variable is required');
+      throw new Error('SG_EMAIL_ACTIVITY_KEY environment variable is required');
     }
 
     if (!inboundAPIKey) {

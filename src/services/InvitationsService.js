@@ -3,7 +3,7 @@
  * Migrated from Mantle InvitationsService.js
  */
 
-import EventService from './EventService.js';
+import _eventService from './EventService.js';
 import {
   getEventsWithInviteesByAffiliate,
   getInvitationCounts,
@@ -17,8 +17,6 @@ import {
   getEventContactsByAffiliate
 } from '../functions/events.js';
 import _ from 'lodash';
-
-const _eventService = new EventService();
 
 class InvitationsService {
   /**

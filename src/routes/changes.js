@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import ChangeService from '../services/ChangeService.js';
-
-const _changeService = new ChangeService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _changeService from '../services/ChangeService.js';
 
 /**
  * GET /changes/attendee/:attendeeID
@@ -19,7 +17,7 @@ export const getAttendeeChangeActivityRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _changeService.getAttendeeChangeActivity(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting attendee change activity:', error);
       return errorResponse('Failed to get change activity', 500, error.message);
@@ -37,7 +35,7 @@ export const getEventChangeActivityRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _changeService.getEventChangeActivity(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting event change activity:', error);
       return errorResponse('Failed to get event change activity', 500, error.message);
@@ -55,7 +53,7 @@ export const getAffiliateChangeActivityRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _changeService.getAffiliateChangeActivity(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting affiliate change activity:', error);
       return errorResponse('Failed to get affiliate change activity', 500, error.message);

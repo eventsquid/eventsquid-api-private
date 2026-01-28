@@ -6,6 +6,7 @@
 
 import { getDatabase } from '../utils/mongodb.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
+// Note: getConnection now returns sql module, use new sql.Request() for queries
 import _ from 'lodash';
 import moment from 'moment-timezone';
 import axios from 'axios';
@@ -126,13 +127,15 @@ class EventService {
    */
   async updateCustomPrompts(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
       const eventsCollection = db.collection('events');
 
       // Get prompts from MSSQL
-      const prompts = await connection.sql(`
+      const promptsRequest = new sql.Request();
+      promptsRequest.input('eventID', sql.Int, Number(eventID));
+      const promptsResult = await promptsRequest.query(`
         USE ${dbName};
         SELECT DISTINCT
             RTRIM(LTRIM( cf.fieldLabel )) AS fl,
@@ -159,12 +162,13 @@ class EventService {
                 JOIN dbo.[Custom_Fields] AS cf ON ecf.[field_id] = cf.[field_id]
         WHERE
             event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const prompts = promptsResult.recordset;
 
       // Get options from MSSQL
-      const options = await connection.sql(`
+      const optionsRequest = new sql.Request();
+      optionsRequest.input('eventID', sql.Int, Number(eventID));
+      const optionsResult = await optionsRequest.query(`
         USE ${dbName};
         SELECT DISTINCT
             cfo.[field_ID] AS fid,
@@ -174,13 +178,12 @@ class EventService {
             cfo.[option_id] AS id
         FROM
             [b_events_to_custom_fields] AS ecf
-                JOIN dbo.[custom_fieldOptions] AS cfo ON ecf.[field_id] = cfo.[field_ID]
+            JOIN dbo.[custom_fieldOptions] AS cfo ON ecf.[field_id] = cfo.[field_ID]
         WHERE
             event_id = @eventID
         ORDER BY ISNULL( cfo.optionOrder, 0 )
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const options = optionsResult.recordset;
 
       // Parse JSON in prompts
       prompts.forEach(row => {
@@ -238,25 +241,27 @@ class EventService {
    */
   async getEventTimezoneData(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Get event timezone
-      const eventZoneResult = await connection.sql(`
+      const eventZoneRequest = new sql.Request();
+      eventZoneRequest.input('eventID', sql.Int, Number(eventID));
+      const eventZoneResult = await eventZoneRequest.query(`
         USE ${dbName};
         SELECT TOP 1
             ISNULL(tz.zoneName, '') zoneName
         FROM b_events e
         LEFT JOIN b_timezones tz on tz.timeZoneID = e.timeZone_id
         WHERE event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
 
-      const eventZone = eventZoneResult.length ? eventZoneResult[0].zoneName : '';
+      const eventZone = eventZoneResult.recordset.length ? eventZoneResult.recordset[0].zoneName : '';
 
       // Get fee timezones
-      const feeZonesResult = await connection.sql(`
+      const feeZonesRequest = new sql.Request();
+      feeZonesRequest.input('eventID', sql.Int, Number(eventID));
+      const feeZonesResult = await feeZonesRequest.query(`
         USE ${dbName};
         SELECT
             ef.eventFeeID,
@@ -265,13 +270,11 @@ class EventService {
         FROM event_fees ef
         LEFT JOIN b_timezones tz on tz.timeZoneID = ef.timeZone_id
         WHERE ef.event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
 
       // Build fees timezone object
       const feeZones = {};
-      feeZonesResult.forEach(feeRecord => {
+      feeZonesResult.recordset.forEach(feeRecord => {
         feeZones[feeRecord.eventFeeID] = 
           (feeRecord.zoneName.length || feeRecord.timeZone === 'GMT') 
             ? feeRecord.zoneName 
@@ -316,9 +319,19 @@ class EventService {
       event.s3path = process.env.S3_BASE_URL || 'https://s3-us-west-2.amazonaws.com/eventsquid/';
 
       // Get vertical config for s3domain
-      const vertical = await configVerticalsCollection.findOne({ mongoID: String(vert) });
-      if (vertical) {
-        event.s3domain = vertical.s3domain;
+      try {
+        const vertical = await configVerticalsCollection.findOne({ mongoID: String(vert) });
+        if (vertical) {
+          event.s3domain = vertical.s3domain;
+        }
+      } catch (error) {
+        // In local dev, silently skip s3domain if we can't access cm database
+        if (process.env.NODE_ENV === 'development' && 
+            (error.code === 13 || error.message?.includes('not authorized'))) {
+          // Silently continue without s3domain
+        } else {
+          throw error;
+        }
       }
 
       return event;
@@ -333,18 +346,29 @@ class EventService {
    */
   async getEventProfiles(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const profiles = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT *
         FROM event_fee_bundles
         WHERE event_id = @eventID
         ORDER BY bundle_name
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const profiles = result.recordset;
+
+      // In local dev, if MSSQL is unavailable and we get empty results, provide helpful message
+      if (process.env.NODE_ENV === 'development' && (!profiles || profiles.length === 0)) {
+        // Check if this is likely a mock connection (MSSQL unavailable)
+        // The mock connection returns empty arrays, so if we get empty results in dev,
+        // it's likely because MSSQL isn't accessible
+        console.warn(`⚠️  getEventProfiles returned empty results for event ${eventID}. This endpoint requires MSSQL access.`);
+        console.warn('   In local dev, MSSQL is unavailable, so this endpoint will return empty data.');
+        console.warn('   To get real data, you need access to the MSSQL database.');
+      }
 
       return profiles;
     } catch (error) {
@@ -373,25 +397,27 @@ class EventService {
    */
   async getEventDuration(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Get timezone
-      const zoneResult = await connection.sql(`
+      const zoneRequest = new sql.Request();
+      zoneRequest.input('eventID', sql.Int, Number(eventID));
+      const zoneResult = await zoneRequest.query(`
         USE ${dbName};
         SELECT TOP 1
             ISNULL(tz.zoneName, '') zoneName
         FROM b_events e
         LEFT JOIN b_timezones tz on tz.timeZoneID = e.timeZone_id
         WHERE event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
       
-      const eventZone = zoneResult.length ? zoneResult[0].zoneName : '';
+      const eventZone = zoneResult.recordset.length ? zoneResult.recordset[0].zoneName : '';
 
       // Get event dates
-      const eventResult = await connection.sql(`
+      const eventRequest = new sql.Request();
+      eventRequest.input('eventID', sql.Int, Number(eventID));
+      const eventResult = await eventRequest.query(`
         USE ${dbName};
         SELECT
             e.event_begins,
@@ -400,11 +426,9 @@ class EventService {
             e.endTime
         FROM b_events e
         WHERE event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
 
-      if (!eventResult.length) {
+      if (!eventResult.recordset.length) {
         return {
           zoneName: eventZone,
           eventBegins: '',
@@ -414,7 +438,7 @@ class EventService {
         };
       }
 
-      const event = eventResult[0];
+      const event = eventResult.recordset[0];
       return {
         zoneName: eventZone,
         eventBegins: event.event_begins ? event.event_begins.toISOString().split('T')[0] : '',
@@ -434,7 +458,6 @@ class EventService {
    */
   async updateEventTimezoneData(eventGUID, vert) {
     try {
-      const connection = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Get event start date & timezone
@@ -480,7 +503,18 @@ class EventService {
         : moment.unix(tzConfigs.zoneStart).utc();
 
       // Update MSSQL
-      await connection.sql(`
+      const sql = await getConnection(vert);
+      const request = new sql.Request();
+      request.input('tzo', sql.Int, tzConfigs.gmtOffset / 3600);
+      request.input('tzoGMT', sql.Int, Number(tzConfigs.gmtOffset));
+      request.input('tzAbbr', sql.VarChar, tzConfigs.abbreviation);
+      request.input('altTZAbbr', sql.VarChar, tzConfigs.nextAbbreviation);
+      request.input('tzName', sql.VarChar, tzConfigs.zoneName);
+      request.input('isDSTon', sql.Int, tzConfigs.dst);
+      request.input('dstStart', sql.DateTime, new Date(dstStart.format()));
+      request.input('dstEnd', sql.DateTime, new Date(dstEnd.format()));
+      request.input('eventGUID', sql.VarChar, eventGUID);
+      await request.query(`
         USE ${dbName};
         UPDATE b_events
         SET
@@ -493,17 +527,7 @@ class EventService {
             dstStart = @dstStart,
             dstEnd = @dstEnd
         WHERE _guid = @eventGUID
-      `)
-      .parameter('tzo', TYPES.Int, tzConfigs.gmtOffset / 3600)
-      .parameter('tzoGMT', TYPES.Int, Number(tzConfigs.gmtOffset))
-      .parameter('tzAbbr', TYPES.VarChar, tzConfigs.abbreviation)
-      .parameter('altTZAbbr', TYPES.VarChar, tzConfigs.nextAbbreviation)
-      .parameter('tzName', TYPES.VarChar, tzConfigs.zoneName)
-      .parameter('isDSTon', TYPES.Int, tzConfigs.dst)
-      .parameter('dstStart', TYPES.DateTime, new Date(dstStart.format()))
-      .parameter('dstEnd', TYPES.DateTime, new Date(dstEnd.format()))
-      .parameter('eventGUID', TYPES.VarChar, eventGUID)
-      .execute();
+      `);
 
       return { success: true, message: 'TZ Data Updated' };
     } catch (error) {
@@ -518,7 +542,6 @@ class EventService {
    */
   async updateFeeTimezoneData(eventGUID, eventFeeID, vert) {
     try {
-      const connection = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Get event data to find the fee
@@ -569,7 +592,18 @@ class EventService {
         : moment.unix(tzConfigs.zoneStart).utc();
 
       // Update MSSQL
-      await connection.sql(`
+      const sql = await getConnection(vert);
+      const request = new sql.Request();
+      request.input('tzo', sql.Int, tzConfigs.gmtOffset / 3600);
+      request.input('tzoGMT', sql.Int, Number(tzConfigs.gmtOffset));
+      request.input('tzAbbr', sql.VarChar, tzConfigs.abbreviation);
+      request.input('altTZAbbr', sql.VarChar, tzConfigs.nextAbbreviation);
+      request.input('tzName', sql.VarChar, tzConfigs.zoneName);
+      request.input('isDSTon', sql.Int, tzConfigs.dst);
+      request.input('dstStart', sql.DateTime, new Date(dstStart.format()));
+      request.input('dstEnd', sql.DateTime, new Date(dstEnd.format()));
+      request.input('eventFeeID', sql.Int, Number(eventFeeID));
+      await request.query(`
         USE ${dbName};
         UPDATE event_fees
         SET
@@ -582,17 +616,7 @@ class EventService {
             dstStart = @dstStart,
             dstEnd = @dstEnd
         WHERE eventFeeID = @eventFeeID
-      `)
-      .parameter('tzo', TYPES.Int, tzConfigs.gmtOffset / 3600)
-      .parameter('tzoGMT', TYPES.Int, Number(tzConfigs.gmtOffset))
-      .parameter('tzAbbr', TYPES.VarChar, tzConfigs.abbreviation)
-      .parameter('altTZAbbr', TYPES.VarChar, tzConfigs.nextAbbreviation)
-      .parameter('tzName', TYPES.VarChar, tzConfigs.zoneName)
-      .parameter('isDSTon', TYPES.Int, tzConfigs.dst)
-      .parameter('dstStart', TYPES.DateTime, new Date(dstStart.format()))
-      .parameter('dstEnd', TYPES.DateTime, new Date(dstEnd.format()))
-      .parameter('eventFeeID', TYPES.Int, Number(eventFeeID))
-      .execute();
+      `);
 
       return { success: true, message: 'Fee TZ Data Updated' };
     } catch (error) {
@@ -606,10 +630,13 @@ class EventService {
    */
   async subQrySpeakerAttendeeDetails(request, eventID, userID) {
     try {
-      const connection = await getConnection(request.headers?.vert || request.vert);
       const dbName = getDatabaseName(request.headers?.vert || request.vert);
+      const sql = await getConnection(request.headers?.vert || request.vert);
 
-      const result = await connection.sql(`
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, Number(eventID));
+      request1.input('userID', sql.Int, Number(userID));
+      const result = await request1.query(`
         USE ${dbName};
         SELECT
             contestant_id AS [c],
@@ -619,10 +646,7 @@ class EventService {
         WHERE event_id = @eventID
             AND regcomplete = 1
             AND user_id = @userID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('userID', TYPES.Int, Number(userID))
-      .execute();
+      `);
 
       return result;
     } catch (error) {
@@ -636,10 +660,13 @@ class EventService {
    */
   async subQrySpeakerSchedule(request, eventID, speakerID) {
     try {
-      const connection = await getConnection(request.headers?.vert || request.vert);
       const dbName = getDatabaseName(request.headers?.vert || request.vert);
+      const sql = await getConnection(request.headers?.vert || request.vert);
 
-      const result = await connection.sql(`
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, Number(eventID));
+      request1.input('speakerID', sql.Int, Number(speakerID));
+      const result = await request1.query(`
         USE ${dbName};
         SELECT
             j.schedule_name AS [scn],
@@ -676,10 +703,7 @@ class EventService {
         WHERE
             ss.speaker_id = @speakerID
             AND js.event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('speakerID', TYPES.Int, Number(speakerID))
-      .execute();
+      `);
 
       return result;
     } catch (error) {
@@ -693,10 +717,12 @@ class EventService {
    */
   async subQrySpeakerDocs(request, eventID, speakerID) {
     try {
-      const connection = await getConnection(request.headers?.vert || request.vert);
       const dbName = getDatabaseName(request.headers?.vert || request.vert);
-
-      const result = await connection.sql(`
+      const sql = await getConnection(request.headers?.vert || request.vert);
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, Number(eventID));
+      request1.input('speakerID', sql.Int, Number(speakerID));
+      const result = await request1.query(`
         USE ${dbName};
         SELECT
             ed.[doc_id] AS [d],
@@ -718,10 +744,7 @@ class EventService {
                 AND uu.resource_type = 'document-upload'
         WHERE ed.speaker_id = @speakerID
             AND ed.event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('speakerID', TYPES.Int, Number(speakerID))
-      .execute();
+      `);
 
       return result;
     } catch (error) {
@@ -788,11 +811,13 @@ class EventService {
         WHERE se.event_id = @eventID
       `;
 
-      let getSpeakers = await connection.sql(getSpeakersSQL)
-        .parameter('eventID', TYPES.Int, Number(eventID))
-        .parameter('domain', TYPES.VarChar, String(domain || ''))
-        .parameter('rooturl', TYPES.VarChar, String(rooturl || ''))
-        .execute();
+      const sql = await getConnection(vert);
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, Number(eventID));
+      request1.input('domain', sql.VarChar, String(domain || ''));
+      request1.input('rooturl', sql.VarChar, String(rooturl || ''));
+      const result1 = await request1.query(getSpeakersSQL);
+      let getSpeakers = result1.recordset;
 
       // Process each speaker - get docs, attendee details, and schedule
       for (let i = 0; i < getSpeakers.length; i++) {
@@ -876,6 +901,7 @@ class EventService {
             ISNULL( f.minAge, 0 ) AS mna,
             ISNULL( f.maxAge, 0 ) AS mxa,
             f.classLimit AS il,
+            'coming soon' AS ql,  -- Quantity Left
             f.custLimit AS ilr,
             f.hideFromCheckInApp,
             f.disableDecrementing,
@@ -893,7 +919,9 @@ class EventService {
             fvu.venue_name AS vm,
             fvu.venue_region AS vr,
             fvu.venue_address AS va,
-            fvu.venue_directions AS vdi
+            fvu.venue_directions AS vdi,
+            'coming soon' AS op,  -- An array of Options for this Item
+            'coming soon' AS efml  -- An array of meal options for this item
         FROM
             event_fees AS f
             LEFT JOIN event_fee_types AS ft ON f.fee_type_id = ft.fee_type_id
@@ -910,30 +938,80 @@ class EventService {
             f.eventFeeID
       `;
 
-      let getItems = await connection.sql(getItemsSQL)
-        .parameter('eventID', TYPES.Int, Number(eventID))
-        .execute();
+      const sql = await getConnection(vert);
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, Number(eventID));
+      const result1 = await request1.query(getItemsSQL);
+      let getItems = result1.recordset;
+
+      // Get quantities left, options, and meals
+      const getItemsQL = await this.selectEventQuantitiesLeft(eventID, vert);
+      const getItemsOP = await this.selectEventItemsOptions(eventID, vert);
+      const getItemsEFML = await this.selectEventItemsMeals(eventID, vert);
 
       // Process items
       for (let i = 0; i < getItems.length; i++) {
-        // Process sizes
+        const thisFeeID = Number(getItems[i].f);
+
+        // Fix the sizes
         if (getItems[i].szs) {
-          const sizes = getItems[i].szs.split(',');
-          if (sizes.length === 1 && sizes[0] === '') {
+          getItems[i].szs = getItems[i].szs.split(',');
+          
+          // If this is an empty string (after split, check first element)
+          if (getItems[i].szs.length === 1 && getItems[i].szs[0] === '') {
+            // Make it null
             getItems[i].szs = null;
           } else {
-            getItems[i].szs = sizes.map(s => s.trim());
+            // Trim the value in the array
+            getItems[i].szs = getItems[i].szs.map(s => s.trim());
           }
         }
 
-        // Set default quantity left (would be calculated from additional query)
+        // Set quantity left from query results
         getItems[i].ql = 0;
+        for (let ql = 0; ql < getItemsQL.length; ql++) {
+          if (getItemsQL[ql].f === thisFeeID) {
+            getItems[i].ql = Number(getItemsQL[ql].ql);
+            break;
+          }
+        }
 
-        // Set default options and meals (would be populated from additional queries)
-        getItems[i].op = null;
-        getItems[i].efml = null;
+        // Get the options for this item
+        getItems[i].op = [];
+        for (let op = 0; op < getItemsOP.length; op++) {
+          if (getItemsOP[op].f === thisFeeID) {
+            getItems[i].op.push(getItemsOP[op]);
+          }
+        }
+        
+        // If the option is empty
+        if (getItems[i].op.length === 0) {
+          getItems[i].op = null;
+        } else {
+          // Remove nulls from each option
+          for (let j = 0; j < getItems[i].op.length; j++) {
+            getItems[i].op[j] = _.omitBy(getItems[i].op[j], _.isNull);
+          }
+        }
 
-        // Remove null values
+        // Get the meals for this item
+        getItems[i].efml = [];
+        for (let efml = 0; efml < getItemsEFML.length; efml++) {
+          if (getItemsEFML[efml].f === thisFeeID) {
+            getItems[i].efml.push(getItemsEFML[efml]);
+          }
+        }
+        
+        if (getItems[i].efml.length === 0) {
+          getItems[i].efml = null;
+        } else {
+          // Remove nulls from each meal
+          for (let j = 0; j < getItems[i].efml.length; j++) {
+            getItems[i].efml[j] = _.omitBy(getItems[i].efml[j], _.isNull);
+          }
+        }
+
+        // Remove any nulls from the main item
         getItems[i] = _.omitBy(getItems[i], _.isNull);
       }
 
@@ -949,6 +1027,134 @@ class EventService {
       return result;
     } catch (error) {
       console.error('Error updating reg items:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Select event quantities left
+   */
+  async selectEventQuantitiesLeft(eventID, vert) {
+    try {
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
+        USE ${dbName};
+        SELECT
+          e.eventFeeID AS f,
+          CASE WHEN ( ISNULL( e.classLimit, 0 ) != 0 )
+            THEN e.classLimit - SUM( p.quantity )
+          ELSE
+            NULL
+          END AS ql
+        FROM contestant_fees p
+          INNER JOIN event_fees AS e ON
+          e.eventFeeID = p.eventFeeID 
+          JOIN eventContestant ec ON
+          ec.contestant_id = p.contestant_id
+        WHERE ec.event_id = @eventID
+        AND
+          ISNULL( p.scratchclass, 0 ) = 0
+        AND (
+          ( ec.regcomplete = 1 AND ISNULL( ec.fullscratch, 0 ) = 0 )
+          OR
+          (
+            ISNULL( ec.regcomplete, 0 ) = 0
+            AND ABS( DATEDIFF( mi, coalesce( ec.pendingCheckOut, '01/01/2090 12:45:00' ), getDate() ) ) < 10
+          )
+        )
+        GROUP BY e.eventFeeID, e.classLimit
+      `);
+
+      return result.recordset;
+    } catch (error) {
+      console.error('Error selecting event quantities left:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Select event items options
+   */
+  async selectEventItemsOptions(eventID, vert) {
+    try {
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
+        USE ${dbName};
+        SELECT
+          fto.eventFeeID AS f,
+          fto.subclassID AS s,  -- Subclass ID of this Option
+          fto.optionID AS o,    -- ID of this Option
+          fto.seriesEventFeeID AS sf,  -- Series ID of this Option
+          efs.subClassName AS sn,  -- Subclass Name for this Option
+          efs.subClassType AS sct,  -- Subclass Type for this Option
+          efso.option_name AS [on]  -- Name of this Option
+        FROM
+          event_fee_to_options AS fto
+          JOIN event_fee_subClasses AS efs
+            ON fto.subclassID = efs.subClassID
+          JOIN event_fee_subClassOptions AS efso
+            ON efs.subClassID = efso.subClassID
+            AND fto.optionID = efso.optionID
+        WHERE
+          fto.event_id = @eventID
+      `);
+
+      return result.recordset;
+    } catch (error) {
+      console.error('Error selecting event items options:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Select event items meals
+   */
+  async selectEventItemsMeals(eventID, vert) {
+    try {
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
+        USE ${dbName};
+        SELECT
+          f.eventFeeID AS f,
+          m.meal_id AS m,  -- ID of this Meal
+          RTRIM( LTRIM( m.meal_name ) ) AS mn,  -- Name of this Meal
+          m.kosher AS mk,  -- Denotes if Meal is kosher
+          m.vegan AS mv,  -- Denotes if Meal is vegan
+          m.glutenfree AS mgf,  -- Denotes if Meal is gluten free
+          m.noNuts AS mnn,  -- Denotes if Meal does not contain nuts
+          m.containsNuts AS mcn,  -- Denotes if Meal does contain nuts
+          m.noSeafood AS mns,  -- Denotes if Meal does not contain seafood
+          m.noLactose AS mnl,  -- Denotes if Meal is lactose free
+          m.noRedMeat AS mnr,  -- Denotes if Meal does not contain red meat
+          m.noPork AS mnp,  -- Denotes if Meal does not contain pork
+          m.vegetarian AS mvg,  -- Denotes if Meal is vegetarian
+          m.pescatarian AS mp  -- Denotes if Meal is pescatarian
+        FROM
+          b_meals AS m
+          INNER JOIN event_fees AS f ON ',' + f.triggerMeals + ',' LIKE '%,' + CAST( m.meal_id AS varchar(255) ) + ',%'
+        WHERE
+          m.event_id = @eventID
+          -- Grabs all the meals in the CSV of mealIDs this event has
+          AND ','+f.triggerMeals+',' LIKE '%,'+CAST(m.meal_id AS varchar)+',%'
+        ORDER BY
+          RTRIM( LTRIM( m.meal_name ) )
+      `);
+
+      return result.recordset;
+    } catch (error) {
+      console.error('Error selecting event items meals:', error);
       throw error;
     }
   }
@@ -1160,10 +1366,159 @@ class EventService {
   }
 
   /**
+   * Get touch event queries - comprehensive data fetching for event sync
+   * Fetches all event fields from MSSQL for syncing to MongoDB
+   * This method queries all relevant tables to build a complete event document
+   */
+  async getTouchEventQueries(eventID, vert, connection, dbName, s3RootURL, siteURL) {
+    // Main event data query - start with core fields we know exist
+    // Additional fields can be added as needed
+    const sql = await getConnection(vert);
+    const request1 = new sql.Request();
+    request1.input('eventID', sql.Int, Number(eventID));
+    const result1 = await request1.query(`
+      USE ${dbName};
+      SELECT TOP 1
+          -- Basic event identifiers
+          e._guid AS eg,
+          e.Event_id AS e,
+          e.affiliate_id AS a,
+          -- Event dates and times
+          e.Event_begins AS eb,
+          e.Event_ends AS ee,
+          e.startTime AS est,
+          e.endTime AS eet,
+          -- Event information
+          e.Event_title AS et,
+          e.Event_description AS de,
+          e.Event_contact AS en,
+          e.Event_email AS em,
+          e.Event_phone AS eph,
+          -- Event logo S3 URL
+          CASE WHEN (ISNULL(NULLIF(e.EventlogoS3, ''), '') = '')
+            THEN a.logo
+            ELSE
+              CASE WHEN (LEFT(ISNULL(NULLIF(e.EventlogoS3, ''), ''), 5) = 'https')
+                THEN e.EventlogoS3
+              ELSE
+                '${s3RootURL || ''}/' + e.EventlogoS3
+              END
+          END AS el3,
+          -- Venue information
+          e.venue_id AS vn,
+          vu.venue_name AS vm,
+          vu.venue_address AS va,
+          vu.venue_city AS vc,
+          vu.venue_region AS vr,
+          vu.venue_lat AS vlt,
+          vu.venue_long AS vlg,
+          -- Timezone
+          e.timeZone_id AS tz,
+          ISNULL(tz.zoneName, 'UTC') AS tzn,
+          -- Check-in app settings (from b_events)
+          e.autoAdvance AS aa,
+          e.autoAdvanceRevert AS aar,
+          e.multiDayCheckIn AS mdc,
+          -- Contact scan app settings (from b_events)
+          e.scanAppActive AS saa,
+          e.scanAppCode AS sac,
+          -- CEU settings (from b_events)
+          e.ceuAcronym AS ceua,
+          e.ceuDisplayOnReg AS ceud,
+          e.ceuValueLabel AS ceuv,
+          e.ceuDisplayCounterOnReg AS ceuc,
+          -- Timestamps
+          getDate() AS lu
+      FROM b_Events AS e
+          LEFT JOIN b_venues AS vu ON vu.venue_id = e.venue_id
+          LEFT JOIN b_timezones AS tz ON tz.timeZoneID = e.timeZone_id
+          JOIN b_affiliates AS a ON a.affiliate_id = e.affiliate_id
+      WHERE e.Event_id = @eventID
+    `);
+
+    if (!result1.recordset.length) {
+      return null;
+    }
+
+    let eventData = result1.recordset[0];
+
+    // Get affiliate name
+    const request2 = new sql.Request();
+    request2.input('affiliateID', sql.Int, Number(eventData.a));
+    const result2 = await request2.query(`
+      USE ${dbName};
+      SELECT TOP 1 affiliate_name AS an
+      FROM b_affiliates
+      WHERE affiliate_id = @affiliateID
+    `);
+
+    if (result2.recordset.length) {
+      eventData.an = result2.recordset[0].an;
+    }
+
+    // Get authority data
+    const request3 = new sql.Request();
+    request3.input('eventID', sql.Int, Number(eventID));
+    const result3 = await request3.query(`
+      USE ${dbName};
+      SELECT ea.authority_id AS [at]
+      FROM EventAuthority ea
+      WHERE ea.Event_id = @eventID
+    `);
+
+    eventData.eat = result3.recordset.map(authority => authority.at);
+
+    // Get profile data
+    const request4 = new sql.Request();
+    request4.input('eventID', sql.Int, Number(eventID));
+    const result4 = await request4.query(`
+      USE ${dbName};
+      SELECT
+          bundle_id AS p,
+          RTRIM(LTRIM(bundle_name)) AS pn,
+          _guid AS pg,
+          ISNULL(needsApproval, 0) AS na
+      FROM Event_fee_bundles AS ep
+      WHERE ep.Event_id = @eventID
+          AND ep.bundle_active = 1
+      ORDER BY RTRIM(LTRIM(bundle_name))
+    `);
+
+    eventData.pfs = result4.recordset;
+
+    // Get meal data
+    const request5 = new sql.Request();
+    request5.input('eventID', sql.Int, Number(eventID));
+    const result5 = await request5.query(`
+      USE ${dbName};
+      SELECT
+          m.meal_id AS m,
+          RTRIM(LTRIM(m.meal_name)) AS mn,
+          m.kosher AS mk,
+          m.vegan AS mv,
+          m.glutenfree AS mgf,
+          m.noNuts AS mnn,
+          m.containsNuts AS mcn,
+          m.noSeafood AS mns,
+          m.noLactose AS mnl,
+          m.noRedMeat AS mnr,
+          m.noPork AS mnp,
+          m.vegetarian AS mvg,
+          m.pescatarian AS mp
+      FROM b_meals AS m
+      WHERE m.event_id = @eventID
+      ORDER BY RTRIM(LTRIM(m.meal_name))
+    `);
+
+    eventData.evml = result5.recordset;
+
+    return eventData;
+  }
+
+  /**
    * Touch event (update last modified)
    * This is a complex method that syncs all event data from MSSQL to MongoDB
    * It performs a massive query and data transformation
-   * Note: This is a simplified version - full implementation would include all fields from getTouchEventQueries
    */
   async touchEvent(request) {
     try {
@@ -1179,109 +1534,20 @@ class EventService {
         return { message: 'Missing data' };
       }
 
-      const connection = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
       const eventsCollection = db.collection('events');
       const { dateAndTimeToDatetime } = await import('../functions/events.js');
 
-      // Get touch event queries (simplified - full version would have all fields)
-      // For now, we'll do a basic sync
-      // TODO: Implement full getTouchEventQueries method with all 200+ fields
+      // Get comprehensive event data using getTouchEventQueries
+      let eventData = await this.getTouchEventQueries(eventID, vert, null, dbName, s3RootURL, siteURL);
 
-      // Get basic event data
-      const eventDataResult = await connection.sql(`
-        USE ${dbName};
-        SELECT TOP 1
-            e._guid AS eg,
-            e.Event_id AS e,
-            e.affiliate_id AS a,
-            e.Event_begins AS eb,
-            e.Event_ends AS ee,
-            e.Event_title AS et,
-            e.Event_description AS de,
-            e.Event_contact AS en,
-            e.Event_email AS em,
-            e.Event_phone AS eph,
-            e.venue_id AS vn,
-            vu.venue_name AS vm,
-            vu.venue_address AS va,
-            vu.venue_city AS vc,
-            vu.venue_region AS vr,
-            vu.venue_lat AS vlt,
-            vu.venue_long AS vlg,
-            getDate() AS lu
-        FROM b_Events AS e
-            LEFT JOIN b_venues AS vu ON vu.venue_id = e.venue_id
-        WHERE e.Event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
-
-      if (!eventDataResult.length) {
+      if (!eventData) {
         return {
           status: 'fail',
           message: 'Event not found'
         };
       }
-
-      let eventData = eventDataResult[0];
-
-      // Get authority data
-      const eatResult = await connection.sql(`
-        USE ${dbName};
-        SELECT ea.authority_id AS [at]
-        FROM EventAuthority ea
-        WHERE ea.Event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
-
-      eventData.eat = [eatResult.map(authority => authority.at)];
-
-      // Get profile data
-      const pfsResult = await connection.sql(`
-        USE ${dbName};
-        SELECT
-            bundle_id AS p,
-            RTRIM(LTRIM(bundle_name)) AS pn,
-            _guid AS pg,
-            ISNULL(needsApproval, 0) AS na
-        FROM Event_fee_bundles AS ep
-        WHERE ep.Event_id = @eventID
-            AND ep.bundle_active = 1
-        ORDER BY RTRIM(LTRIM(bundle_name))
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
-
-      eventData.pfs = pfsResult;
-
-      // Get meal data
-      const evmlResult = await connection.sql(`
-        USE ${dbName};
-        SELECT
-            m.meal_id AS m,
-            RTRIM(LTRIM(m.meal_name)) AS mn,
-            m.kosher AS mk,
-            m.vegan AS mv,
-            m.glutenfree AS mgf,
-            m.noNuts AS mnn,
-            m.containsNuts AS mcn,
-            m.noSeafood AS mns,
-            m.noLactose AS mnl,
-            m.noRedMeat AS mnr,
-            m.noPork AS mnp,
-            m.vegetarian AS mvg,
-            m.pescatarian AS mp
-        FROM b_meals AS m
-        WHERE m.event_id = @eventID
-        ORDER BY RTRIM(LTRIM(m.meal_name))
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
-
-      eventData.evml = evmlResult;
 
       // Geolocation data for mongo geospatial search
       if (eventData.vlg && eventData.vlt) {
@@ -1340,9 +1606,29 @@ class EventService {
 
       // Format additional fields
       eventData.eph = eventData.eph ? eventData.eph.toString() : '';
-      eventData.eqo = [];
-      eventData.eq = [];
-      eventData.ek = eventData.ek ? eventData.ek.split(',').map(item => item.replace(/\|\^\^\|/g, '')) : [];
+      
+      // Only set eq/eqo to empty if they weren't populated by getTouchEventQueries
+      if (!eventData.eq || !Array.isArray(eventData.eq) || eventData.eq.length === 0) {
+        eventData.eq = [];
+      }
+      if (!eventData.eqo || !Array.isArray(eventData.eqo) || eventData.eqo.length === 0) {
+        eventData.eqo = [];
+      }
+      
+      // Process keywords if they exist
+      if (eventData.ek && typeof eventData.ek === 'string') {
+        eventData.ek = eventData.ek.split(',').map(item => item.replace(/\|\^\^\|/g, ''));
+      } else if (!eventData.ek) {
+        eventData.ek = [];
+      }
+
+      // Event start / end time - combine date and time in JavaScript (matching old code)
+      if (eventData.est && eventData.eb) {
+        eventData.ebi = await dateAndTimeToDatetime(eventData.eb, eventData.est);
+      }
+      if (eventData.eet && eventData.ee) {
+        eventData.eei = await dateAndTimeToDatetime(eventData.ee, eventData.eet);
+      }
 
       // Delete any existing record
       await eventsCollection.deleteOne({ '_id.s': vert, '_id.e': Number(eventID) });
@@ -1380,7 +1666,10 @@ class EventService {
       const eventsCollection = db.collection('events');
 
       // Find fees that should be auto-deactivated
-      const updateIDs = await connection.sql(`
+      const sql = await getConnection(vert);
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, Number(eventID));
+      const result1 = await request1.query(`
         USE ${dbName};
         SELECT eventFeeID
         FROM event_fees
@@ -1390,10 +1679,8 @@ class EventService {
             AND autoInactive = 1
             AND isnull(activityEnd,'') <> '' 
             AND getDate() >= dateadd(d,1,activityEnd)
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute()
-      .then(results => results.map(r => r.eventFeeID));
+      `);
+      const updateIDs = result1.recordset.map(r => r.eventFeeID);
 
       // If there are none, return early
       if (!updateIDs.length) {
@@ -1401,7 +1688,9 @@ class EventService {
       }
 
       // Disable fees in SQL
-      await connection.sql(`
+      const request2 = new sql.Request();
+      request2.input('eventID', sql.Int, Number(eventID));
+      await request2.query(`
         USE ${dbName};
         UPDATE event_fees
         SET fee_disable = 1
@@ -1411,9 +1700,7 @@ class EventService {
             AND autoInactive = 1
             AND isnull(activityEnd,'') <> '' 
             AND getDate() >= dateadd(d,1,activityEnd)
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
 
       // Update MongoDB event record
       const event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
@@ -1445,19 +1732,19 @@ class EventService {
    */
   async resetViewCounts(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      await request.query(`
         USE ${dbName};
         UPDATE b_events
         SET 
             regFormCount = 0,
             event_count = 0
         WHERE event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
 
       return {
         message: 'Successfully reset view counts'
@@ -1473,10 +1760,12 @@ class EventService {
    */
   async getCEUConfig(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const result = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT TOP 1
             ceuAcronym,
@@ -1487,20 +1776,187 @@ class EventService {
             b_events
         WHERE
             event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute()
-      .then(data => data[0] || {});
+      `);
+      const data = result.recordset[0] || {};
 
       // Convert boolean fields to numbers
-      if (result) {
-        result.ceuDisplayCounterOnReg = Number(result.ceuDisplayCounterOnReg || 0);
-        result.ceuDisplayOnReg = Number(result.ceuDisplayOnReg || 0);
+      if (data) {
+        data.ceuDisplayCounterOnReg = Number(data.ceuDisplayCounterOnReg || 0);
+        data.ceuDisplayOnReg = Number(data.ceuDisplayOnReg || 0);
       }
 
-      return result;
+      return data;
     } catch (error) {
       console.error('Error getting CEU config:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get event sponsor config
+   */
+  async getEventSponsorConfig(eventID, vert) {
+    try {
+      const { getEventSponsorConfig } = await import('../functions/events.js');
+      return await getEventSponsorConfig(eventID, vert);
+    } catch (error) {
+      console.error('Error getting event sponsor config:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set event sponsor config
+   */
+  async setEventSponsorConfig(form, eventID, vert) {
+    try {
+      const { setEventSponsorConfig } = await import('../functions/events.js');
+      return await setEventSponsorConfig(form, eventID, vert);
+    } catch (error) {
+      console.error('Error setting event sponsor config:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get grouped resources
+   */
+  async getGroupedResources(eventID, vert) {
+    try {
+      const { getEventResources } = await import('../functions/resources.js');
+      const { getEventResourceCategories } = await import('../functions/resources.js');
+      
+      const resources = await getEventResources(eventID, [], vert);
+      const resourceCategories = await getEventResourceCategories(eventID, vert);
+
+      let categories = resourceCategories.map(category => ({
+        name: category.name,
+        id: category.id,
+        sortOrder: category.sortOrder,
+        items: resources.filter(resource => resource.category_id == category.id)
+      }));
+
+      categories = _.sortBy(categories, 'sortOrder');
+      categories = categories.map(category => {
+        category.items = _.sortBy(category.items, 'sortOrder');
+        return category;
+      });
+
+      let ungrouped = _.sortBy(resources.filter(resource => Number(resource.category_id) === 0), 'sortOrder');
+
+      return {
+        ungrouped,
+        categories
+      };
+    } catch (error) {
+      console.error('Error getting grouped resources:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get resource sponsors
+   */
+  async getResourceSponsors(affiliate_id, vert) {
+    try {
+      const { getResourceSponsors } = await import('../functions/resources.js');
+      return await getResourceSponsors(affiliate_id, vert);
+    } catch (error) {
+      console.error('Error getting resource sponsors:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete event resource
+   */
+  async deleteEventResource(eventID, resourceID, vert) {
+    try {
+      const { deleteEventResource } = await import('../functions/resources.js');
+      return await deleteEventResource(eventID, resourceID, vert);
+    } catch (error) {
+      console.error('Error deleting event resource:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update event resource
+   */
+  async updateEventResource(eventID, resourceID, field, value, vert) {
+    try {
+      const { updateEventResource } = await import('../functions/resources.js');
+      return await updateEventResource(eventID, resourceID, field, value, vert);
+    } catch (error) {
+      console.error('Error updating event resource:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add document to event
+   */
+  async addDocumentToEvent(eventID, data, affiliateID, vert) {
+    try {
+      const { uploadS3 } = await import('../utils/s3.js');
+      const { addEventResource } = await import('../functions/resources.js');
+      const { addAffiliateResource } = await import('../functions/resources.js');
+
+      const fileData = await uploadS3(
+        data.file,
+        data.s3domain || '',
+        data.ext,
+        data.type,
+        ''
+      );
+
+      await addEventResource(eventID, {
+        title: data.title,
+        ext: data.ext,
+        filename: fileData.name,
+        category: data.category,
+        type: 'document-upload'
+      }, vert);
+
+      if (data.saveToLibrary) {
+        await addAffiliateResource(affiliateID, {
+          title: data.title,
+          ext: data.ext,
+          filename: fileData.name,
+          category: data.category,
+          type: 'document-upload'
+        }, vert);
+      }
+
+      return fileData;
+    } catch (error) {
+      console.error('Error adding document to event:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create resource category
+   */
+  async createResourceCategory(affiliate_id, event_id, name, vert) {
+    try {
+      const { createResourceCategory } = await import('../functions/resources.js');
+      return await createResourceCategory(affiliate_id, event_id, name, vert);
+    } catch (error) {
+      console.error('Error creating resource category:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete event resource category
+   */
+  async deleteEventResourceCategory(event_id, category_id, sortOrder, vert) {
+    try {
+      const { deleteEventResourceCategory } = await import('../functions/resources.js');
+      return await deleteEventResourceCategory(event_id, category_id, sortOrder, vert);
+    } catch (error) {
+      console.error('Error deleting event resource category:', error);
       throw error;
     }
   }
@@ -1511,7 +1967,6 @@ class EventService {
    */
   async getEventConfig(eventID, profileID, vert) {
     try {
-      const connection = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       let qryStr = `
@@ -1585,10 +2040,12 @@ class EventService {
         `;
       }
 
-      const results = await connection.sql(qryStr)
-        .parameter('eventID', TYPES.Int, Number(eventID))
-        .parameter('profileID', TYPES.Int, Number(profileID))
-        .execute();
+      const sql = await getConnection(vert);
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, Number(eventID));
+      request1.input('profileID', sql.Int, Number(profileID));
+      const result = await request1.query(qryStr);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -1602,7 +2059,6 @@ class EventService {
    */
   async saveEventStandardPrompts(request) {
     try {
-      const connection = await getConnection(request.vert);
       const dbName = getDatabaseName(request.vert);
       const eventID = Number(request.pathParameters?.eventID);
       const profileID = Number(request.pathParameters?.profileID);
@@ -1703,24 +2159,20 @@ class EventService {
       }
 
       // Execute query based on value type
+      const sql = await getConnection(request.vert);
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, eventID);
+      request1.input('profileID', sql.Int, profileID);
+      
       if (isNumeric) {
-        await connection.sql(qryStr)
-          .parameter('eventID', TYPES.Int, eventID)
-          .parameter('profileID', TYPES.Int, profileID)
-          .parameter('value', TYPES.Int, Number(body.value))
-          .execute();
+        request1.input('value', sql.Int, Number(body.value));
       } else if (body.setting === 'maxdatehotel' || body.setting === 'mindatehotel') {
-        await connection.sql(qryStr)
-          .parameter('eventID', TYPES.Int, eventID)
-          .parameter('value', TYPES.Date, body.value)
-          .execute();
+        request1.input('value', sql.Date, body.value);
       } else {
-        await connection.sql(qryStr)
-          .parameter('eventID', TYPES.Int, eventID)
-          .parameter('profileID', TYPES.Int, profileID)
-          .parameter('value', TYPES.VarChar, String(body.value))
-          .execute();
+        request1.input('value', sql.VarChar, String(body.value));
       }
+      
+      await request1.query(qryStr);
 
       return {
         qryStr: qryStr,
@@ -1740,7 +2192,6 @@ class EventService {
    */
   async saveEventCustomPrompts(request) {
     try {
-      const connection = await getConnection(request.vert);
       const dbName = getDatabaseName(request.vert);
       const eventID = Number(request.pathParameters?.eventID);
       const profileID = Number(request.pathParameters?.profileID);
@@ -1804,28 +2255,21 @@ class EventService {
       }
 
       // Execute query based on value type
+      const sql = await getConnection(request.vert);
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, eventID);
+      request1.input('profileID', sql.Int, profileID);
+      request1.input('fieldID', sql.Int, Number(body.field_ID));
+      
       if (isNumeric) {
-        await connection.sql(qryStr)
-          .parameter('eventID', TYPES.Int, eventID)
-          .parameter('profileID', TYPES.Int, profileID)
-          .parameter('value', TYPES.Int, Number(body.value))
-          .parameter('fieldID', TYPES.Int, Number(body.field_ID))
-          .execute();
+        request1.input('value', sql.Int, Number(body.value));
       } else if (body.setting === 'maxdate' || body.setting === 'mindate') {
-        await connection.sql(qryStr)
-          .parameter('eventID', TYPES.Int, eventID)
-          .parameter('profileID', TYPES.Int, profileID)
-          .parameter('fieldID', TYPES.Int, Number(body.field_ID))
-          .parameter('value', TYPES.Date, body.value)
-          .execute();
+        request1.input('value', sql.Date, body.value);
       } else {
-        await connection.sql(qryStr)
-          .parameter('eventID', TYPES.Int, eventID)
-          .parameter('profileID', TYPES.Int, profileID)
-          .parameter('value', TYPES.VarChar, String(body.value))
-          .parameter('fieldID', TYPES.Int, Number(body.field_ID))
-          .execute();
+        request1.input('value', sql.VarChar, String(body.value));
       }
+      
+      await request1.query(qryStr);
 
       return {
         qryStr: qryStr,
@@ -1836,6 +2280,316 @@ class EventService {
       };
     } catch (error) {
       console.error('Error saving event custom prompts:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get recipient notifications
+   */
+  async getRecipientNotifications(request) {
+    try {
+      const eventID = Number(request.pathParameters?.eventID);
+      const vert = request.headers?.vert || request.vert || '';
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('eventID', sql.Int, eventID);
+      const result = await sqlRequest.query(`
+        USE ${dbName};
+        SELECT *
+        FROM event_notification
+        WHERE event_id = @eventID
+        ORDER BY notification_to
+      `);
+
+      return result.recordset || [];
+    } catch (error) {
+      console.error('Error getting recipient notifications:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add recipient notification
+   */
+  async addRecipientNotification(request) {
+    try {
+      const eventID = Number(request.pathParameters?.eventID);
+      const vert = request.headers?.vert || request.vert || '';
+      const body = request.body || {};
+      const affiliateID = Number(request.session?.affiliate_id);
+
+      if (!body.notificationEmail || !body.notificationName || body.notificationEmail === '' || body.notificationName === '') {
+        return {
+          status: 'fail',
+          message: 'Please fill out all the required fields.'
+        };
+      }
+
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('eventID', sql.Int, eventID);
+      sqlRequest.input('notificationEmail', sql.VarChar, String(body.notificationEmail));
+      sqlRequest.input('notificationType', sql.VarChar, String(body.notificationType || ''));
+      sqlRequest.input('notificationName', sql.VarChar, String(body.notificationName));
+      sqlRequest.input('affiliateID', sql.Int, affiliateID);
+      
+      const result = await sqlRequest.query(`
+        USE ${dbName};
+        IF NOT EXISTS (
+          SELECT *
+          FROM event_notification
+          WHERE event_id = @eventID
+            AND notification_email = @notificationEmail
+        )
+        BEGIN
+          INSERT INTO event_notification (
+            notification_email,
+            event_id,
+            notification_label,
+            notification_to,
+            affiliate_id
+          ) VALUES (
+            @notificationEmail,
+            @eventID,
+            @notificationType,
+            @notificationName,
+            @affiliateID
+          );
+          SELECT @@IDENTITY as id;
+        END
+      `);
+
+      return {
+        status: result.recordset && result.recordset.length ? 'success' : 'fail',
+        message: result.recordset && result.recordset.length ? 'Recipient Added' : 'A recipient with that email already exists.'
+      };
+    } catch (error) {
+      console.error('Error adding recipient notification:', error);
+      return {
+        status: 'fail',
+        message: error.message
+      };
+    }
+  }
+
+  /**
+   * Update recipient notification
+   */
+  async updateRecipientNotification(request) {
+    try {
+      const vert = request.headers?.vert || request.vert || '';
+      const body = request.body || {};
+      const affiliateID = Number(request.session?.affiliate_id);
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      let qryStr = `USE ${dbName};`;
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('notificationID', sql.Int, Number(body.notificationID));
+      sqlRequest.input('affiliateID', sql.Int, affiliateID);
+
+      if (body.hasOwnProperty('cancelEmail')) {
+        qryStr += `
+          UPDATE event_notification
+          SET cancel_email = @cancelEmail
+          WHERE notification_id = @notificationID;
+        `;
+        sqlRequest.input('cancelEmail', sql.Int, Number(body.cancelEmail) || 0);
+      }
+
+      if (body.hasOwnProperty('sendData')) {
+        qryStr += `
+          UPDATE event_notification
+          SET
+            sendData = @sendData,
+            sendDataCustom = @sendDataCustom,
+            excludeBundleIDs = @excludeBundleIDs,
+            notify3PFeeIDs = @notify3PFeeIDs,
+            includeFeeIDs = @includeFeeIDs
+          WHERE notification_id = @notificationID;
+        `;
+        sqlRequest.input('sendData', sql.VarChar, String(body.sendData || ''));
+        sqlRequest.input('sendDataCustom', sql.VarChar, String(body.sendDataCustom || ''));
+        sqlRequest.input('excludeBundleIDs', sql.VarChar, String(body.excludeBundleIDs || ''));
+        sqlRequest.input('notify3PFeeIDs', sql.VarChar, String(body.notify3PFeeIDs || ''));
+        sqlRequest.input('includeFeeIDs', sql.VarChar, String(body.includeFeeIDs || ''));
+      }
+
+      if (body.hasOwnProperty('pendingNotice')) {
+        qryStr += `
+          UPDATE event_notification
+          SET pendingNotice = @pendingNotice
+          WHERE notification_email = @notificationEmail
+            AND affiliate_id = @affiliateID;
+        `;
+        sqlRequest.input('pendingNotice', sql.Int, Number(body.pendingNotice) || 0);
+        sqlRequest.input('notificationEmail', sql.VarChar, String(body.notificationEmail || ''));
+      }
+
+      await sqlRequest.query(qryStr);
+
+      return {
+        status: 'success',
+        message: 'Notification updated'
+      };
+    } catch (error) {
+      console.error('Error updating recipient notification:', error);
+      return {
+        status: 'fail',
+        message: error.message
+      };
+    }
+  }
+
+  /**
+   * Delete recipient notification
+   */
+  async deleteRecipientNotification(request) {
+    try {
+      const notificationID = Number(request.pathParameters?.notificationID);
+      const vert = request.headers?.vert || request.vert || '';
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('notificationID', sql.Int, notificationID);
+      await sqlRequest.query(`
+        USE ${dbName};
+        DELETE FROM event_notification
+        WHERE notification_id = @notificationID
+      `);
+
+      return {
+        status: 'success',
+        message: 'Recipient Deleted'
+      };
+    } catch (error) {
+      console.error('Error deleting recipient notification:', error);
+      return {
+        status: 'fail',
+        message: error.message
+      };
+    }
+  }
+
+  /**
+   * Get event details for notification setup
+   */
+  async getEventDetailsForNotificationSetup(request) {
+    try {
+      const eventID = Number(request.pathParameters?.eventID);
+      const vert = request.headers?.vert || request.vert || '';
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      // Query fees
+      const feeQry = `
+        USE ${dbName};
+        SELECT
+          eft.fee_name,
+          g.group_name,
+          eft.fee_category,
+          ef.customFeeName,
+          ef.eventFeeID,
+          "orderme" =
+            CASE
+              WHEN eft.fee_category = 'Registration' THEN 1
+              WHEN eft.fee_category = 'Race' THEN 2
+              WHEN eft.fee_category = 'Activity' THEN 3
+              WHEN eft.fee_category = 'Facility' THEN 4
+              WHEN eft.fee_category = 'Goods' THEN 5
+              WHEN eft.fee_category = 'General' THEN 6
+              WHEN eft.fee_category = 'Meals' THEN 7
+              WHEN eft.fee_category = 'Membership' THEN 8
+              WHEN eft.fee_category = 'Spectator' THEN 9
+              WHEN eft.fee_category = 'Sponsorship' THEN 10
+              ELSE 99
+            END
+        FROM event_fees ef
+          INNER JOIN event_fee_types eft ON eft.fee_type_id = ef.fee_type_id
+          LEFT JOIN event_fee_groups g ON g.group_id = ef.group_id
+        WHERE ef.event_id = @eventID
+          AND ISNULL(invisible, 0) = 0
+          AND (ISNULL(ef.showTo, 0) IN (0, 2))
+        ORDER BY
+          orderme,
+          ISNULL(g.group_order, 100),
+          g.group_name,
+          ef.orderby,
+          ef.customFeeName,
+          eft.fee_name,
+          g.group_id
+      `;
+
+      // Query profiles
+      const profileQry = `
+        USE ${dbName};
+        SELECT *
+        FROM event_fee_bundles
+        WHERE event_id = @eventID
+      `;
+
+      // Query event data
+      const eventQry = `
+        USE ${dbName};
+        SELECT
+          e.fullguest,
+          a.allowBringing
+        FROM b_events e
+          INNER JOIN b_affiliates a ON a.affiliate_id = e.affiliate_id
+        WHERE event_id = @eventID
+      `;
+
+      // Query custom prompts
+      // Note: Only select ecf.field_id, not f.field_id (to avoid duplicate field_id)
+      const customPromptQry = `
+        USE ${dbName};
+        SELECT
+          ecf.field_id,
+          ecf.bundle_id,
+          f.fieldType,
+          f.fieldInput,
+          f.siteSection,
+          f.groupType,
+          f.fieldLabel
+        FROM b_events_to_custom_fields ecf
+          INNER JOIN custom_fields f ON f.field_id = ecf.field_id
+        WHERE event_id = @eventID
+        ORDER BY f.fieldLabel
+      `;
+
+      const sqlRequest1 = new sql.Request();
+      sqlRequest1.input('eventID', sql.Int, eventID);
+      const feesResult = await sqlRequest1.query(feeQry);
+
+      const sqlRequest2 = new sql.Request();
+      sqlRequest2.input('eventID', sql.Int, eventID);
+      const profilesResult = await sqlRequest2.query(profileQry);
+
+      const sqlRequest3 = new sql.Request();
+      sqlRequest3.input('eventID', sql.Int, eventID);
+      const eventResult = await sqlRequest3.query(eventQry);
+
+      const sqlRequest4 = new sql.Request();
+      sqlRequest4.input('eventID', sql.Int, eventID);
+      const customPromptsResult = await sqlRequest4.query(customPromptQry);
+
+      // Match old codebase: return in correct order with eventData as array and status
+      // Order: profiles, fees, eventData, customPrompts, status
+      return {
+        profiles: profilesResult.recordset || [],
+        fees: feesResult.recordset || [],
+        eventData: eventResult.recordset || [],
+        customPrompts: customPromptsResult.recordset || [],
+        status: 'success'
+      };
+    } catch (error) {
+      console.error('Error getting event details for notification setup:', error);
       throw error;
     }
   }

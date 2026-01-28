@@ -4,12 +4,9 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import InvitationsService from '../services/InvitationsService.js';
-import EventService from '../services/EventService.js';
-
-const _invitationsService = new InvitationsService();
-const _eventsService = new EventService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _invitationsService from '../services/InvitationsService.js';
+import _eventsService from '../services/EventService.js';
 
 /**
  * GET /invitations/:eventID/formData
@@ -32,16 +29,18 @@ export const getInvitationFormDataRoute = {
       const counts = await _invitationsService.getInvitationCounts(eventID, vert);
       const event = await _eventsService.getEventData(request);
       
-      let fromName = request.session?.affiliate_name;
-      if (event.eef && event.eef !== '') {
-        fromName = event.eef;
-      } else if (event.ech && event.ech !== '') {
-        fromName = event.ech;
-      } else if (event.en && event.en !== '') {
-        fromName = event.en;
+      // Match old codebase logic exactly: sets event.fromName but uses fromName variable (which stays as affiliate_name)
+      // This means fromName will always be affiliate_name in the response, matching prod behavior
+      let fromName = request.session?.affiliate_name || '';
+      if (event.eef != '') {
+        event.fromName = event.eef;
+      } else if (event.ech != '') {
+        event.fromName = event.ech;
+      } else if (event.en != '') {
+        event.fromName = event.en;
       }
       
-      return successResponse({
+      return createResponse(200, {
         profiles,
         lists,
         imports,
@@ -76,7 +75,7 @@ export const getInvitationCountsRoute = {
       const eventID = request.pathParameters.eventID;
       const vert = request.vert;
       const counts = await _invitationsService.getInvitationCounts(eventID, vert);
-      return successResponse(counts);
+      return createResponse(200, counts);
     } catch (error) {
       console.error('Error getting invitation counts:', error);
       return errorResponse('Failed to get invitation counts', 500, error.message);
@@ -96,7 +95,7 @@ export const auditInviteesRoute = {
       const eventID = request.pathParameters.eventID;
       const vert = request.vert;
       const results = await _invitationsService.auditInvitees(eventID, vert);
-      return successResponse(results);
+      return createResponse(200, results);
     } catch (error) {
       console.error('Error auditing invitees:', error);
       return errorResponse('Failed to audit invitees', 500, error.message);
@@ -127,7 +126,7 @@ export const getInviteesRoute = {
         vert
       );
       
-      return successResponse(results);
+      return createResponse(200, results);
     } catch (error) {
       console.error('Error getting invitees:', error);
       return errorResponse('Failed to get invitees', 500, error.message);
@@ -147,7 +146,7 @@ export const getTemplatesRoute = {
       const affiliateID = request.session?.affiliate_id;
       const vert = request.vert;
       const results = await _invitationsService.getTemplates(affiliateID, vert);
-      return successResponse(results);
+      return createResponse(200, results);
     } catch (error) {
       console.error('Error getting templates:', error);
       return errorResponse('Failed to get templates', 500, error.message);
@@ -167,7 +166,7 @@ export const deleteTemplateRoute = {
       const recordID = request.pathParameters.recordID;
       const vert = request.vert;
       const result = await _invitationsService.deleteTemplate(recordID, vert);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error deleting template:', error);
       return errorResponse('Failed to delete template', 500, error.message);

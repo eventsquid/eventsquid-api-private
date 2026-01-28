@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import ContactScanAppService from '../services/ContactScanAppService.js';
-
-const _contactScanAppService = new ContactScanAppService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _contactScanAppService from '../services/ContactScanAppService.js';
 
 /**
  * GET /contactScanApp/preferences/:eventID
@@ -19,7 +17,7 @@ export const getContactScanAppPreferencesRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _contactScanAppService.getPreferences(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting contact scan app preferences:', error);
       return errorResponse('Failed to get preferences', 500, error.message);
@@ -37,7 +35,7 @@ export const updateContactScanAppPreferencesRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _contactScanAppService.updatePreferences(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating contact scan app preferences:', error);
       return errorResponse('Failed to update preferences', 500, error.message);
@@ -55,7 +53,7 @@ export const updateContactScanAppAPIPreferencesRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _contactScanAppService.updateAPIPreferences(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating contact scan app API preferences:', error);
       return errorResponse('Failed to update API preferences', 500, error.message);

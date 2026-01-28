@@ -12,6 +12,15 @@ import {
   filterAttendeesByJurisdiction
 } from '../functions/credits.js';
 import { getUserByID } from '../functions/users.js';
+import EventService from './EventService.js';
+import ejs from 'ejs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import moment from 'moment-timezone';
+import _ from 'lodash';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 class CreditsService {
   /**
@@ -58,10 +67,12 @@ class CreditsService {
         throw new Error('User ID and vertical are required');
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('userID', sql.Int, Number(userID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT 
           e.event_id AS eventID, 
@@ -76,9 +87,8 @@ class CreditsService {
         JOIN b_events e ON e.event_id = ceua.event_id
         JOIN b_affiliates a ON a.affiliate_id = e.affiliate_id
         WHERE ec.user_id = @userID
-      `)
-      .parameter('userID', TYPES.Int, Number(userID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -92,11 +102,13 @@ class CreditsService {
    */
   async getEventCreditCategories(eventID, query, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const states = await getStates();
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT
           cc.ceuID as id,
@@ -182,9 +194,8 @@ class CreditsService {
         ${'sessions' in query ? `JOIN ceu_event_fees cef ON cef.ceuID = cc.ceuID` : ''}
         WHERE cc.event_id = @eventID
         ORDER BY cc.ceuCategory ASC;
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results.map(cat => {
         // Format Data
@@ -224,10 +235,12 @@ class CreditsService {
    */
   async getEventCreditCategoriesAssignmentGrid(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT
           cc.ceuID as id,
@@ -246,9 +259,8 @@ class CreditsService {
         FROM ceu_categories cc
         WHERE cc.event_id = @eventID
         ORDER BY cc.ceuCategory ASC;
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results.map(cat => {
         cat.profiles = cat.profiles ? JSON.parse(cat.profiles) : [];
@@ -266,11 +278,13 @@ class CreditsService {
    */
   async getEventCreditCategoriesCreditLibrary(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const states = await getStates();
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT
           cc.ceuID as id,
@@ -296,9 +310,8 @@ class CreditsService {
         FROM ceu_categories cc
         WHERE cc.event_id = @eventID
         ORDER BY cc.ceuCategory ASC;
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results.map(cat => {
         // Format Data
@@ -323,11 +336,13 @@ class CreditsService {
    */
   async getEventCreditCategoriesGrantDashboard(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const states = await getStates();
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT
           cc.ceuID AS id,
@@ -398,9 +413,8 @@ class CreditsService {
         FROM ceu_categories cc
         WHERE cc.event_id = @eventID
         ORDER BY cc.ceuCategory ASC;
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results.map(cat => {
         cat.profiles = cat.profiles ? JSON.parse(cat.profiles) : [];
@@ -439,10 +453,12 @@ class CreditsService {
    */
   async getEventCreditCategoriesCriteriaForm(eventID, query, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT
           cc.ceuID as id,
@@ -453,9 +469,8 @@ class CreditsService {
         ${'sessions' in query ? `JOIN ceu_event_fees cef ON cef.ceuID = cc.ceuID` : ''}
         WHERE cc.event_id = @eventID
         ORDER BY cc.ceuCategory ASC;
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results.map(cat => ({
         ...cat,
@@ -472,10 +487,12 @@ class CreditsService {
    */
   async getEventCreditCategoriesReport(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT
           cc.ceuID as id,
@@ -485,9 +502,8 @@ class CreditsService {
         FROM ceu_categories cc
         WHERE cc.event_id = @eventID
         ORDER BY cc.ceuCategory ASC;
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results.map(cat => ({
         ...cat,
@@ -504,19 +520,20 @@ class CreditsService {
    */
   async getUnusedCategories(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT c.ceuID, c.ceuCategory 
         FROM ceu_categories c
         LEFT JOIN ceuPackageCategories cpc ON c.ceuID = cpc.ceuID
         JOIN ceu_event_fees cef ON cef.ceuID = c.ceuID
         WHERE c.event_id = @eventID AND c.archived = 0 AND (cpc.packageCatID IS NULL)
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -530,23 +547,23 @@ class CreditsService {
    */
   async saveCategoryProfiles(profiles, ceuID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       if (!profiles || !profiles.length) return;
 
       const values = profiles.map((profile, i) => `(@profileID${i}, @ceuID)`).join(',');
-      let request = connection.sql(`
-        USE ${dbName};
-        INSERT INTO ceu_profiles (bundle_id, ceuID) VALUES ${values};
-      `)
-      .parameter('ceuID', TYPES.Int, Number(ceuID));
+      const request = new sql.Request();
+      request.input('ceuID', sql.Int, Number(ceuID));
 
       profiles.forEach((profile, i) => {
-        request.parameter(`profileID${i}`, TYPES.Int, profile);
+        request.input(`profileID${i}`, sql.Int, profile);
       });
 
-      return await request.execute();
+      return await request.query(`
+        USE ${dbName};
+        INSERT INTO ceu_profiles (bundle_id, ceuID) VALUES ${values};
+      `);
     } catch (error) {
       console.error('Error saving category profiles:', error);
       throw error;
@@ -558,23 +575,23 @@ class CreditsService {
    */
   async saveCategoryStates(states, ceuID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       if (!states || !states.length) return;
 
       const values = states.map((state, i) => `(@stateID${i}, @ceuID)`).join(',');
-      let request = connection.sql(`
-        USE ${dbName};
-        INSERT INTO ceu_jurisdictions (stateID, ceuID) VALUES ${values};
-      `)
-      .parameter('ceuID', TYPES.Int, Number(ceuID));
+      const request = new sql.Request();
+      request.input('ceuID', sql.Int, Number(ceuID));
 
       states.forEach((state, i) => {
-        request.parameter(`stateID${i}`, TYPES.Int, state);
+        request.input(`stateID${i}`, sql.Int, state);
       });
 
-      return await request.execute();
+      return await request.query(`
+        USE ${dbName};
+        INSERT INTO ceu_jurisdictions (stateID, ceuID) VALUES ${values};
+      `);
     } catch (error) {
       console.error('Error saving category states:', error);
       throw error;
@@ -586,21 +603,22 @@ class CreditsService {
    */
   async checkDuplicateNameCodeCombo(name, code, eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('name', sql.VarChar, name);
+      request.input('code', sql.VarChar, code);
+      request.input('eventID', sql.Int, eventID);
+      const result = await request.query(`
         USE ${dbName};
         SELECT *
         FROM ceu_categories
         WHERE ceuCategory = @name
           AND ceuCode = @code
           AND event_id = @eventID
-      `)
-      .parameter('name', TYPES.VarChar, name)
-      .parameter('code', TYPES.VarChar, code)
-      .parameter('eventID', TYPES.Int, eventID)
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -614,7 +632,7 @@ class CreditsService {
    */
   async updateCreditCategory(catID, body, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       const matches = await this.checkDuplicateNameCodeCombo(
@@ -635,16 +653,21 @@ class CreditsService {
       }
 
       // Clean out existing linked records
-      await connection.sql(`
+      const request1 = new sql.Request();
+      request1.input('ceuID', sql.Int, Number(catID));
+      await request1.query(`
         USE ${dbName};
         DELETE FROM ceu_profiles WHERE ceuID = @ceuID;
         DELETE FROM ceu_jurisdictions WHERE ceuID = @ceuID;
-      `)
-      .parameter('ceuID', TYPES.Int, Number(catID))
-      .execute();
+      `);
 
       // Update record
-      await connection.sql(`
+      const request2 = new sql.Request();
+      request2.input('ceuID', sql.Int, Number(catID));
+      request2.input('name', sql.VarChar, body.name);
+      request2.input('description', sql.VarChar, body.description || '');
+      request2.input('code', sql.VarChar, body.code);
+      await request2.query(`
         USE ${dbName};
         UPDATE ceu_categories
         SET
@@ -652,12 +675,7 @@ class CreditsService {
           ceuDescription = @description,
           ceuCode = @code
         WHERE ceuID = @ceuID;
-      `)
-      .parameter('ceuID', TYPES.Int, Number(catID))
-      .parameter('name', TYPES.VarChar, body.name)
-      .parameter('description', TYPES.VarChar, body.description || '')
-      .parameter('code', TYPES.VarChar, body.code)
-      .execute();
+      `);
 
       // Re-build linkages
       if (body.profiles && body.profiles.length) {
@@ -682,7 +700,7 @@ class CreditsService {
    */
   async createCreditCategory(body, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       const matches = await this.checkDuplicateNameCodeCombo(
@@ -701,7 +719,12 @@ class CreditsService {
       }
 
       // Insert record and get new ID
-      const newIDResult = await connection.sql(`
+      const request = new sql.Request();
+      request.input('name', sql.VarChar, body.name);
+      request.input('description', sql.VarChar, body.description || '');
+      request.input('code', sql.VarChar, body.code);
+      request.input('eventID', sql.Int, Number(body.eventID));
+      const result = await request.query(`
         USE ${dbName};
         INSERT INTO ceu_categories (
           ceuCategory,
@@ -715,14 +738,9 @@ class CreditsService {
           @eventID
         );
         SELECT SCOPE_IDENTITY() as id;
-      `)
-      .parameter('name', TYPES.VarChar, body.name)
-      .parameter('description', TYPES.VarChar, body.description || '')
-      .parameter('code', TYPES.VarChar, body.code)
-      .parameter('eventID', TYPES.Int, Number(body.eventID))
-      .execute();
+      `);
 
-      const newID = newIDResult[0]?.id;
+      const newID = result.recordset[0]?.id;
 
       // Build linkages
       if (body.profiles && body.profiles.length) {
@@ -747,17 +765,18 @@ class CreditsService {
    */
   async checkCatAssignedToRegItem(catID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('ceuID', sql.Int, Number(catID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT *
         FROM ceu_event_fees
         WHERE ceuID = @ceuID;
-      `)
-      .parameter('ceuID', TYPES.Int, Number(catID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results.length > 0;
     } catch (error) {
@@ -779,19 +798,19 @@ class CreditsService {
         };
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const archiveCat = body.archived ? 0 : 1;
 
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('ceuID', sql.Int, Number(catID));
+      request.input('archived', sql.Int, Number(archiveCat));
+      await request.query(`
         USE ${dbName};
         UPDATE ceu_categories
         SET archived = @archived
         WHERE ceuID = @ceuID;
-      `)
-      .parameter('ceuID', TYPES.Int, Number(catID))
-      .parameter('archived', TYPES.Int, Number(archiveCat))
-      .execute();
+      `);
 
       return {
         success: true,
@@ -808,10 +827,13 @@ class CreditsService {
    */
   async getAwardedAttendeesByCategory(eventID, categoryID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('categoryID', sql.Int, Number(categoryID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT
           ceua.awardID,
@@ -842,10 +864,8 @@ class CreditsService {
         LEFT JOIN ceuExceptionLog el ON el.categoryID = cat.ceuID AND el.eventFeeID = cf.eventFeeID AND el.contestant_id = c.contestant_id
         WHERE cat.ceuID = @categoryID AND cat.event_id = @eventID
         ORDER BY firstName, lastName, sessionName
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('categoryID', TYPES.Int, Number(categoryID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -859,10 +879,13 @@ class CreditsService {
    */
   async getSessionsByCategory(eventID, categoryID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('categoryID', sql.Int, Number(categoryID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT
           ef.eventFeeID as sessionID,
@@ -873,10 +896,8 @@ class CreditsService {
         JOIN ceu_categories cat ON cat.ceuID = cef.ceuID
         WHERE cat.ceuID = @categoryID AND cat.event_id = @eventID
         ORDER BY ef.customFeeName ASC
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('categoryID', TYPES.Int, Number(categoryID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -890,20 +911,21 @@ class CreditsService {
    */
   async getGrantsByCategory(eventID, categoryID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('categoryID', sql.Int, Number(categoryID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT g.grantID
         FROM ceuGrants g
         JOIN ceu_categories cat ON g.event_id = cat.event_id
         JOIN ceuPackageCategories cpc ON cpc.ceuID = cat.ceuID
         WHERE cat.event_id = @eventID AND cat.ceuID = @categoryID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('categoryID', TYPES.Int, Number(categoryID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -917,31 +939,31 @@ class CreditsService {
    */
   async checkCategoryInUse(eventID, categories, vert, packageID = null) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Loop through categories and check if they are in use
       let inUse = false;
       for (let i = 0; i < categories.length; i++) {
         const catID = categories[i];
-        let request = connection.sql(`
+        const request = new sql.Request();
+        request.input('eventID', sql.Int, Number(eventID));
+        request.input('catID', sql.Int, Number(catID));
+
+        if (packageID) {
+          request.input('packageID', sql.Int, Number(packageID));
+        }
+
+        const result = await request.query(`
           USE ${dbName};
           SELECT DISTINCT c.ceuID, c.ceuCategory 
           FROM ceu_categories c
           JOIN ceuPackageCategories cpc ON c.ceuID = cpc.ceuID
           JOIN ceuPackages p ON cpc.packageID = p.packageID
           WHERE c.event_id = @eventID AND cpc.ceuID = @catID ${packageID ? 'AND NOT p.packageID = @packageID' : ''}
-        `)
-        .parameter('eventID', TYPES.Int, Number(eventID))
-        .parameter('catID', TYPES.Int, Number(catID));
+        `);
 
-        if (packageID) {
-          request.parameter('packageID', TYPES.Int, Number(packageID));
-        }
-
-        const result = await request.execute();
-
-        if (result && result.length > 0) {
+        if (result.recordset && result.recordset.length > 0) {
           inUse = true;
           break;
         }
@@ -959,19 +981,20 @@ class CreditsService {
    */
   async getLastRunGrant(packageID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('packageID', sql.Int, Number(packageID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT TOP 1 gl.grantID, gl.runDate
         FROM ceuGrantLog gl
         JOIN ceuGrants g ON g.grantID = gl.grantID
         WHERE g.packageID = @packageID
         ORDER BY gl.runDate DESC
-      `)
-      .parameter('packageID', TYPES.Int, Number(packageID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results.length ? results[0] : null;
     } catch (error) {
@@ -985,7 +1008,7 @@ class CreditsService {
    */
   async savePackageCELinks(packageID, categories, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       if (!categories || !categories.length) return;
@@ -994,17 +1017,17 @@ class CreditsService {
         INSERT INTO ceuPackageCategories (packageID, ceuID) VALUES (@packageID, @ceuID${i});
       `).join('');
 
-      let request = connection.sql(`
-        USE ${dbName};
-        ${statements}
-      `)
-      .parameter('packageID', TYPES.Int, packageID);
+      const request = new sql.Request();
+      request.input('packageID', sql.Int, packageID);
 
       categories.forEach((categoryID, i) => {
-        request.parameter(`ceuID${i}`, TYPES.Int, categoryID);
+        request.input(`ceuID${i}`, sql.Int, categoryID);
       });
 
-      return await request.execute();
+      return await request.query(`
+        USE ${dbName};
+        ${statements}
+      `);
     } catch (error) {
       console.error('Error saving package CE links:', error);
       throw error;
@@ -1016,7 +1039,7 @@ class CreditsService {
    */
   async getAwardCriteriaPackages(params, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       let sqlQuery = `
@@ -1041,31 +1064,28 @@ class CreditsService {
         WHERE 1 = 1
       `;
 
-      let request = connection.sql(sqlQuery);
-
       if ('eventID' in params) {
         sqlQuery += ' AND cp.event_id = @eventID';
-        request = connection.sql(sqlQuery + `
-          GROUP BY cp.packageID, cp.event_id, cp.packageName, cp.attendanceCriteria, cp.paidInFullRequired, cp.surveyRequired, cc.ceuID, cc.ceuCategory, cc.ceuCode, cc.ceuDescription, cc.archived
-        `);
-        request.parameter('eventID', TYPES.Int, Number(params.eventID));
       }
 
       if ('packageID' in params) {
         sqlQuery += ' AND cp.packageID = @packageID';
-        request = connection.sql(sqlQuery + `
-          GROUP BY cp.packageID, cp.event_id, cp.packageName, cp.attendanceCriteria, cp.paidInFullRequired, cp.surveyRequired, cc.ceuID, cc.ceuCategory, cc.ceuCode, cc.ceuDescription, cc.archived
-        `);
-        request.parameter('packageID', TYPES.Int, Number(params.packageID));
       }
 
-      if (!('eventID' in params) && !('packageID' in params)) {
-        request = connection.sql(sqlQuery + `
-          GROUP BY cp.packageID, cp.event_id, cp.packageName, cp.attendanceCriteria, cp.paidInFullRequired, cp.surveyRequired, cc.ceuID, cc.ceuCategory, cc.ceuCode, cc.ceuDescription, cc.archived
-        `);
+      sqlQuery += `
+        GROUP BY cp.packageID, cp.event_id, cp.packageName, cp.attendanceCriteria, cp.paidInFullRequired, cp.surveyRequired, cc.ceuID, cc.ceuCategory, cc.ceuCode, cc.ceuDescription, cc.archived
+      `;
+
+      const request = new sql.Request();
+      if ('eventID' in params) {
+        request.input('eventID', sql.Int, Number(params.eventID));
+      }
+      if ('packageID' in params) {
+        request.input('packageID', sql.Int, Number(params.packageID));
       }
 
-      const data = await request.execute();
+      const result = await request.query(sqlQuery);
+      const data = result.recordset;
 
       const anticipatedAwards = ('packageID' in params) ? await this.getAttendeesToAward(params.packageID, vert, {}, null, null) : [];
       const anticipatedDeclines = ('packageID' in params) ? await this.getAttendeesToDecline(params.packageID, vert, {}, null, null) : [];
@@ -1118,11 +1138,17 @@ class CreditsService {
         return { success: false, message: 'Package cannot apply to a Credit Category that is already in use' };
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Create new package and get new ID
-      const newPackageIDResult = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, eventID);
+      request.input('packageName', sql.VarChar, packageName);
+      request.input('attendanceCriteria', sql.TinyInt, attendanceCriteria);
+      request.input('paidInFullRequired', sql.Bit, paidInFullRequired);
+      request.input('surveyRequired', sql.Bit, surveyRequired);
+      const result = await request.query(`
         USE ${dbName};
         INSERT INTO ceuPackages (
           event_id,
@@ -1138,15 +1164,9 @@ class CreditsService {
           @surveyRequired
         );
         SELECT SCOPE_IDENTITY() as id;
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .parameter('packageName', TYPES.VarChar, packageName)
-      .parameter('attendanceCriteria', TYPES.TinyInt, attendanceCriteria)
-      .parameter('paidInFullRequired', TYPES.Bit, paidInFullRequired)
-      .parameter('surveyRequired', TYPES.Bit, surveyRequired)
-      .execute();
+      `);
 
-      const newPackageID = newPackageIDResult[0]?.id;
+      const newPackageID = result.recordset[0]?.id;
 
       // Build out linkages to CE
       await this.savePackageCELinks(newPackageID, categories, vert);
@@ -1167,18 +1187,18 @@ class CreditsService {
    */
   async deleteAwardCriteriaPackage(eventID, packageID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Check if a grant has previously run on this package
-      const grantCountResult = await connection.sql(`
+      const request1 = new sql.Request();
+      request1.input('packageID', sql.Int, packageID);
+      const result1 = await request1.query(`
         USE ${dbName};
         SELECT COUNT(*) as count FROM ceuGrants WHERE packageID = @packageID
-      `)
-      .parameter('packageID', TYPES.Int, packageID)
-      .execute();
+      `);
 
-      const grantCount = grantCountResult[0]?.count || 0;
+      const grantCount = result1.recordset[0]?.count || 0;
 
       if (grantCount > 0) {
         return {
@@ -1188,14 +1208,14 @@ class CreditsService {
       }
 
       // Delete package and associated category links
-      await connection.sql(`
+      const request2 = new sql.Request();
+      request2.input('eventID', sql.Int, Number(eventID));
+      request2.input('packageID', sql.Int, Number(packageID));
+      await request2.query(`
         USE ${dbName};
         DELETE FROM ceuPackageCategories WHERE packageID = @packageID;
         DELETE FROM ceuPackages WHERE packageID = @packageID AND event_id = @eventID;
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('packageID', TYPES.Int, Number(packageID))
-      .execute();
+      `);
 
       return {
         success: true,
@@ -1222,11 +1242,18 @@ class CreditsService {
         return { success: false, message: 'Package cannot apply to a Credit Category that is already in use' };
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Edit the existing package
-      await connection.sql(`
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, eventID);
+      request1.input('packageID', sql.Int, packageID);
+      request1.input('packageName', sql.VarChar, packageName);
+      request1.input('attendanceCriteria', sql.TinyInt, attendanceCriteria);
+      request1.input('paidInFullRequired', sql.Bit, paidInFullRequired);
+      request1.input('surveyRequired', sql.Bit, surveyRequired);
+      await request1.query(`
         USE ${dbName};
         UPDATE ceuPackages
         SET
@@ -1236,22 +1263,15 @@ class CreditsService {
           surveyRequired = @surveyRequired
         WHERE packageID = @packageID
           AND event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .parameter('packageID', TYPES.Int, packageID)
-      .parameter('packageName', TYPES.VarChar, packageName)
-      .parameter('attendanceCriteria', TYPES.TinyInt, attendanceCriteria)
-      .parameter('paidInFullRequired', TYPES.Bit, paidInFullRequired)
-      .parameter('surveyRequired', TYPES.Bit, surveyRequired)
-      .execute();
+      `);
 
       // Clear out CE Links so they can be rebuilt
-      await connection.sql(`
+      const request2 = new sql.Request();
+      request2.input('packageID', sql.Int, packageID);
+      await request2.query(`
         USE ${dbName};
         DELETE FROM ceuPackageCategories WHERE packageID = @packageID;
-      `)
-      .parameter('packageID', TYPES.Int, packageID)
-      .execute();
+      `);
 
       await this.savePackageCELinks(packageID, categories, vert);
 
@@ -1270,12 +1290,15 @@ class CreditsService {
    */
   async resetAwardCriteriaPackage(eventID, packageID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Delete all awarded CEs, declined CEs, grants, grant logs, and exceptions
       // Reset doNotAward flag for all CEs associated with this package
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('packageID', sql.Int, Number(packageID));
+      request.input('eventID', sql.Int, Number(eventID));
+      await request.query(`
         USE ${dbName};
         DELETE a FROM ceuAwarded a
         JOIN ceuGrantLog gl ON gl.logID = a.grantLogID
@@ -1299,10 +1322,7 @@ class CreditsService {
         JOIN ceuPackageCategories pc ON pc.ceuID = cc.ceuID
         JOIN ceuPackages p ON pc.packageID = p.packageID
         WHERE p.packageID = @packageID AND p.event_id = @eventID AND cf.doNotAward = 1;
-      `)
-      .parameter('packageID', TYPES.Int, Number(packageID))
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
 
       return {
         success: true,
@@ -1319,7 +1339,7 @@ class CreditsService {
    */
   async getAttendeesToAward(packageID, vert, filter = {}, categoryID = null, sessionID = null) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const states = await getStates();
 
@@ -1401,20 +1421,21 @@ class CreditsService {
           )
       `;
 
-      let request = connection.sql(sqlQuery)
-        .parameter('packageID', TYPES.Int, Number(packageID));
+      const request = new sql.Request();
+      request.input('packageID', sql.Int, Number(packageID));
 
       if ('adminID' in actualFilter) {
-        request.parameter('adminID', TYPES.Int, Number(actualFilter.adminID));
+        request.input('adminID', sql.Int, Number(actualFilter.adminID));
       }
       if ('categoryID' in actualFilter) {
-        request.parameter('categoryID', TYPES.Int, Number(actualFilter.categoryID));
+        request.input('categoryID', sql.Int, Number(actualFilter.categoryID));
       }
       if ('sessionID' in actualFilter) {
-        request.parameter('sessionID', TYPES.Int, Number(actualFilter.sessionID));
+        request.input('sessionID', sql.Int, Number(actualFilter.sessionID));
       }
 
-      let attendees = await request.execute();
+      const result = await request.query(sqlQuery);
+      let attendees = result.recordset;
 
       if (attendees && attendees.length) {
         attendees = attendees.map(attendee => {
@@ -1447,7 +1468,7 @@ class CreditsService {
    */
   async getAttendeesToDecline(packageID, vert, filter = {}, categoryID = null, sessionID = null) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const states = await getStates();
 
@@ -1527,20 +1548,21 @@ class CreditsService {
           )
       `;
 
-      let request = connection.sql(sqlQuery)
-        .parameter('packageID', TYPES.Int, Number(packageID));
+      const request = new sql.Request();
+      request.input('packageID', sql.Int, Number(packageID));
 
       if ('adminID' in actualFilter) {
-        request.parameter('adminID', TYPES.Int, Number(actualFilter.adminID));
+        request.input('adminID', sql.Int, Number(actualFilter.adminID));
       }
       if ('categoryID' in actualFilter) {
-        request.parameter('categoryID', TYPES.Int, Number(actualFilter.categoryID));
+        request.input('categoryID', sql.Int, Number(actualFilter.categoryID));
       }
       if ('sessionID' in actualFilter) {
-        request.parameter('sessionID', TYPES.Int, Number(actualFilter.sessionID));
+        request.input('sessionID', sql.Int, Number(actualFilter.sessionID));
       }
 
-      let attendees = await request.execute();
+      const result = await request.query(sqlQuery);
+      let attendees = result.recordset;
 
       if (attendees && attendees.length) {
         attendees = attendees.map(attendee => {
@@ -1573,7 +1595,7 @@ class CreditsService {
    */
   async getExceptionLog(eventID, packageID, categoryID, sessionID, pending, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const states = await getStates();
 
@@ -1624,13 +1646,14 @@ class CreditsService {
         ORDER BY el.logID DESC
       `;
 
-      const request = connection.sql(sqlQuery)
-        .parameter('eventID', TYPES.Int, Number(eventID))
-        .parameter('packageID', TYPES.Int, Number(packageID))
-        .parameter('categoryID', TYPES.Int, Number(categoryID))
-        .parameter('sessionID', TYPES.Int, Number(sessionID));
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('packageID', sql.Int, Number(packageID));
+      request.input('categoryID', sql.Int, Number(categoryID));
+      request.input('sessionID', sql.Int, Number(sessionID));
 
-      let exceptions = await request.execute();
+      const result = await request.query(sqlQuery);
+      let exceptions = result.recordset;
 
       if (exceptions && exceptions.length) {
         exceptions = exceptions.map(attendee => {
@@ -1663,27 +1686,27 @@ class CreditsService {
    */
   async addAwardException(body, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const result = await connection.sql(`
+      const request = new sql.Request();
+      request.input('attendeeID', sql.Int, Number(body.attendeeID));
+      request.input('packageID', sql.Int, Number(body.packageID));
+      request.input('categoryID', sql.Int, Number(body.categoryID));
+      request.input('sessionID', sql.Int, Number(body.sessionID));
+      request.input('exceptionText', sql.VarChar, body.exceptionText || '');
+      request.input('adminUserID', sql.Int, Number(body.adminUserID));
+      const result = await request.query(`
         USE ${dbName};
         INSERT INTO ceuExceptionLog (contestant_id, packageID, categoryID, eventFeeID, exceptionText, adminUserID)
         OUTPUT INSERTED.logID
         VALUES (@attendeeID, @packageID, @categoryID, @sessionID, @exceptionText, @adminUserID)
-      `)
-      .parameter('attendeeID', TYPES.Int, Number(body.attendeeID))
-      .parameter('packageID', TYPES.Int, Number(body.packageID))
-      .parameter('categoryID', TYPES.Int, Number(body.categoryID))
-      .parameter('sessionID', TYPES.Int, Number(body.sessionID))
-      .parameter('exceptionText', TYPES.VarChar, body.exceptionText || '')
-      .parameter('adminUserID', TYPES.Int, Number(body.adminUserID))
-      .execute();
+      `);
 
       return {
         success: true,
         message: 'Exception added!',
-        logID: result[0]?.logID
+        logID: result.recordset[0]?.logID
       };
     } catch (error) {
       console.error('Error adding award exception:', error);
@@ -1700,18 +1723,18 @@ class CreditsService {
    */
   async updateAwardException(logID, body, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('logID', sql.Int, Number(logID));
+      request.input('exceptionText', sql.VarChar, String(body.exceptionText || ''));
+      await request.query(`
         USE ${dbName};
         UPDATE ceuExceptionLog
         SET exceptionText = @exceptionText
         WHERE logID = @logID
-      `)
-      .parameter('logID', TYPES.Int, Number(logID))
-      .parameter('exceptionText', TYPES.VarChar, String(body.exceptionText || ''))
-      .execute();
+      `);
 
       return { logID: logID, success: true };
     } catch (error) {
@@ -1725,15 +1748,15 @@ class CreditsService {
    */
   async removeAwardException(logID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('logID', sql.Int, Number(logID));
+      await request.query(`
         USE ${dbName};
         DELETE FROM ceuExceptionLog WHERE logID = @logID
-      `)
-      .parameter('logID', TYPES.Int, Number(logID))
-      .execute();
+      `);
 
       return { success: true };
     } catch (error) {
@@ -1743,15 +1766,205 @@ class CreditsService {
   }
 
   /**
+   * Get sample transcript data for preview/edit mode
+   */
+  getSampleTranscriptData() {
+    return {
+      affiliatename: 'Affiliate Name',
+      userorg: 'User Organization',
+      username: 'User Full Name',
+      useremail: 'username@email.com',
+      usermobile: '999-999-9999',
+      userphone: '999-999-9999',
+      orgPhone: '999-999-9999',
+      orgContact: 'Contact Name',
+      logoType: 'event',
+      showOrgBelowLogo: true,
+      orgName: '',
+      orgPhone: '',
+      orgMobile: 'Organization Number',
+      orgContact: '',
+      nameInHeader: 1,
+      emailInHeader: 1,
+      mobileHeader: 1,
+      phoneInHeader: 1,
+      orgInHeader: 1,
+      orgInHostDetails: 1,
+      orgContactInHostDetails: 1,
+      orgPhoneInHostDetails: 1,
+      showColDate: 1,
+      showColEvent: 1,
+      showColSession: 1,
+      showColCategory: 1,
+      showColCode: 1,
+      showColVal: 1,
+      showColCheckInOut: 1,
+      langBlock: 'This is some official text.',
+      custom_1: {
+        label: 'Custom Field 1',
+        value: 12345
+      },
+      custom_2: {
+        label: 'Custom Field 2',
+        value: 'Some Value'
+      },
+      rows: [{
+        date: moment.utc().format('MM/DD/YYYY'),
+        eventname: 'My Event',
+        sessionname: 'Cool Session',
+        categoryname: 'Educational',
+        code: '12345',
+        value: '12.5',
+        checkin: moment.utc().format('h:mma'),
+        checkout: moment.utc().format('h:mma')
+      }, {
+        date: moment.utc().format('MM/DD/YYYY'),
+        eventname: 'My Event',
+        sessionname: 'Cool Session',
+        categoryname: 'Educational',
+        code: '54321',
+        value: '3.0',
+        checkin: moment.utc().format('h:mma'),
+        checkout: moment.utc().format('h:mma')
+      }]
+    };
+  }
+
+  /**
+   * Get transcript template data
+   */
+  async getTranscriptTemplateData(editMode = false, previewMode = false, eventID, userID, vert) {
+    try {
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+      let data = {};
+      let sampleData = this.getSampleTranscriptData();
+      let transcriptData = {};
+
+      if (previewMode) {
+        sampleData = {
+          affiliatename: sampleData.affiliatename,
+          userorg: sampleData.userorg,
+          username: sampleData.username,
+          useremail: sampleData.useremail,
+          usermobile: sampleData.usermobile,
+          userphone: sampleData.userphone,
+          orgName: sampleData.orgName,
+          orgPhone: sampleData.orgPhone,
+          orgContact: sampleData.orgContact,
+          rows: sampleData.rows
+        };
+      }
+
+      if (!previewMode && !editMode) {
+        sampleData = {};
+      }
+
+      if (userID) {
+        const request = new sql.Request();
+        request.input('eventID', sql.Int, Number(eventID));
+        request.input('userID', sql.Int, Number(userID));
+        const result = await request.query(`
+          USE ${dbName};
+          SELECT u.user_firstname, u.user_lastname, u.user_email AS useremail, u.user_mobile AS usermobile, u.user_phone AS userphone, a.affiliate_name AS affiliatename, t.orgName, t.orgPhone, t.orgContact, u.user_company AS userorg,
+          (SELECT
+            gl.runDate AS date,
+            ISNULL(CAST(ef.activityStart AS varchar(25)),'') AS sessionDate,
+            e.event_title AS eventname, ef.customFeeName AS sessionname, cc.ceuCategory AS categoryname, cc.ceuCode AS code, ceua.ceuValue AS value, cf.checkedIn AS checkin, cf.checkedOut AS checkout
+            FROM ceuAwarded ceua
+            JOIN ceuGrantLog gl ON gl.logID = ceua.grantLogID
+            JOIN event_fees ef ON ef.eventFeeID = ceua.eventFeeID
+            JOIN contestant_fees cf ON cf.eventFeeID = ef.eventFeeID
+            JOIN eventContestant c ON c.contestant_id = cf.contestant_id AND c.contestant_id = ceua.contestant_id
+            JOIN ceu_categories cc ON cc.ceuID = ceua.categoryID
+            WHERE ceua.event_id = @eventID and c.user_id = @userID FOR JSON PATH) AS rows
+          FROM b_users u
+            JOIN b_events e ON e.event_id = @eventID
+            JOIN b_affiliates a ON a.affiliate_id = e.affiliate_id
+            JOIN ceuTranscripts t ON t.event_id = e.event_id
+          WHERE u.user_id = @userID
+        `);
+
+        if (result.recordset && result.recordset.length) {
+          const formatPhoneNumber = (phoneNumberString) => {
+            if (!phoneNumberString) return null;
+            const cleaned = ('' + phoneNumberString).replace(/\D/g, '');
+            const match = cleaned.match(/^(1|)?(\d{3})(\d{3})(\d{4})$/);
+            if (match) {
+              const intlCode = (match[1] ? '+1 ' : '');
+              return [intlCode, '(', match[2], ') ', match[3], '-', match[4]].join('');
+            }
+            return null;
+          };
+
+          const row = result.recordset[0];
+          row.username = `${row.user_firstname} ${row.user_lastname}`;
+          row.userorg = row.userorg ? row.userorg : 'Not Specified';
+          row.rows = row.rows ? JSON.parse(row.rows) : [];
+          row.rows = row.rows.map(r => {
+            r.date = moment.utc(r.date).format('MM/DD/YYYY');
+            if (r.sessionDate && r.sessionDate.length > 0) {
+              r.sessionDate = moment.utc(r.sessionDate).format('MM/DD/YYYY');
+            }
+            if (r.checkin) r.checkin = moment.utc(r.checkin).format('h:mma');
+            if (r.checkout) r.checkout = moment.utc(r.checkout).format('h:mma');
+            return r;
+          });
+          row.userphone = formatPhoneNumber(row.userphone);
+          row.usermobile = formatPhoneNumber(row.usermobile);
+          transcriptData = row;
+        }
+      }
+
+      const actualData = await this.getTranscriptTemplateConfig(eventID, vert);
+
+      // Get user custom fields, if appropriate
+      if (userID && actualData.transcriptID) {
+        const request = new sql.Request();
+        request.input('transcriptID', sql.Int, actualData.transcriptID);
+        request.input('userID', sql.Int, Number(userID));
+        const customFieldResult = await request.query(`
+          USE ${dbName};
+          SELECT cf.fieldLabel as label, uc.varcharData as value, ctf.customFieldID 
+          FROM ceuTranscriptCustomFields ctf
+          LEFT JOIN custom_fields cf on cf.field_id = ctf.customFieldID 
+          LEFT JOIN user_custom uc ON cf.field_id = uc.field_id AND uc.field_id = ctf.customFieldID
+          WHERE ctf.transcriptID = @transcriptID AND uc.user_id = @userID
+        `);
+
+        if (customFieldResult.recordset && customFieldResult.recordset.length > 0) {
+          if (customFieldResult.recordset[0]) {
+            actualData.custom_field_1 = customFieldResult.recordset[0];
+          }
+          if (customFieldResult.recordset[1]) {
+            actualData.custom_field_2 = customFieldResult.recordset[1];
+          }
+        }
+      }
+
+      data = {
+        ...sampleData,
+        ...transcriptData,
+        ...actualData,
+        generatedDate: moment.utc().format('MM/DD/YYYY')
+      };
+
+      return data;
+    } catch (error) {
+      console.error('Error getting transcript template data:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get transcript template
    */
-  async getTranscriptTemplate(edit, preview, eventID, userID, vert) {
+  async getTranscriptTemplate(edit = false, preview = false, eventID, userID = 0, vert) {
     try {
-      // TODO: Implement full transcript template rendering with EJS
-      // This requires EJS template file and full template data
-      // For now, return empty string as placeholder
-      console.log('getTranscriptTemplate called - EJS template rendering pending');
-      return '';
+      const templatePath = join(__dirname, '../../templates/ceu-transcript.ejs');
+      const templateData = await this.getTranscriptTemplateData(edit, preview, eventID, userID, vert);
+      const html = await ejs.renderFile(templatePath, { ...templateData, editMode: edit });
+      return html;
     } catch (error) {
       console.error('Error getting transcript template:', error);
       throw error;
@@ -1778,30 +1991,42 @@ class CreditsService {
    */
   async getCronScheduledRuns(vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Get all grants that should be run based on the current date and time
-      const results = await connection.sql(`
+      // Matching old codebase logic: joins with ceuGrantLog to check if grant has already been run
+      const request = new sql.Request();
+      const result = await request.query(`
         USE ${dbName};
+        -- Get all grants that should be run based on the current date and time
         SELECT DISTINCT
           g.grantID,
           g.event_id,
-          g.packageID,
           g.admin_user_id,
-          g.runType,
+          g.packageID,
           g.startDate,
-          g.testMode
-        FROM ceuGrants g
-        WHERE g.runType != 'once' 
+          g.sendTo
+        FROM
+          ceuGrants g 
+          LEFT JOIN ceuGrantLog l ON g.grantID = l.grantID
+        WHERE
+          g.startDate <= getDate() 
           AND g.archived = 0
-          AND (
-            (g.runType = 'daily' AND CAST(GETDATE() AS DATE) >= CAST(g.startDate AS DATE))
-            OR (g.runType = 'weekly' AND DATEPART(WEEKDAY, GETDATE()) = DATEPART(WEEKDAY, g.startDate) AND CAST(GETDATE() AS DATE) >= CAST(g.startDate AS DATE))
-            OR (g.runType = 'monthly' AND DATEPART(DAY, GETDATE()) = DATEPART(DAY, g.startDate) AND CAST(GETDATE() AS DATE) >= CAST(g.startDate AS DATE))
-          )
-      `)
-      .execute();
+        AND
+          /*
+            Run if runDate is NULL OR runDate is BEFORE the current startDate.
+            This is a failsafe in case a grant run is in progress and the cron runs again before it's done.
+            The subsequent grant runs will not pick up a grant that has a last run date LATER
+            than the NEXT run date.  In that case it would mean a run for that grant is already in progress.
+            Once the grant is run, the dates will be set accordingly.
+          */
+          (l.runDate < g.startDate OR l.runDate IS NULL)
+        AND
+          g.runType <> 'once'
+        ORDER BY g.startDate DESC
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -1815,15 +2040,16 @@ class CreditsService {
    */
   async getScheduledRuns(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT * FROM ceuGrants WHERE event_id = @eventID AND runType != 'once' AND archived = 0
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -1837,10 +2063,20 @@ class CreditsService {
    */
   async createGrant(eventID, body, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const result = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('packageID', sql.Int, Number(body.packageID));
+      request.input('admin_user_id', sql.Int, Number(body.adminID));
+      request.input('certificateTemplateID', sql.Int, body.certificateTemplateID ? Number(body.certificateTemplateID) : null);
+      request.input('emailTemplateID', sql.Int, body.emailTemplateID ? Number(body.emailTemplateID) : null);
+      request.input('sendTo', sql.Bit, body.emailTemplateID ? Number(body.sendTo) : null);
+      request.input('runType', sql.VarChar, body.runType);
+      request.input('startDate', sql.DateTime, new Date(body.startDate));
+      request.input('testMode', sql.Bit, Number(body.testMode));
+      const result = await request.query(`
         USE ${dbName};
         INSERT INTO ceuGrants (
           event_id,
@@ -1865,22 +2101,12 @@ class CreditsService {
           @startDate,
           @testMode
         );
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('packageID', TYPES.Int, Number(body.packageID))
-      .parameter('admin_user_id', TYPES.Int, Number(body.adminID))
-      .parameter('certificateTemplateID', TYPES.Int, body.certificateTemplateID ? Number(body.certificateTemplateID) : null)
-      .parameter('emailTemplateID', TYPES.Int, body.emailTemplateID ? Number(body.emailTemplateID) : null)
-      .parameter('sendTo', TYPES.Bit, body.emailTemplateID ? Number(body.sendTo) : null)
-      .parameter('runType', TYPES.VarChar, body.runType)
-      .parameter('startDate', TYPES.DateTime, new Date(body.startDate))
-      .parameter('testMode', TYPES.Bit, Number(body.testMode))
-      .execute();
+      `);
 
       const grantResult = {
         success: true,
         message: 'Grant Created',
-        grantID: result[0]?.grantID
+        grantID: result.recordset[0]?.grantID
       };
 
       // If runType is 'once' and testMode is set, run the grant immediately
@@ -1904,18 +2130,18 @@ class CreditsService {
    */
   async removeScheduledRun(eventID, grantID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('grantID', sql.Int, Number(grantID));
+      await request.query(`
         USE ${dbName};
         UPDATE ceuGrants
         SET archived = 1
         WHERE event_id = @eventID AND grantID = @grantID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('grantID', TYPES.Int, Number(grantID))
-      .execute();
+      `);
 
       return {
         success: true,
@@ -1932,12 +2158,14 @@ class CreditsService {
    */
   async getRecentRuns(eventID, scheduled, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       const runType = scheduled === "manual" ? "AND g.runType = 'once'" : "AND g.runType != 'once'";
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT gl.logID, u.user_firstname AS adminFirstName, u.user_lastname AS adminLastName,
           p.packageName, p.packageID, gl.runDate, g.runType, g.testMode
@@ -1949,9 +2177,8 @@ class CreditsService {
         GROUP BY gl.logID, u.user_firstname, u.user_lastname,
           p.packageName, gl.runDate, g.runType, g.testMode, p.packageID
         ORDER BY gl.logID DESC
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       const processed = results.map(run => {
         run.expanded = false;
@@ -1970,10 +2197,13 @@ class CreditsService {
    */
   async getRecentRunDetails(eventID, logID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('logID', sql.Int, Number(logID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT TOP 1 gl.logID,
           (SELECT DISTINCT cec.ceuCategory AS name, cec.ceuID AS categoryID,
@@ -2027,10 +2257,8 @@ class CreditsService {
         WHERE g.event_id = @eventID AND gl.logID = @logID
         GROUP BY gl.logID, p.packageName, gl.runDate, p.packageID
         ORDER BY gl.logID DESC
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('logID', TYPES.Int, Number(logID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       if (!results || !results.length) {
         return {};
@@ -2101,11 +2329,14 @@ class CreditsService {
         return { affectedCount: 1 };
       }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const states = await getStates();
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('packageID', sql.Int, Number(packageID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT c.contestant_id,
           c.bundle_id AS profileID,
@@ -2141,10 +2372,8 @@ class CreditsService {
           AND ISNULL(cef.ceuValue,0) > 0
           AND c.contestant_id NOT IN (SELECT contestant_id FROM ceuAwarded ceua WHERE ceua.eventFeeID = cf.eventFeeID AND ceua.categoryID = cc.ceuID)
         GROUP BY c.contestant_id, c.bundle_id, cc.ceuID, u.user_state, el.logID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('packageID', TYPES.Int, Number(packageID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       let count = 0;
       if (results && results.length) {
@@ -2180,10 +2409,13 @@ class CreditsService {
    */
   async getAwardedAttendees(eventID, logID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('logID', sql.Int, Number(logID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT p.packageName, l.runDate, ec.contestant_id, u.user_firstname AS firstName, u.user_lastname AS lastName, ef.customFeeName AS sessionName, g.certificateTemplateID, g.emailTemplateID,
         (SELECT DISTINCT cec.ceuCategory AS name, cec.ceuID AS categoryID,
@@ -2206,10 +2438,8 @@ class CreditsService {
         JOIN event_fees ef ON cef.eventFeeID = ef.eventFeeID
         WHERE a.event_id = @eventID AND a.grantLogID = @logID
         ORDER BY u.user_firstname, u.user_lastname
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('logID', TYPES.Int, Number(logID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       const processed = results.map(row => {
         row.packageName = row.packageName;
@@ -2234,10 +2464,13 @@ class CreditsService {
    */
   async getDeclinedAttendees(eventID, logID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('logID', sql.Int, Number(logID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT p.packageName, l.runDate, ec.contestant_id, u.user_firstname AS firstName, u.user_lastname AS lastName, ef.eventFeeID, ef.customFeeName AS sessionName,
         (SELECT DISTINCT cec.ceuCategory AS name, cec.ceuID AS categoryID,
@@ -2261,10 +2494,8 @@ class CreditsService {
         JOIN event_fees ef ON cef.eventFeeID = ef.eventFeeID
         WHERE d.event_id = @eventID AND d.grantLogID = @logID
         ORDER BY u.user_firstname, u.user_lastname
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('logID', TYPES.Int, Number(logID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       const processed = results.map(row => {
         row.packageName = row.packageName;
@@ -2289,10 +2520,15 @@ class CreditsService {
    */
   async getAwardedByRegItemID(eventID, logID, catID, itemID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('logID', sql.Int, Number(logID));
+      request.input('regItemID', sql.Int, Number(itemID));
+      request.input('categoryID', sql.Int, Number(catID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT c.contestant_id,
           u.user_firstname AS firstName,
@@ -2322,12 +2558,8 @@ class CreditsService {
         LEFT JOIN ceuExceptionLog el ON el.eventFeeID = cf.eventFeeID AND el.contestant_id = c.contestant_id
         WHERE ceua.event_id = @eventID AND ceua.grantLogID = @logID AND ceua.eventFeeID = @regItemID AND ceua.categoryID = @categoryID
         ORDER BY u.user_firstname, u.user_lastname
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('logID', TYPES.Int, Number(logID))
-      .parameter('regItemID', TYPES.Int, Number(itemID))
-      .parameter('categoryID', TYPES.Int, Number(catID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -2341,10 +2573,15 @@ class CreditsService {
    */
   async getDeclinedByRegItemID(eventID, logID, catID, itemID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('logID', sql.Int, Number(logID));
+      request.input('regItemID', sql.Int, Number(itemID));
+      request.input('categoryID', sql.Int, Number(catID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT DISTINCT c.contestant_id,
           u.user_firstname AS firstName,
@@ -2370,12 +2607,8 @@ class CreditsService {
         ) s ON s.userID = c.user_id AND s.surveyID = ef.surveyID
         WHERE ceud.event_id = @eventID AND ceud.grantLogID = @logID AND ceud.eventFeeID = @regItemID AND ceud.categoryID = @categoryID
         ORDER BY u.user_firstname, u.user_lastname
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('logID', TYPES.Int, Number(logID))
-      .parameter('regItemID', TYPES.Int, Number(itemID))
-      .parameter('categoryID', TYPES.Int, Number(catID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -2389,11 +2622,14 @@ class CreditsService {
    */
   async unawardAttendee(eventID, awardID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Mark the item as doNotAward for future runs
-      await connection.sql(`
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, Number(eventID));
+      request1.input('awardID', sql.Int, Number(awardID));
+      await request1.query(`
         USE ${dbName};
         UPDATE contestant_fees
         SET contestant_fees.doNotAward = 1
@@ -2401,19 +2637,16 @@ class CreditsService {
         JOIN ceuAwarded ceua ON cf.eventFeeID = ceua.eventFeeID AND cf.contestant_id = ceua.contestant_id
         JOIN ceu_categories cc ON ceua.categoryID = cc.ceuID
         WHERE ceua.awardID = @awardID AND cf.event_id = @eventID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('awardID', TYPES.Int, Number(awardID))
-      .execute();
+      `);
 
       // Delete the award
-      await connection.sql(`
+      const request2 = new sql.Request();
+      request2.input('eventID', sql.Int, Number(eventID));
+      request2.input('awardID', sql.Int, Number(awardID));
+      await request2.query(`
         USE ${dbName};
         DELETE FROM ceuAwarded WHERE event_id = @eventID AND awardID = @awardID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('awardID', TYPES.Int, Number(awardID))
-      .execute();
+      `);
 
       return { success: true, unawarded: { awardID: awardID } };
     } catch (error) {
@@ -2427,17 +2660,18 @@ class CreditsService {
    */
   async getEventSessions(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const results = await connection.sql(`
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      const result = await request.query(`
         USE ${dbName};
         SELECT ef.eventFeeID AS id, ef.customFeeName AS sessionName
         FROM event_fees ef
         WHERE ef.event_id = @eventID AND ISNULL(ef.invisible, 0) = 0
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .execute();
+      `);
+      const results = result.recordset;
 
       return results;
     } catch (error) {
@@ -2451,10 +2685,34 @@ class CreditsService {
    */
   async saveTranscriptConfig(eventID, config, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const transcriptIDResult = await connection.sql(`
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, eventID);
+      request1.input('logoType', sql.VarChar, config.logoType || '');
+      request1.input('showOrgBelowLogo', sql.Bit, config.showOrgBelowLogo ? 1 : 0);
+      request1.input('orgName', sql.VarChar, config.orgName || '');
+      request1.input('orgPhone', sql.VarChar, config.orgPhone || '');
+      request1.input('orgMobile', sql.VarChar, config.orgMobile || '');
+      request1.input('orgContact', sql.VarChar, config.orgContact || '');
+      request1.input('langBlock', sql.VarChar, config.langBlock || '');
+      request1.input('nameInHeader', sql.Bit, config.nameInHeader ? 1 : 0);
+      request1.input('emailInHeader', sql.Bit, config.emailInHeader ? 1 : 0);
+      request1.input('mobileHeader', sql.Bit, config.mobileHeader ? 1 : 0);
+      request1.input('phoneInHeader', sql.Bit, config.phoneInHeader ? 1 : 0);
+      request1.input('orgInHeader', sql.Bit, config.orgInHeader ? 1 : 0);
+      request1.input('orgInHostDetails', sql.Bit, config.orgInHostDetails ? 1 : 0);
+      request1.input('orgContactInHostDetails', sql.Bit, config.orgContactInHostDetails ? 1 : 0);
+      request1.input('orgPhoneInHostDetails', sql.Bit, config.orgPhoneInHostDetails ? 1 : 0);
+      request1.input('showColDate', sql.Bit, config.showColDate ? 1 : 0);
+      request1.input('showColEvent', sql.Bit, config.showColEvent ? 1 : 0);
+      request1.input('showColSession', sql.Bit, config.showColSession ? 1 : 0);
+      request1.input('showColCategory', sql.Bit, config.showColCategory ? 1 : 0);
+      request1.input('showColCode', sql.Bit, config.showColCode ? 1 : 0);
+      request1.input('showColVal', sql.Bit, config.showColVal ? 1 : 0);
+      request1.input('showColCheckInOut', sql.Bit, config.showColCheckInOut ? 1 : 0);
+      const result1 = await request1.query(`
         USE ${dbName};
         IF EXISTS (SELECT 1 FROM ceuTranscripts WHERE event_id = @eventID)
         BEGIN
@@ -2499,61 +2757,37 @@ class CreditsService {
           );
         END
         SELECT transcriptID FROM ceuTranscripts WHERE event_id = @eventID;
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .parameter('logoType', TYPES.VarChar, config.logoType || '')
-      .parameter('showOrgBelowLogo', TYPES.Bit, config.showOrgBelowLogo ? 1 : 0)
-      .parameter('orgName', TYPES.VarChar, config.orgName || '')
-      .parameter('orgPhone', TYPES.VarChar, config.orgPhone || '')
-      .parameter('orgMobile', TYPES.VarChar, config.orgMobile || '')
-      .parameter('orgContact', TYPES.VarChar, config.orgContact || '')
-      .parameter('langBlock', TYPES.VarChar, config.langBlock || '')
-      .parameter('nameInHeader', TYPES.Bit, config.nameInHeader ? 1 : 0)
-      .parameter('emailInHeader', TYPES.Bit, config.emailInHeader ? 1 : 0)
-      .parameter('mobileHeader', TYPES.Bit, config.mobileHeader ? 1 : 0)
-      .parameter('phoneInHeader', TYPES.Bit, config.phoneInHeader ? 1 : 0)
-      .parameter('orgInHeader', TYPES.Bit, config.orgInHeader ? 1 : 0)
-      .parameter('orgInHostDetails', TYPES.Bit, config.orgInHostDetails ? 1 : 0)
-      .parameter('orgContactInHostDetails', TYPES.Bit, config.orgContactInHostDetails ? 1 : 0)
-      .parameter('orgPhoneInHostDetails', TYPES.Bit, config.orgPhoneInHostDetails ? 1 : 0)
-      .parameter('showColDate', TYPES.Bit, config.showColDate ? 1 : 0)
-      .parameter('showColEvent', TYPES.Bit, config.showColEvent ? 1 : 0)
-      .parameter('showColSession', TYPES.Bit, config.showColSession ? 1 : 0)
-      .parameter('showColCategory', TYPES.Bit, config.showColCategory ? 1 : 0)
-      .parameter('showColCode', TYPES.Bit, config.showColCode ? 1 : 0)
-      .parameter('showColVal', TYPES.Bit, config.showColVal ? 1 : 0)
-      .parameter('showColCheckInOut', TYPES.Bit, config.showColCheckInOut ? 1 : 0)
-      .execute();
+      `);
 
-      const transcriptID = transcriptIDResult[0]?.transcriptID;
+      const transcriptID = result1.recordset[0]?.transcriptID;
 
       // Delete existing custom field links
-      await connection.sql(`
+      const request2 = new sql.Request();
+      request2.input('transcriptID', sql.Int, transcriptID);
+      await request2.query(`
         USE ${dbName};
         DELETE FROM ceuTranscriptCustomFields WHERE transcriptID = @transcriptID;
-      `)
-      .parameter('transcriptID', TYPES.Int, transcriptID)
-      .execute();
+      `);
 
       // Connect to custom fields table
       if ((config.custom_1 !== 0 || config.custom_2 !== 0) && transcriptID) {
         if (config.custom_1) {
-          await connection.sql(`
+          const request3 = new sql.Request();
+          request3.input('transcriptID', sql.Int, transcriptID);
+          request3.input('customFieldID', sql.Int, config.custom_1);
+          await request3.query(`
             USE ${dbName};
             INSERT INTO ceuTranscriptCustomFields (transcriptID, customFieldID) VALUES (@transcriptID, @customFieldID);
-          `)
-          .parameter('transcriptID', TYPES.Int, transcriptID)
-          .parameter('customFieldID', TYPES.Int, config.custom_1)
-          .execute();
+          `);
         }
         if (config.custom_2) {
-          await connection.sql(`
+          const request4 = new sql.Request();
+          request4.input('transcriptID', sql.Int, transcriptID);
+          request4.input('customFieldID', sql.Int, config.custom_2);
+          await request4.query(`
             USE ${dbName};
             INSERT INTO ceuTranscriptCustomFields (transcriptID, customFieldID) VALUES (@transcriptID, @customFieldID);
-          `)
-          .parameter('transcriptID', TYPES.Int, transcriptID)
-          .parameter('customFieldID', TYPES.Int, config.custom_2)
-          .execute();
+          `);
         }
       }
 
@@ -2569,18 +2803,18 @@ class CreditsService {
    */
   async getTranscriptTemplateConfig(eventID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Check if transcript exists, create default if not
-      const transcriptIDResult = await connection.sql(`
+      const request1 = new sql.Request();
+      request1.input('eventID', sql.Int, eventID);
+      const result1 = await request1.query(`
         USE ${dbName};
         SELECT TOP 1 transcriptID FROM ceuTranscripts WHERE event_id = @eventID;
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .execute();
+      `);
 
-      let transcriptID = transcriptIDResult[0]?.transcriptID;
+      let transcriptID = result1.recordset[0]?.transcriptID;
 
       if (!transcriptID) {
         // Create default config
@@ -2614,40 +2848,104 @@ class CreditsService {
       }
 
       // Get config
-      const configResult = await connection.sql(`
+      const request2 = new sql.Request();
+      request2.input('eventID', sql.Int, eventID);
+      const result2 = await request2.query(`
         USE ${dbName};
         SELECT ct.*, e._guid, e.ceuValueLabel, e.ceuAcronym 
         FROM ceuTranscripts ct
         LEFT JOIN b_events e on e.event_id = ct.event_id
         WHERE ct.event_id = @eventID;
-      `)
-      .parameter('eventID', TYPES.Int, eventID)
-      .execute();
+      `);
 
-      if (!configResult || !configResult.length) {
+      if (!result2.recordset || !result2.recordset.length) {
         return {};
       }
 
-      const config = configResult[0];
+      const config = result2.recordset[0];
 
       // Get custom fields
-      const customFieldsResult = await connection.sql(`
+      const request3 = new sql.Request();
+      request3.input('transcriptID', sql.Int, config.transcriptID);
+      const result3 = await request3.query(`
         USE ${dbName};
         SELECT cf.fieldLabel as label, '[value]' as value, ctf.customFieldID 
         FROM ceuTranscriptCustomFields ctf
         LEFT JOIN custom_fields cf on cf.field_id = ctf.customFieldID
         WHERE transcriptID = @transcriptID;
-      `)
-      .parameter('transcriptID', TYPES.Int, config.transcriptID)
-      .execute();
+      `);
+      const customFieldsResult = result3.recordset;
 
       config['custom_1'] = customFieldsResult[0] ? customFieldsResult[0].customFieldID : 0;
       config['custom_2'] = customFieldsResult[1] ? customFieldsResult[1].customFieldID : 0;
       config['custom_field_1'] = customFieldsResult[0] || null;
       config['custom_field_2'] = customFieldsResult[1] || null;
 
-      // TODO: Get event data for logo and affiliate info
-      // This would require EventService.getEventDataByGUID
+      // Get event data for logo and affiliate info
+      if (config._guid) {
+        const eventData = await EventService.getEventDataByGUID(
+          config._guid,
+          {
+            al3: 1,  // Affiliate logo
+            el3: 1,  // Event logo
+            an: 1,   // Affiliate name
+            ech: 1,  // Event contact header (org name)
+            eph: 1,  // Event phone
+            em: 1    // Event email
+          },
+          vert
+        );
+
+        if (eventData) {
+          // Set affiliate name
+          config['affiliatename'] = eventData.an || '';
+
+          // Set logo based on logoType (matching old codebase logic exactly)
+          const s3BaseURL = process.env.S3_BASE_URL || 'https://s3-us-west-2.amazonaws.com/eventsquid/';
+          
+          if (config.logoType === 'event') {
+            if (eventData.el3 && eventData.el3.indexOf('https') === 0) {
+              config['logo'] = eventData.el3;
+            } else if (eventData.el3) {
+              // Get vertical config for s3domain
+              try {
+                const verticalsCollection = await getDatabase(null, 'cm');
+                const configVerticalsCollection = verticalsCollection.collection('config-verticals');
+                const vertData = await configVerticalsCollection.findOne({ mongoID: String(vert) });
+                const s3domain = vertData?.s3domain || '';
+                config['logo'] = `${s3BaseURL}${s3domain}/${eventData.el3}`;
+              } catch (error) {
+                // If we can't get s3domain, use el3 as-is
+                config['logo'] = eventData.el3 || '';
+              }
+            } else {
+              // Get vertical config for s3domain (even though we use al3 directly)
+              try {
+                const verticalsCollection = await getDatabase(null, 'cm');
+                const configVerticalsCollection = verticalsCollection.collection('config-verticals');
+                await configVerticalsCollection.findOne({ mongoID: String(vert) });
+              } catch (error) {
+                // Silently continue
+              }
+              config['logo'] = eventData.al3 || '';
+            }
+          } else {
+            // Affiliate logo
+            config['logo'] = eventData.al3 || '';
+          }
+
+          // Set org fields if they're empty
+          if (!config.orgName) {
+            config['orgName'] = eventData.ech ? eventData.ech : (eventData.an || '');
+          }
+          if (!config.orgPhone) {
+            config['orgPhone'] = eventData.eph ? eventData.eph : '';
+          }
+          if (!config.orgContact) {
+            config['orgContact'] = eventData.em ? eventData.em : '';
+          }
+        }
+      }
 
       return config;
     } catch (error) {

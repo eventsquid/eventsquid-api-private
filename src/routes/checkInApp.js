@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import CheckInAppService from '../services/CheckInAppService.js';
-
-const _checkInAppService = new CheckInAppService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _checkInAppService from '../services/CheckInAppService.js';
 
 /**
  * GET /checkInApp/preferences/:eventID
@@ -19,7 +17,7 @@ export const getCheckInAppPreferencesRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _checkInAppService.getPreferences(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting check-in app preferences:', error);
       return errorResponse('Failed to get preferences', 500, error.message);
@@ -37,7 +35,7 @@ export const updateCheckInAppPreferencesRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _checkInAppService.updatePreferences(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating check-in app preferences:', error);
       return errorResponse('Failed to update preferences', 500, error.message);

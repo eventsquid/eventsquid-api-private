@@ -10,6 +10,14 @@ Parameters:
       - staging
       - prod
     Description: Environment name
+  
+  ErrorNotificationEmail:
+    Type: String
+    Default: ''
+    Description: Email address to receive error notifications (optional, leave empty to skip email subscription)
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref ErrorNotificationEmail, '']]
 
 Resources:
   # IAM Role for Lambda
@@ -35,7 +43,9 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                   - secretsmanager:DescribeSecret
-                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:mongodb/*'
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:mongodb/*'
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:primary-mssql/*'
         - PolicyName: CloudWatchLogs
           PolicyDocument:
             Version: '2012-10-17'
@@ -49,17 +59,10 @@ Resources:
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/eventsquid-private-api:*'
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/eventsquid-private-api:*'
 
-  # Security Group for Lambda
-  LambdaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: eventsquid-private-api-lambda-sg
-      GroupDescription: Security group for EventSquid API Lambda function
-      VpcId: vpc-38dc235f
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-          Description: Allow all outbound traffic
+  # Use existing security groups from working Lambda
+  # sg-277a3b5e (default/redis) and sg-d087f8ac (SquidSQL/SQUID App Servers)
+  # These security groups already have proper egress rules configured
+  # Note: VPC endpoints for Secrets Manager and CloudWatch Logs already exist in the VPC
 
   # Lambda Function
   # Note: Initial deployment uses placeholder code
@@ -82,45 +85,30 @@ Resources:
               })
             };
           };
-      Timeout: 30
-      MemorySize: 512
+      Timeout: 60
+      MemorySize: 1024  # Increased for production: supports VPC, multiple DB connections, and large codebase
       Environment:
         Variables:
           NODE_ENV: !Ref Environment
-          AWS_REGION: us-west-2
+          ERROR_SNS_TOPIC_ARN: !Ref ErrorNotificationTopic
       VpcConfig:
         SubnetIds:
           - subnet-3c625f4a
           - subnet-3a650c62
-          - subnet-0a504b6e
+          - subnet-5af1ef72  # Match working Lambda subnet
         SecurityGroupIds:
-          - !Ref LambdaSecurityGroup
+          - sg-277a3b5e  # Use existing security group from working Lambda
+          - sg-d087f8ac   # Use existing security group from working Lambda
       ReservedConcurrentExecutions: 10
 
-  # API Gateway - Private REST API
+  # API Gateway - HTTP API (public access via route authorization)
+  # Note: CORS is handled by Lambda, not API Gateway, to ensure headers are always present
   ApiGatewayRestApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
       Name: eventsquid-private-api
       ProtocolType: HTTP
-      Description: Private API Gateway for EventSquid API
-      # For private API, we'll use VPC endpoint or resource policy
-      # This creates a regional API that can be accessed via VPC endpoint
-      CorsConfiguration:
-        AllowOrigins:
-          - '*'
-        AllowMethods:
-          - GET
-          - POST
-          - PUT
-          - DELETE
-          - OPTIONS
-        AllowHeaders:
-          - Content-Type
-          - Authorization
-          - X-Amz-Date
-          - X-Api-Key
-          - X-Amz-Security-Token
+      Description: EventSquid API Gateway
 
   # API Gateway Integration
   ApiGatewayIntegration:
@@ -132,11 +120,15 @@ Resources:
       PayloadFormatVersion: '2.0'
 
   # API Gateway Route - Catch all
+  # AuthorizationType: NONE allows public access (no authentication required)
+  # Note: OPTIONS requests are handled automatically by API Gateway CORS configuration
+  # Do NOT create explicit OPTIONS routes - let API Gateway handle them
   ApiGatewayRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref ApiGatewayRestApi
       RouteKey: '$default'
+      AuthorizationType: NONE
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
   # API Gateway Stage
@@ -149,11 +141,10 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: 100
         ThrottlingRateLimit: 50
-        LoggingLevel: INFO
-        DataTraceEnabled: true
-        DetailedMetricsEnabled: true
-      # Note: AccessLogSettings are not supported for HTTP APIs (API Gateway v2)
-      # Execution logs are available via CloudWatch Logs with LoggingLevel: INFO
+      AccessLogSettings:
+        # Reference existing log group (created automatically by API Gateway or manually)
+        DestinationArn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:API-Gateway-Execution-Logs_${ApiGatewayRestApi}/${Environment}'
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":$context.status,"protocol":"$context.protocol","responseLength":$context.responseLength,"error":{"message":"$context.error.message","messageString":"$context.error.messageString"},"integration":{"status":"$context.integration.status","error":"$context.integration.error","latency":"$context.integration.latency","requestId":"$context.integration.requestId"},"authorizer":{"error":"$context.authorizer.error","latency":"$context.authorizer.latency","requestId":"$context.authorizer.requestId","status":"$context.authorizer.status"}}'
 
   # Lambda Permission for API Gateway
   LambdaApiGatewayPermission:
@@ -175,10 +166,40 @@ Resources:
       LogGroupName: '/aws/lambda/eventsquid-private-api'
       RetentionInDays: 14
 
-  # CloudWatch Log Group for API Gateway
-  # Note: API Gateway v2 creates this automatically when AccessLogSettings is configured
-  # We don't explicitly create it to avoid conflicts if it already exists
-  # Retention policy can be set separately via AWS CLI or Console if needed
+  # SNS Topic for Error Notifications
+  ErrorNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: eventsquid-private-api-errors
+      DisplayName: EventSquid Private API Errors
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Email Subscription (optional - only if email is provided)
+  ErrorNotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties:
+      TopicArn: !Ref ErrorNotificationTopic
+      Protocol: email
+      Endpoint: !Ref ErrorNotificationEmail
+
+  # IAM Policy for Lambda to publish to SNS
+  LambdaSNSPublishPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: LambdaSNSPublishPolicy
+      Roles:
+        - !Ref LambdaExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - sns:Publish
+            Resource: !Ref ErrorNotificationTopic
+
 
 Outputs:
   ApiGatewayUrl:
@@ -198,4 +219,10 @@ Outputs:
     Value: !Ref LambdaFunction
     Export:
       Name: eventsquid-private-api-lambda-name
+
+  ErrorNotificationTopicArn:
+    Description: SNS Topic ARN for error notifications
+    Value: !Ref ErrorNotificationTopic
+    Export:
+      Name: eventsquid-private-api-error-topic-arn
 

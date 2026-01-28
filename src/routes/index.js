@@ -26,7 +26,21 @@ import {
   getEventUploadsRoute,
   getEventLibraryRoute,
   getEventLibraryVideoRoute,
-  getEventVideoRoute
+  getEventVideoRoute,
+  getRecipientNotificationsRoute,
+  getEventDetailsForNotificationSetupRoute,
+  addRecipientNotificationRoute,
+  updateRecipientNotificationRoute,
+  deleteRecipientNotificationRoute,
+  getEventSponsorConfigRoute,
+  setEventSponsorConfigRoute,
+  getEventResourcesGroupedRoute,
+  getEventResourceSponsorsRoute,
+  deleteEventResourceRoute,
+  updateEventResourceRoute,
+  addEventDocumentRoute,
+  createEventResourceCategoryRoute,
+  deleteEventResourceCategoryRoute
 } from './events.js';
 import {
   findPivotedAttendeesRoute,
@@ -144,6 +158,12 @@ import {
   saveTranscriptConfigRoute
 } from './transcripts.js';
 import {
+  logTwilioStatusRoute,
+  sendMessageRoute,
+  findMessageRoute,
+  sendVerificationCodeRoute
+} from './sms.js';
+import {
   saveTableAssignerConfigRoute,
   getTableAssignerConfigsByEventRoute,
   updateTableAssignerConfigRoute,
@@ -164,6 +184,48 @@ import {
   getAvailableGatewaysRoute,
   resetPaymentProcessorRoute
 } from './payment.js';
+import {
+  logStripePaymentRoute
+} from './stripe.js';
+import {
+  findTransactionByGatewayRoute,
+  findTransactionsByContestantRoute
+} from './transaction.js';
+import {
+  transactionSetupRoute,
+  refundTransactionRoute
+} from './vantivWorldpay.js';
+import {
+  getShareURLByEventIDRoute,
+  connectorGetOptionsRoute,
+  connectorSaveOptionRoute,
+  getOptionsRoute,
+  saveOptionRoute,
+  getSlotRatingsConfigRoute,
+  checkUsageRoute,
+  setUsageRoute,
+  getAttendeeInstructionsRoute,
+  getConfigDataRoute,
+  schedulingGridGetSlotsRoute,
+  schedulingGridExportSlotsRoute,
+  schedulingGridGetVenuesRoute,
+  schedulingGridGetRoomsByAffiliateRoute,
+  checkActiveRoute,
+  getVeoResourcesRoute
+} from './veo.js';
+import {
+  getAffiliateResourcesGroupedRoute,
+  addDocumentToAffiliateRoute,
+  addVideoToAffiliateRoute,
+  replaceDocumentRoute,
+  updateAffiliateResourceRoute,
+  checkResourceLinksRoute,
+  deleteAffiliateResourceRoute,
+  updateAffiliateResourceCategoryRoute,
+  deleteAffiliateResourceCategoryRoute,
+  createAffiliateResourceCategoryRoute,
+  getSurveysRoute
+} from './affiliate.js';
 import {
   getPublicKeyByAttendeeRoute,
   getPublicKeyByAffiliateRoute,
@@ -320,6 +382,20 @@ export const routes = [
   getEventLibraryRoute,
   getEventLibraryVideoRoute,
   getEventVideoRoute,
+  getRecipientNotificationsRoute,
+  getEventDetailsForNotificationSetupRoute,
+  addRecipientNotificationRoute,
+  updateRecipientNotificationRoute,
+  deleteRecipientNotificationRoute,
+  getEventSponsorConfigRoute,
+  setEventSponsorConfigRoute,
+  getEventResourcesGroupedRoute,
+  getEventResourceSponsorsRoute,
+  deleteEventResourceRoute,
+  updateEventResourceRoute,
+  addEventDocumentRoute,
+  createEventResourceCategoryRoute,
+  deleteEventResourceCategoryRoute,
   // Attendee routes (9 routes)
   findPivotedAttendeesRoute,
   findAttendeesRoute,

@@ -6,9 +6,7 @@
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
 import { successResponse, errorResponse } from '../utils/response.js';
-import EventService from '../services/EventService.js';
-
-const _eventService = new EventService();
+import _eventService from '../services/EventService.js';
 
 /**
  * GET /eventFormPrompts/:vert/:eventID/:profileID
@@ -25,7 +23,7 @@ export const getEventFormPromptsRoute = {
       const profileID = Number(request.pathParameters?.profileID);
 
       const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Query custom fields
@@ -86,10 +84,11 @@ export const getEventFormPromptsRoute = {
           c.fieldLabel
       `;
 
-      const customFields = await connection.sql(qryStr)
-        .parameter('eventID', TYPES.Int, eventID)
-        .parameter('profileID', TYPES.Int, profileID)
-        .execute();
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, eventID);
+      request.input('profileID', sql.Int, profileID);
+      const result = await request.query(qryStr);
+      const customFields = result.recordset;
 
       // Get event config
       const configResults = await _eventService.getEventConfig(eventID, profileID, vert);
@@ -408,7 +407,7 @@ export const getEventFormPromptsRoute = {
         });
       });
 
-      return successResponse({
+      return createResponse(200, {
         config: configObj,
         asRA: customFields,
         datePromptsRA: datePromptsRA,
@@ -443,7 +442,7 @@ export const saveEventFormPromptsRoute = {
         returnObj = await _eventService.saveEventCustomPrompts(request);
       }
       
-      return successResponse(returnObj);
+      return createResponse(200, returnObj);
     } catch (error) {
       console.error('Error saving event form prompts:', error);
       return errorResponse('Failed to save event form prompts', 500, error.message);

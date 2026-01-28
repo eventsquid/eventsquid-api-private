@@ -10,10 +10,12 @@ import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
  */
 export async function getCreditsByUserID(userID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('userID', sql.Int, Number(userID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT
           ef.ceuName as creditName,
@@ -35,11 +37,9 @@ export async function getCreditsByUserID(userID, vert) {
           WHERE user_id = @userID
       )
       AND cf.ceuAwarded > 0
-    `)
-    .parameter('userID', TYPES.Int, Number(userID))
-    .execute();
+    `);
 
-    return results;
+    return result.recordset;
   } catch (error) {
     console.error('Error getting credits by user ID:', error);
     throw error;
@@ -52,9 +52,10 @@ export async function getCreditsByUserID(userID, vert) {
 export async function getStates() {
   try {
     // States are in EventsquidCommon database
-    const connection = await getConnection(null);
+    const sql = await getConnection(null);
     
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    const result = await request.query(`
       USE EventsquidCommon;
       SELECT 
           s.id,
@@ -63,9 +64,9 @@ export async function getStates() {
           c.countryID as country
       FROM States s
       LEFT JOIN Countries c on c.countryID = s.countryID
-    `).execute();
+    `);
 
-    return results;
+    return result.recordset;
   } catch (error) {
     console.error('Error getting states:', error);
     throw error;

@@ -6,13 +6,9 @@
 import { getDatabase } from '../utils/mongodb.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 import _ from 'lodash';
-import ActivityService from './ActivityService.js';
-import ChangeService from './ChangeService.js';
-import AttendeeService from './AttendeeService.js';
-
-const _activityService = new ActivityService();
-const _changeService = new ChangeService();
-const _attendeeService = new AttendeeService();
+import _activityService from './ActivityService.js';
+import _changeService from './ChangeService.js';
+import _attendeeService from './AttendeeService.js';
 
 class ImportService {
   /**
@@ -28,7 +24,7 @@ class ImportService {
       const roster = request.body?.roster || [];
       const isTravel = request.body?.travel || false;
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
 
@@ -41,15 +37,16 @@ class ImportService {
       activityObj.e = eventID;
 
       // Get custom travel fields
-      const customFieldsRA = await connection.sql(`
+      const request = new sql.Request();
+      request.input('affiliateID', sql.Int, affiliateID);
+      const result = await request.query(`
         USE ${dbName};
         SELECT fieldLabel, field_id, fieldExportID, fieldinput
         FROM custom_fields
         WHERE ( affiliate_id = @affiliateID OR ISNULL( affiliate_id, 0 ) = 0 )
           AND travelfield = 1
-      `)
-      .parameter('affiliateID', TYPES.Int, affiliateID)
-      .execute();
+      `);
+      const customFieldsRA = result.recordset;
 
       // Build custom fields object
       const customFieldsObj = {};
@@ -134,7 +131,7 @@ class ImportService {
    */
   async updateAttendee(attendeeObj, vert, activityObj, changeObj, findAttendeeObj) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
       const attendeesCollection = db.collection('attendees');
@@ -255,36 +252,37 @@ class ImportService {
       thisActivityObj.chg = activityChangeRA;
 
       // Update MSSQL
-      let qryStr = `
+      const qryStr = `
         USE ${dbName};
         UPDATE eventContestant
         SET ${updateFields.join(', ')}, user_id = user_id
         WHERE contestant_id = @regID
       `;
 
-      let sqlObj = connection.sql(qryStr).parameter('regID', TYPES.Int, Number(attendeeObj.regid));
+      const request = new sql.Request();
+      request.input('regID', sql.Int, Number(attendeeObj.regid));
 
       // Add parameters
       if (sqlParams.hotelcheckin) {
-        sqlObj = sqlObj.parameter('hotelcheckin', TYPES.Date, sqlParams.hotelcheckin);
+        request.input('hotelcheckin', sql.Date, sqlParams.hotelcheckin);
       }
       if (sqlParams.hotelcheckout) {
-        sqlObj = sqlObj.parameter('hotelcheckout', TYPES.Date, sqlParams.hotelcheckout);
+        request.input('hotelcheckout', sql.Date, sqlParams.hotelcheckout);
       }
       if (sqlParams.hotel) {
-        sqlObj = sqlObj.parameter('hotel', TYPES.VarChar, sqlParams.hotel);
+        request.input('hotel', sql.VarChar, sqlParams.hotel);
       }
       if (sqlParams.roomtype) {
-        sqlObj = sqlObj.parameter('roomtype', TYPES.VarChar, sqlParams.roomtype);
+        request.input('roomtype', sql.VarChar, sqlParams.roomtype);
       }
       if (sqlParams.travelmethod) {
-        sqlObj = sqlObj.parameter('travelmethod', TYPES.VarChar, sqlParams.travelmethod);
+        request.input('travelmethod', sql.VarChar, sqlParams.travelmethod);
       }
       if (sqlParams.departure_city) {
-        sqlObj = sqlObj.parameter('departure_city', TYPES.VarChar, sqlParams.departure_city);
+        request.input('departure_city', sql.VarChar, sqlParams.departure_city);
       }
 
-      await sqlObj.execute();
+      await request.query(qryStr);
 
       // Update MongoDB
       await attendeesCollection.updateOne(
@@ -384,8 +382,8 @@ class ImportService {
           .replace(/@eventID/g, String(eventID));
       }
 
-      // Build SQL object and add parameters
-      let sqlObj = connection.sql(qryStr);
+      // Build SQL request and add parameters
+      const request = new sql.Request();
       const changeRA = [];
       const mongoRA = [];
       const thisActivityObj = _.assign({}, activityObj);
@@ -401,9 +399,8 @@ class ImportService {
       thisChangeObj.col = 'varchardata';
 
       for (let i = 0; i < qryParamRA.length; i++) {
-        sqlObj = sqlObj
-          .parameter(`prompt_${i}`, TYPES.VarChar, _.truncate(_.trim(qryParamRA[i].prompt), { length: 500, omission: '' }))
-          .parameter(`varchardata_${i}`, TYPES.VarChar, _.trim(qryParamRA[i].value));
+        request.input(`prompt_${i}`, sql.VarChar, _.truncate(_.trim(qryParamRA[i].prompt), { length: 500, omission: '' }));
+        request.input(`varchardata_${i}`, sql.VarChar, _.trim(qryParamRA[i].value));
 
         // Build mongo update array
         mongoRA.push({
@@ -458,7 +455,7 @@ class ImportService {
       thisActivityObj.chg = activityChangeRA;
 
       // Execute SQL
-      await sqlObj.execute();
+      await request.query(qryStr);
 
       // Update MongoDB for each custom prompt
       for (let i = 0; i < mongoRA.length; i++) {

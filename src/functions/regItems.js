@@ -10,7 +10,7 @@ import moment from 'moment-timezone';
  * Get registration items by event ID
  */
 export async function getRegItemsByEventID(eventID, fields, vert) {
-  const connection = await getConnection(vert);
+  const sql = await getConnection(vert);
   const dbName = getDatabaseName(vert);
 
   // Default set of fields
@@ -69,7 +69,9 @@ export async function getRegItemsByEventID(eventID, fields, vert) {
         ) as ceuDeclinedGrants
     `;
 
-  const items = await connection.sql(`
+  const request = new sql.Request();
+  request.input('eventID', sql.Int, Number(eventID));
+  const result = await request.query(`
     USE ${dbName};
     SELECT
         ${selectFields}
@@ -85,9 +87,8 @@ export async function getRegItemsByEventID(eventID, fields, vert) {
         ISNULL(g.group_order,999999),
         f.orderBy ASC,
         f.customFeeName
-  `)
-  .parameter('eventID', TYPES.Int, Number(eventID))
-  .execute();
+  `);
+  const items = result.recordset;
 
   // Process results
   return items.map(item => {
@@ -108,16 +109,16 @@ export async function getRegItemsByEventID(eventID, fields, vert) {
  * Update registration item
  */
 export async function updateRegItem(eventFeeID, data, vert) {
-  const connection = await getConnection(vert);
+  const sql = await getConnection(vert);
   const dbName = getDatabaseName(vert);
 
   const COLUMN_TYPES = {
-    activityStart: TYPES.Date,
-    activityStartTime: TYPES.VarChar,
-    activityEndTime: TYPES.VarChar,
-    surveyID: TYPES.Int,
-    checkInCode: TYPES.VarChar,
-    checkOutCode: TYPES.VarChar
+    activityStart: sql.Date,
+    activityStartTime: sql.VarChar,
+    activityEndTime: sql.VarChar,
+    surveyID: sql.Int,
+    checkInCode: sql.VarChar,
+    checkOutCode: sql.VarChar
   };
 
   // Build update query
@@ -130,22 +131,22 @@ export async function updateRegItem(eventFeeID, data, vert) {
     throw new Error('No valid columns to update');
   }
 
-  let updateRequest = connection.sql(`
-    USE ${dbName};
-    UPDATE event_fees
-    SET ${updateFields}
-    WHERE eventFeeID = @eventFeeID;
-  `)
-  .parameter('eventFeeID', TYPES.Int, Number(eventFeeID));
+  const request = new sql.Request();
+  request.input('eventFeeID', sql.Int, Number(eventFeeID));
 
   // Add parameters
   for (const key in data) {
     if (key in COLUMN_TYPES) {
-      updateRequest = updateRequest.parameter(key, COLUMN_TYPES[key], data[key]);
+      request.input(key, COLUMN_TYPES[key], data[key]);
     }
   }
 
-  await updateRequest.execute();
+  await request.query(`
+    USE ${dbName};
+    UPDATE event_fees
+    SET ${updateFields}
+    WHERE eventFeeID = @eventFeeID;
+  `);
 
   return data;
 }
@@ -157,10 +158,12 @@ export async function getRegItemByEventFeeID(eventFeeID, vert) {
   try {
     if (!eventFeeID) return null;
 
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    let fee = await connection.sql(`
+    const request1 = new sql.Request();
+    request1.input('eventFeeID', sql.Int, Number(eventFeeID));
+    const result1 = await request1.query(`
       USE ${dbName};
       SELECT 
         checkInCode,
@@ -181,10 +184,8 @@ export async function getRegItemByEventFeeID(eventFeeID, vert) {
         ) as sessionCount
       FROM event_fees
       WHERE eventFeeID = @eventFeeID
-    `)
-    .parameter('eventFeeID', TYPES.Int, Number(eventFeeID))
-    .execute()
-    .then(results => results.map(fee => ({
+    `);
+    let fee = result1.recordset.map(fee => ({
       ...fee,
       checkInCode: fee.checkInCode || '',
       checkOutCode: fee.checkOutCode || '',
@@ -192,12 +193,14 @@ export async function getRegItemByEventFeeID(eventFeeID, vert) {
       extras: fee.extras ? fee.extras.split(',') : [],
       classLimitSpacesLeft: Number(fee.classLimit) != 0 ? Number(fee.classLimit) - Number(fee.sessionCount) : 999,
       free: fee.price == 0
-    })));
+    }));
 
     if (!fee.length) return null;
     fee = fee[0];
 
-    fee.options = await connection.sql(`
+    const request2 = new sql.Request();
+    request2.input('eventFeeID', sql.Int, Number(eventFeeID));
+    const result2 = await request2.query(`
       USE ${dbName};
       SELECT
         efto.optionID,
@@ -217,16 +220,14 @@ export async function getRegItemByEventFeeID(eventFeeID, vert) {
         ef.eventFeeID = @eventFeeID
       ORDER BY
         option_name
-    `)
-    .parameter('eventFeeID', TYPES.Int, Number(eventFeeID))
-    .execute()
-    .then(results => results.map(option => ({
+    `);
+    fee.options = result2.recordset.map(option => ({
       id: option.optionID,
       name: option.option_name,
       limit: option.subClassLimit,
       filled: option.numSubClassesFilled,
       subClassID: option.subClassID
-    })));
+    }));
 
     return fee;
   } catch (error) {

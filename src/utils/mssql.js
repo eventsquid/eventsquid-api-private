@@ -1,21 +1,17 @@
 /**
  * MSSQL connection utility
  * Retrieves connection credentials from AWS Secrets Manager
- * Uses tedious-connection-pool and tedious-promises for connection management
+ * Uses mssql package for connection management (matches working Lambda pattern)
  */
 
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import ConnectionPool from 'tedious-connection-pool';
-import { TYPES } from 'tedious';
-import { createRequire } from 'module';
-
-// tedious-promises is CommonJS, so we use createRequire to import it
-const require = createRequire(import.meta.url);
-const tp = require('tedious-promises');
+import sql from 'mssql';
 
 const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION || 'us-west-2' });
 let connectionPool = null;
 let connectionPromise = null;
+let mssqlErrorLogCount = 0; // Track how many times we've logged MSSQL errors
+const MAX_MSSQL_ERROR_LOGS = 2; // Only log first 2 errors to reduce noise
 
 // Database names by vertical (from old CONSTANTS._s)
 const DATABASES_BY_VERTICAL = {
@@ -29,9 +25,72 @@ const DATABASES_BY_VERTICAL = {
 };
 
 /**
- * Get MSSQL connection credentials from Secrets Manager
+ * Check if running in AWS Lambda (deployed) vs local development
+ * @returns {boolean} True if deployed in AWS Lambda
+ */
+function isDeployed() {
+  // AWS Lambda sets AWS_LAMBDA_FUNCTION_NAME automatically
+  return !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+}
+
+/**
+ * Get MSSQL connection credentials from environment variable or Secrets Manager
  */
 async function getMssqlCredentials() {
+  // When deployed, always use Secrets Manager (skip env vars)
+  // For local development, allow direct credentials via environment variables
+  if (!isDeployed() && process.env.MSSQL_CONNECTION_STRING) {
+    // Parse connection string format: Server=host,port;Database=db;User Id=user;Password=pass;
+    const connStr = process.env.MSSQL_CONNECTION_STRING;
+    const credentials = {};
+    
+    // Parse connection string
+    connStr.split(';').forEach(part => {
+      const [key, value] = part.split('=');
+      if (key && value) {
+        const normalizedKey = key.trim().toLowerCase();
+        if (normalizedKey === 'server' || normalizedKey === 'data source') {
+          const [host, port] = value.split(',');
+          credentials.host = host.trim();
+          credentials.port = port ? parseInt(port.trim()) : 1433;
+        } else if (normalizedKey === 'database' || normalizedKey === 'initial catalog') {
+          credentials.database = value.trim();
+        } else if (normalizedKey === 'user id' || normalizedKey === 'uid') {
+          credentials.username = value.trim();
+        } else if (normalizedKey === 'password' || normalizedKey === 'pwd') {
+          credentials.password = value.trim();
+        }
+      }
+    });
+    
+    if (!credentials.username || !credentials.password || !credentials.host) {
+      throw new Error('MSSQL_CONNECTION_STRING missing required fields: Server, User Id, Password');
+    }
+    
+    console.log('Using MSSQL_CONNECTION_STRING from environment variable');
+    return {
+      username: credentials.username,
+      password: credentials.password,
+      host: credentials.host,
+      port: credentials.port || 1433,
+      database: credentials.database || 'eventsquid'
+    };
+  }
+  
+  // When deployed, always use Secrets Manager (skip env vars)
+  // Alternative: Use individual environment variables (local dev only)
+  if (!isDeployed() && process.env.MSSQL_HOST && process.env.MSSQL_USERNAME && process.env.MSSQL_PASSWORD) {
+    console.log('Using MSSQL credentials from individual environment variables');
+    return {
+      username: process.env.MSSQL_USERNAME,
+      password: process.env.MSSQL_PASSWORD,
+      host: process.env.MSSQL_HOST,
+      port: parseInt(process.env.MSSQL_PORT || '1433'),
+      database: process.env.MSSQL_DATABASE || 'eventsquid'
+    };
+  }
+
+  // Use Secrets Manager (required when deployed, fallback for local dev)
   const secretName = process.env.MSSQL_SECRET_NAME || 'primary-mssql/event-squid';
 
   try {
@@ -60,21 +119,30 @@ async function getMssqlCredentials() {
     };
   } catch (error) {
     console.error('Error retrieving MSSQL secret:', error);
+    // In local dev, provide helpful error message
+    if (process.env.NODE_ENV === 'development') {
+      console.error('Tip: Set MSSQL_CONNECTION_STRING or MSSQL_HOST/USERNAME/PASSWORD environment variables');
+      console.error('   MSSQL features will be unavailable in local dev without credentials');
+    }
     throw new Error(`Failed to retrieve MSSQL credentials: ${error.message}`);
   }
 }
 
 /**
- * Connect to MSSQL (with connection pooling)
+ * Connect to MSSQL (with connection pooling handled by mssql package)
+ * Returns the sql module for creating requests
  */
 export async function connectToMssql() {
-  // Return existing connection pool if available
+  // Return existing connection if available and connected
+  // mssql package manages connection pool internally
   if (connectionPool) {
     try {
-      // Check if pool is still valid
-      if (connectionPool.healthy) {
-        return tp;
+      // Check if pool is healthy (mssql package exposes .healthy property)
+      if (connectionPool.healthy !== false) {
+        return sql;
       }
+      // Pool is unhealthy, reset and reconnect
+      connectionPool = null;
     } catch (error) {
       // Connection lost, reset and reconnect
       connectionPool = null;
@@ -90,44 +158,72 @@ export async function connectToMssql() {
     try {
       const credentials = await getMssqlCredentials();
       
-      // Pool configuration
-      const poolConfig = {
-        min: 5,
-        max: 75,
-        log: false // Set to true for debugging
-      };
+      // Debug: Log credentials (without password) in local dev
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`📋 MSSQL Credentials: host=${credentials.host}, port=${credentials.port}, database=${credentials.database}, username=${credentials.username ? '***' : 'MISSING!'}`);
+        if (!credentials.username || !credentials.password) {
+          throw new Error(`MSSQL credentials incomplete: username=${!!credentials.username}, password=${!!credentials.password}`);
+        }
+      }
 
-      // Database configuration
-      const dbConfig = {
-        userName: credentials.username,
+      // Build config matching working Lambda pattern
+      const isLocalDev = process.env.NODE_ENV === 'development';
+      const isDeployedEnv = isDeployed();
+      
+      // AWS RDS requires SSL but certificate validation may fail without proper CA certificates
+      // trustServerCertificate: true allows RDS certificates to be accepted
+      // This is safe for AWS RDS as the connection is still encrypted (encrypt: true)
+      // In production, you could use cryptoCredentialsDetails with RDS CA cert for better security
+      const config = {
+        user: credentials.username,
         password: credentials.password,
         server: credentials.host,
+        database: credentials.database || 'eventsquid',
+        port: credentials.port || 1433,
         options: {
-          port: credentials.port,
-          database: credentials.database || 'eventsquid', // Default database
-          encrypt: true, // Use encryption for Azure SQL
-          trustServerCertificate: false, // Set to true for self-signed certificates
-          rowCollectionOnRequestCompletion: true,
-          enableArithAbort: true
+          enableArithAbort: true,
+          encrypt: isDeployedEnv ? true : false, // Always encrypt when deployed (AWS RDS requires it)
+          trustServerCertificate: isDeployedEnv ? true : isLocalDev, // Always trust RDS certificates in AWS, allow self-signed in local dev
+          connectionTimeout: isLocalDev ? 10000 : 15000,
+          requestTimeout: isLocalDev ? 30000 : 30000
+        },
+        pool: {
+          max: isLocalDev ? 5 : 75,
+          min: isLocalDev ? 1 : 5,
+          idleTimeoutMillis: 30000
         }
       };
-
-      // Create connection pool
-      connectionPool = new ConnectionPool(poolConfig, dbConfig);
       
-      // Set up error handling
-      connectionPool.on('error', (error) => {
-        console.error('MSSQL Connection Pool Error:', error);
-      });
+      // Debug: Log the actual config being used (without password)
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔧 MSSQL Config: server=${config.server}, port=${config.port}, database=${config.database}`);
+        console.log(`   user=${config.user ? '***' : 'MISSING!'}`);
+        console.log(`   SSL: encrypt=${config.options.encrypt}, trustServerCertificate=${config.options.trustServerCertificate}`);
+      } else if (isDeployedEnv) {
+        // Log SSL config in AWS for debugging
+        console.log(`🔧 MSSQL Config (AWS): server=${config.server}, port=${config.port}, database=${config.database}`);
+        console.log(`   SSL: encrypt=${config.options.encrypt}, trustServerCertificate=${config.options.trustServerCertificate}`);
+      }
 
-      // Set the connection pool for tedious-promises
-      await tp.setConnectionPool(connectionPool);
+      // Connect using mssql package (handles pooling automatically)
+      // sql.connect() returns a ConnectionPool promise
+      console.log('🔄 Connecting to MSSQL...');
+      connectionPool = await sql.connect(config);
+      console.log('✅ Successfully connected to MSSQL');
       
-      console.log('Successfully connected to MSSQL');
       connectionPromise = null;
-      return tp;
+      return sql;
     } catch (error) {
       connectionPromise = null;
+      // In local dev, provide helpful error message but don't crash
+      if (process.env.NODE_ENV === 'development') {
+        if (mssqlErrorLogCount < MAX_MSSQL_ERROR_LOGS) {
+          console.error('⚠️  MSSQL connection error (local dev):', error.message);
+          mssqlErrorLogCount++;
+        }
+        // Return sql module anyway - callers can check connection status
+        return sql;
+      }
       console.error('MSSQL connection error:', error);
       throw error;
     }
@@ -149,38 +245,17 @@ export function getDatabaseName(vert) {
 }
 
 /**
- * Execute a SQL query
- * @param {string} query - SQL query string
- * @param {Array} parameters - Query parameters (optional)
- * @param {string} database - Database name (optional, defaults to eventsquid)
- * @returns {Promise} Query result
- */
-export async function executeQuery(query, parameters = [], database = null) {
-  const connection = await connectToMssql();
-  
-  // If database is specified, switch to it
-  if (database) {
-    await connection.sql(`USE [${database}]`).execute();
-  }
-  
-  // Execute the query with parameters
-  if (parameters && parameters.length > 0) {
-    return await connection.sql(query).parameter(...parameters).execute();
-  } else {
-    return await connection.sql(query).execute();
-  }
-}
-
-/**
  * Get a connection for a specific vertical/database
- * Note: The connection object (tp) is shared, but we'll include USE statements in queries
+ * Returns the sql module for creating requests
+ * Note: Individual queries should include USE statements to switch databases
  * @param {string} vert - Vertical code (cn, es, fd, ft, ir, kt, ln)
- * @returns {Promise} Connection object (tedious-promises instance)
+ * @returns {Promise} sql module for creating requests
  */
 export async function getConnection(vert = null) {
-  // Return the shared connection pool instance
-  // Individual queries will include USE statements to switch databases
-  return await connectToMssql();
+  // Ensure connection is established
+  await connectToMssql();
+  // Return sql module - callers create new sql.Request() for each query
+  return sql;
 }
 
 /**
@@ -189,7 +264,7 @@ export async function getConnection(vert = null) {
 export async function closeMssqlConnection() {
   if (connectionPool) {
     try {
-      await connectionPool.drain();
+      await connectionPool.close();
       connectionPool = null;
       console.log('MSSQL connection pool closed');
     } catch (error) {
@@ -199,5 +274,30 @@ export async function closeMssqlConnection() {
 }
 
 // Export TYPES for use in services
-export { TYPES };
-
+// mssql package exports types as sql.Int, sql.VarChar, etc.
+// For backward compatibility, export TYPES object that maps to sql types
+export const TYPES = {
+  Int: sql.Int,
+  VarChar: sql.VarChar,
+  NVarChar: sql.NVarChar,
+  Date: sql.Date,
+  DateTime: sql.DateTime,
+  Bit: sql.Bit,
+  Float: sql.Float,
+  TinyInt: sql.TinyInt,
+  Decimal: sql.Decimal,
+  BigInt: sql.BigInt,
+  Text: sql.Text,
+  NText: sql.NText,
+  Image: sql.Image,
+  SmallInt: sql.SmallInt,
+  Real: sql.Real,
+  UniqueIdentifier: sql.UniqueIdentifier,
+  SmallDateTime: sql.SmallDateTime,
+  Time: sql.Time,
+  DateTime2: sql.DateTime2,
+  DateTimeOffset: sql.DateTimeOffset,
+  Money: sql.Money,
+  SmallMoney: sql.SmallMoney,
+  Numeric: sql.Numeric
+};

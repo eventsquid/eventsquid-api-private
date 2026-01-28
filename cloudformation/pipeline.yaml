@@ -175,7 +175,7 @@ Resources:
                 - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides Environment=dev --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
                 - aws lambda update-function-code --function-name eventsquid-private-api --zip-file fileb://function.zip --region ${AWS_REGION}
                 - aws lambda wait function-updated --function-name eventsquid-private-api --region ${AWS_REGION}
-                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=dev,AWS_REGION=us-west-2}" --region ${AWS_REGION}
+                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=dev}" --region ${AWS_REGION}
           artifacts:
             files: '**/*'
 

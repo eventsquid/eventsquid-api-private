@@ -9,14 +9,14 @@ import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
  * Update event (CEU fields only)
  */
 export async function updateEvent(eventID, data, vert) {
-  const connection = await getConnection(vert);
+  const sql = await getConnection(vert);
   const dbName = getDatabaseName(vert);
 
   const COLUMN_TYPES = {
-    ceuAcronym: TYPES.VarChar,
-    ceuDisplayOnReg: TYPES.Bit,
-    ceuValueLabel: TYPES.VarChar,
-    ceuDisplayCounterOnReg: TYPES.Bit
+    ceuAcronym: sql.VarChar,
+    ceuDisplayOnReg: sql.Bit,
+    ceuValueLabel: sql.VarChar,
+    ceuDisplayCounterOnReg: sql.Bit
   };
 
   // Build update query
@@ -29,22 +29,22 @@ export async function updateEvent(eventID, data, vert) {
     throw new Error('No valid columns to update');
   }
 
-  let updateRequest = connection.sql(`
-    USE ${dbName};
-    UPDATE b_events
-    SET ${updateFields}
-    WHERE event_id = @eventID;
-  `)
-  .parameter('eventID', TYPES.Int, Number(eventID));
+  const request = new sql.Request();
+  request.input('eventID', sql.Int, Number(eventID));
 
   // Add parameters
   for (const key in data) {
     if (key in COLUMN_TYPES) {
-      updateRequest = updateRequest.parameter(key, COLUMN_TYPES[key], data[key]);
+      request.input(key, COLUMN_TYPES[key], data[key]);
     }
   }
 
-  await updateRequest.execute();
+  await request.query(`
+    USE ${dbName};
+    UPDATE b_events
+    SET ${updateFields}
+    WHERE event_id = @eventID;
+  `);
 
   return data;
 }
@@ -95,10 +95,12 @@ export async function dateAndTimeToDatetime(dateStr, timeStr) {
  */
 export async function getEventsWithRegistrants(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const events = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT 
           DISTINCT(e.event_id),
@@ -110,11 +112,9 @@ export async function getEventsWithRegistrants(affiliateID, vert) {
       ORDER BY 
           e.event_begins desc,
           e.event_title
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
 
-    return events;
+    return result.recordset;
   } catch (error) {
     console.error('Error getting events with registrants:', error);
     throw error;
@@ -126,25 +126,77 @@ export async function getEventsWithRegistrants(affiliateID, vert) {
  */
 export async function getEventContactsByAffiliate(affiliateID, userID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const contacts = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    request.input('userID', sql.Int, Number(userID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT DISTINCT(event_email), event_contact
       FROM b_events
       WHERE affiliate_id = @affiliateID
           AND ISNULL(event_email,'') <> ''
           AND event_email <> (SELECT user_email FROM b_users WHERE user_id = @userID)
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .parameter('userID', TYPES.Int, Number(userID))
-    .execute();
+    `);
 
-    return contacts;
+    return result.recordset;
   } catch (error) {
     console.error('Error getting event contacts by affiliate:', error);
     throw error;
   }
 }
 
+/**
+ * Get event sponsor config
+ */
+export async function getEventSponsorConfig(eventID, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
+      USE ${dbName};
+      SELECT
+        sponsorLabel,
+        sponsorPageTitle AS sponsorPageBlurb
+      FROM b_events
+      WHERE event_id = @eventID
+    `);
+
+    return result.recordset;
+  } catch (error) {
+    console.error('Error getting event sponsor config:', error);
+    throw error;
+  }
+}
+
+/**
+ * Set event sponsor config
+ */
+export async function setEventSponsorConfig(form, eventID, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('sponsorLabel', sql.VarChar, form.sponsorConfig?.sponsorLabel || '');
+    request.input('sponsorPageTitle', sql.VarChar, form.sponsorConfig?.sponsorPageBlurb || '');
+    request.input('eventID', sql.Int, Number(eventID));
+    await request.query(`
+      USE ${dbName};
+      UPDATE b_events
+      SET sponsorLabel = @sponsorLabel,
+          sponsorPageTitle = @sponsorPageTitle
+      WHERE event_id = @eventID
+    `);
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error setting event sponsor config:', error);
+    throw error;
+  }
+}

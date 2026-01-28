@@ -40,17 +40,17 @@ export async function getShareURLByEventID(eventID, affiliateID, vert) {
  */
 export async function getOptions(eventGUID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const result = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventGUID', sql.UniqueIdentifier, eventGUID);
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoGetOptionsWithSponsors @eventGUID
-    `)
-    .parameter('eventGUID', TYPES.UniqueIdentifier, eventGUID)
-    .execute();
+    `);
 
-    return result;
+    return result.recordset;
   } catch (error) {
     console.error('Error getting VEO options:', error);
     throw error;
@@ -62,19 +62,25 @@ export async function getOptions(eventGUID, vert) {
  */
 export async function saveOption(eventGUID, colName, fieldValue, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const result = await connection.sql(`
+    // Convert fieldValue to string, handling null and numbers
+    const fieldValueStr = fieldValue === null || fieldValue === undefined 
+      ? null 
+      : String(fieldValue);
+
+    const request = new sql.Request();
+    request.input('eventGUID', sql.UniqueIdentifier, eventGUID);
+    request.input('colName', sql.VarChar, colName);
+    // Use NVarChar for nullable strings (handles null values)
+    request.input('fieldValue', sql.NVarChar, fieldValueStr);
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoSaveOption @eventGUID, @colName, @fieldValue
-    `)
-    .parameter('eventGUID', TYPES.UniqueIdentifier, eventGUID)
-    .parameter('colName', TYPES.VarChar, colName)
-    .parameter('fieldValue', TYPES.VarChar, fieldValue)
-    .execute();
+    `);
 
-    return result;
+    return result.recordset;
   } catch (error) {
     console.error('Error saving VEO option:', error);
     throw error;
@@ -86,17 +92,17 @@ export async function saveOption(eventGUID, colName, fieldValue, vert) {
  */
 export async function connectorGetOptions(slotID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const result = await connection.sql(`
+    const request = new sql.Request();
+    request.input('slotID', sql.Int, Number(slotID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoConnectorGetOptions @slotID
-    `)
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .execute();
+    `);
 
-    return result;
+    return result.recordset;
   } catch (error) {
     console.error('Error getting connector options:', error);
     throw error;
@@ -108,19 +114,19 @@ export async function connectorGetOptions(slotID, vert) {
  */
 export async function connectorSaveOption(form, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const result = await connection.sql(`
+    const request = new sql.Request();
+    request.input('slotID', sql.Int, Number(form.slotID));
+    request.input('colName', sql.VarChar, form.colName);
+    request.input('fieldValue', sql.VarChar, form.fieldValue);
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoConnectorSaveOption @slotID, @colName, @fieldValue
-    `)
-    .parameter('slotID', TYPES.Int, Number(form.slotID))
-    .parameter('colName', TYPES.VarChar, form.colName)
-    .parameter('fieldValue', TYPES.VarChar, form.fieldValue)
-    .execute();
+    `);
 
-    return result;
+    return result.recordset;
   } catch (error) {
     console.error('Error saving connector option:', error);
     throw error;
@@ -132,16 +138,17 @@ export async function connectorSaveOption(form, vert) {
  */
 export async function getRatingsConfigBySlotAndUser(userID, slotID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const qryRA = await connection.sql(`
+    const request = new sql.Request();
+    request.input('userID', sql.Int, Number(userID));
+    request.input('slotID', sql.Int, Number(slotID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_getRatingsConfigBySlotAndUser @userID, @slotID
-    `)
-    .parameter('userID', TYPES.Int, Number(userID))
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .execute();
+    `);
+    const qryRA = result.recordset;
 
     const qryObj = qryRA[0] || {};
 
@@ -253,17 +260,17 @@ export async function setUsage(eventID, slotID, actionID, session, vert) {
  */
 export async function schedulingGridGetSlots(scheduleID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const qryStr = `
+    const request = new sql.Request();
+    request.input('scheduleID', sql.Int, Number(scheduleID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoGetSchedulingGrid2 @scheduleID
-    `;
+    `);
 
-    return await connection.sql(qryStr)
-      .parameter('scheduleID', TYPES.Int, Number(scheduleID))
-      .execute();
+    return result.recordset;
   } catch (error) {
     console.error('Error getting scheduling grid slots:', error);
     throw error;
@@ -275,17 +282,17 @@ export async function schedulingGridGetSlots(scheduleID, vert) {
  */
 export async function schedulingGridExportSlots(scheduleID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const qryStr = `
+    const request = new sql.Request();
+    request.input('scheduleID', sql.Int, Number(scheduleID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoExportSchedulingGrid @scheduleID
-    `;
+    `);
 
-    return await connection.sql(qryStr)
-      .parameter('scheduleID', TYPES.Int, Number(scheduleID))
-      .execute();
+    return result.recordset;
   } catch (error) {
     console.error('Error exporting scheduling grid slots:', error);
     throw error;
@@ -297,17 +304,17 @@ export async function schedulingGridExportSlots(scheduleID, vert) {
  */
 export async function schedulingGridGetVenues(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const qryStr = `
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoGetVenues @affiliateID
-    `;
+    `);
 
-    return await connection.sql(qryStr)
-      .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-      .execute();
+    return result.recordset;
   } catch (error) {
     console.error('Error getting scheduling grid venues:', error);
     throw error;
@@ -319,17 +326,17 @@ export async function schedulingGridGetVenues(affiliateID, vert) {
  */
 export async function schedulingGridGetRoomsByAffiliate(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const qryStr = `
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoGetRoomsByAffiliate @affiliateID
-    `;
+    `);
 
-    return await connection.sql(qryStr)
-      .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-      .execute();
+    return result.recordset;
   } catch (error) {
     console.error('Error getting scheduling grid rooms by affiliate:', error);
     throw error;

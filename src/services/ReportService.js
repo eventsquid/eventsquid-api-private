@@ -22,9 +22,7 @@ import {
   deleteTemplate,
   shareTemplate
 } from '../functions/reports.js';
-import EventService from './EventService.js';
-
-const _eventsService = new EventService();
+import _eventsService from './EventService.js';
 
 class ReportService {
   /**
@@ -197,7 +195,8 @@ class ReportService {
       const templateName = request.pathParameters?.templateName;
 
       const isDuplicate = await checkDupTemplateName(eventID, reportType, templateName, vert);
-      return { isDuplicate };
+      // OLD CODE BEHAVIOR: Return boolean directly, not wrapped in object
+      return isDuplicate;
     } catch (error) {
       console.error('Error checking duplicate template name:', error);
       throw error;
@@ -272,14 +271,15 @@ class ReportService {
    */
   async getCEUSummaryReport(eventID, query, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       const params = ['@eventID'];
-      if ('categoryIDList' in query) {
+      // OLD CODE BEHAVIOR: Only add parameters if they have actual values (not empty strings)
+      if (query.categoryIDList && String(query.categoryIDList).trim().length > 0) {
         params.push('@categoryIDList');
       }
-      if ('attendeeSearchCriteria' in query) {
+      if (query.attendeeSearchCriteria && String(query.attendeeSearchCriteria).trim().length > 0) {
         params.push('@attendeeSearchCriteria');
       }
 
@@ -288,18 +288,19 @@ class ReportService {
         EXEC dbo.ceuSummaryReport ${params.join(', ')}
       `;
 
-      let request = connection.sql(qryStr)
-        .parameter('eventID', TYPES.Int, Number(eventID));
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
 
-      if ('categoryIDList' in query) {
-        request = request.parameter('categoryIDList', TYPES.VarChar, String(query.categoryIDList));
+      if (query.categoryIDList && String(query.categoryIDList).trim().length > 0) {
+        request.input('categoryIDList', sql.VarChar, String(query.categoryIDList).trim());
       }
 
-      if ('attendeeSearchCriteria' in query) {
-        request = request.parameter('attendeeSearchCriteria', TYPES.VarChar, String(query.attendeeSearchCriteria));
+      if (query.attendeeSearchCriteria && String(query.attendeeSearchCriteria).trim().length > 0) {
+        request.input('attendeeSearchCriteria', sql.VarChar, String(query.attendeeSearchCriteria).trim());
       }
 
-      return await request.execute();
+      const result = await request.query(qryStr);
+      return result.recordset;
     } catch (error) {
       console.error('Error getting CEU summary report:', error);
       throw error;
@@ -411,17 +412,18 @@ class ReportService {
    */
   async getCEUDetailReport(eventID, query, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       const params = ['@eventID'];
-      if ('attendeeSearchCriteria' in query) {
+      // OLD CODE BEHAVIOR: Only add parameters if they have actual values (not empty strings)
+      if (query.attendeeSearchCriteria && String(query.attendeeSearchCriteria).trim().length > 0) {
         params.push('@attendeeSearchCriteria');
       }
-      if ('categoryIDList' in query) {
+      if (query.categoryIDList && String(query.categoryIDList).trim().length > 0) {
         params.push('@categoryIDList');
       }
-      if ('eventFeeIDList' in query) {
+      if (query.eventFeeIDList && String(query.eventFeeIDList).trim().length > 0) {
         params.push('@eventFeeIDList');
       }
 
@@ -430,22 +432,23 @@ class ReportService {
         EXEC dbo.ceuDetailReport ${params.join(', ')}
       `;
 
-      let request = connection.sql(qryStr)
-        .parameter('eventID', TYPES.Int, Number(eventID));
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
 
-      if ('attendeeSearchCriteria' in query) {
-        request = request.parameter('attendeeSearchCriteria', TYPES.VarChar, String(query.attendeeSearchCriteria));
+      if (query.attendeeSearchCriteria && String(query.attendeeSearchCriteria).trim().length > 0) {
+        request.input('attendeeSearchCriteria', sql.VarChar, String(query.attendeeSearchCriteria).trim());
       }
 
-      if ('categoryIDList' in query) {
-        request = request.parameter('categoryIDList', TYPES.VarChar, String(query.categoryIDList));
+      if (query.categoryIDList && String(query.categoryIDList).trim().length > 0) {
+        request.input('categoryIDList', sql.VarChar, String(query.categoryIDList).trim());
       }
 
-      if ('eventFeeIDList' in query) {
-        request = request.parameter('eventFeeIDList', TYPES.VarChar, String(query.eventFeeIDList));
+      if (query.eventFeeIDList && String(query.eventFeeIDList).trim().length > 0) {
+        request.input('eventFeeIDList', sql.VarChar, String(query.eventFeeIDList).trim());
       }
 
-      return await request.execute();
+      const result = await request.query(qryStr);
+      return result.recordset;
     } catch (error) {
       console.error('Error getting CEU detail report:', error);
       throw error;

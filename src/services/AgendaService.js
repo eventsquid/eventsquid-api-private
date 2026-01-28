@@ -42,8 +42,20 @@ class AgendaService {
         eventID,
         vert
       );
+      
+      console.log(`[getAgendaData] Found ${resources.length} accessible resources`);
+      const resourcesWithSlots = resources.filter(r => r.slots && r.slots.length > 0);
+      console.log(`[getAgendaData] ${resourcesWithSlots.length} resources have slots assigned`);
+      if (resourcesWithSlots.length > 0) {
+        console.log(`[getAgendaData] Resources with slots:`, resourcesWithSlots.map(r => ({
+          upload_id: r.upload_id,
+          uploadTitle: r.uploadTitle,
+          slots: r.slots,
+          accessRestriction: r.accessRestriction
+        })));
+      }
 
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
       // Complex SQL query for agenda slots
@@ -258,10 +270,13 @@ class AgendaService {
           sp.sponsorID
       `;
 
-      const results = await connection.sql(slotQry)
-        .parameter('eventID', TYPES.Int, eventID)
-        .parameter('userID', TYPES.Int, userID)
-        .execute();
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('eventID', sql.Int, eventID);
+      sqlRequest.input('userID', sql.Int, userID);
+      const result = await sqlRequest.query(slotQry);
+      const results = result.recordset || [];
+
+      console.log(`[getAgendaData] Query returned ${results.length} rows for eventID ${eventID}`);
 
       const slots = {};
       const schedules = {};
@@ -314,12 +329,14 @@ class AgendaService {
         }
 
         // Adds unique slot to the slot list
-        if (!slots.hasOwnProperty(slot.slot_id)) {
+        // Only add if slot_id exists (some rows might not have slots due to LEFT JOINs)
+        if (slot.slot_id && !slots.hasOwnProperty(slot.slot_id)) {
           slots[slot.slot_id] = slotData;
         }
 
         // If this iteration has a speaker, add it
-        if (slot.speaker_id && !slots[slot.slot_id].speakers.hasOwnProperty(slot.speaker_id)) {
+        // Only process if slot_id exists
+        if (slot.slot_id && slot.speaker_id && slots[slot.slot_id] && !slots[slot.slot_id].speakers.hasOwnProperty(slot.speaker_id)) {
           slots[slot.slot_id].speakers[slot.speaker_id] = {
             speakerRecordID: slot.record_id,
             speakerTitle: slot.speakerTitle,
@@ -386,6 +403,9 @@ class AgendaService {
         }
       });
 
+      console.log(`[getAgendaData] Processed ${Object.keys(slots).length} unique slots`);
+      console.log(`[getAgendaData] Processed ${Object.keys(schedules).length} schedules`);
+
       // Format the slots - converts from object to array
       const formattedSlots = _.keys(slots).map(slotID => {
         const slot = slots[slotID];
@@ -393,17 +413,36 @@ class AgendaService {
         slot.documents = _.keys(slot.documents).map(documentID => slot.documents[documentID]);
         slot.tracks = _.keys(slot.tracks).map(trackID => slot.tracks[trackID]);
         slot.sponsors = _.keys(slot.sponsors).map(sponsorID => slot.sponsors[sponsorID]);
-        slot.resources = resources.filter(resource =>
-          resource.slots && resource.slots.includes(Number(slotID)) &&
-          resource.resource_type && resource.resource_type.indexOf('video-embed-') === -1
-        );
+        // Match old codebase: filter resources by slot ID
+        // Old code uses: resource.slots.includes(Number(slotID)) && resource.resource_type.indexOf('video-embed-') === -1
+        slot.resources = resources.filter(resource => {
+          // Match old codebase: use indexOf instead of includes, and don't check if slots exists (will fail gracefully)
+          const hasSlot = resource.slots && resource.slots.indexOf(Number(slotID)) >= 0;
+          const isNotVideoEmbed = !resource.resource_type || resource.resource_type.indexOf('video-embed-') === -1;
+          return hasSlot && isNotVideoEmbed;
+        });
+        if (slot.resources.length > 0) {
+          console.log(`[getAgendaData] Slot ${slotID} has ${slot.resources.length} resources`);
+        } else {
+          // Debug: check if any resources have this slot ID
+          const matchingResources = resources.filter(r => r.slots && r.slots.indexOf(Number(slotID)) >= 0);
+          if (matchingResources.length > 0) {
+            console.log(`[getAgendaData] DEBUG: Found ${matchingResources.length} resources with slot ${slotID} but they were filtered out`);
+            console.log(`[getAgendaData] DEBUG: Resource types:`, matchingResources.map(r => r.resource_type));
+          }
+        }
         return slot;
       });
+
+      console.log(`[getAgendaData] Formatted ${formattedSlots.length} slots into array`);
 
       // Format the schedules - converts from object to array
       const formattedSchedules = _.keys(schedules).map(scheduleID => {
         const schedule = schedules[scheduleID];
-        schedule.slots = formattedSlots.filter(slot => slot.scheduleID === scheduleID);
+        // Use loose equality (==) to match old codebase behavior (handles type coercion)
+        // scheduleID from _.keys() is a string, slot.scheduleID is a number
+        schedule.slots = formattedSlots.filter(slot => slot.scheduleID == scheduleID);
+        console.log(`[getAgendaData] Schedule ${scheduleID} has ${schedule.slots.length} slots`);
         // Sort slots by date/time, duration, then title
         schedule.slots = _.orderBy(schedule.slots, ['slotTimeStart', 'slotDuration', 'slotTitle']);
         return schedule;
@@ -436,11 +475,10 @@ class AgendaService {
         WHERE event_id = @eventID
       `;
 
-      const agendaDetailsResult = await connection.sql(detailsQry)
-        .parameter('eventID', TYPES.Int, eventID)
-        .execute();
-
-      let agendaDetails = agendaDetailsResult[0] || {};
+      const detailsRequest = new sql.Request();
+      detailsRequest.input('eventID', sql.Int, eventID);
+      const detailsResult = await detailsRequest.query(detailsQry);
+      let agendaDetails = detailsResult.recordset[0] || {};
 
       if (agendaDetails.agenda_link && !agendaDetails.agenda_link.includes('http')) {
         agendaDetails.agenda_link = `https://${agendaDetails.agenda_link}`;
@@ -463,10 +501,14 @@ class AgendaService {
    */
   async addSponsorToSlot(eventID, slotID, sponsorID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      await connection.sql(`
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('eventID', sql.Int, Number(eventID));
+      sqlRequest.input('slotID', sql.Int, Number(slotID));
+      sqlRequest.input('sponsorID', sql.Int, Number(sponsorID));
+      await sqlRequest.query(`
         USE ${dbName};
         IF NOT EXISTS (
             SELECT record_id
@@ -486,11 +528,7 @@ class AgendaService {
                 @sponsorID
             )
         END
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('slotID', TYPES.Int, Number(slotID))
-      .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-      .execute();
+      `);
 
       return { message: 'success' };
     } catch (error) {
@@ -517,20 +555,20 @@ class AgendaService {
    */
   async removeSponsorFromSlot(eventID, slotID, sponsorID, vert) {
     try {
-      const connection = await getConnection(vert);
+      const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      await connection.sql(`
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('eventID', sql.Int, Number(eventID));
+      sqlRequest.input('slotID', sql.Int, Number(slotID));
+      sqlRequest.input('sponsorID', sql.Int, Number(sponsorID));
+      await sqlRequest.query(`
         USE ${dbName};
         DELETE FROM slotSponsor
         WHERE event_id = @eventID
             AND slot_id = @slotID
             AND sponsor_id = @sponsorID
-      `)
-      .parameter('eventID', TYPES.Int, Number(eventID))
-      .parameter('slotID', TYPES.Int, Number(slotID))
-      .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-      .execute();
+      `);
 
       return { message: 'success' };
     } catch (error) {

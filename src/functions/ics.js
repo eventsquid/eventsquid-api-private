@@ -70,7 +70,7 @@ export async function createICS(
  */
 export async function getEventCalendarDescInfo(eventID, vert) {
   const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
-  const connection = await getConnection(vert);
+  const sql = await getConnection(vert);
   const dbName = getDatabaseName(vert);
 
   // Domain names by vertical
@@ -84,7 +84,9 @@ export async function getEventCalendarDescInfo(eventID, vert) {
     ln: 'https://www.launchsquid.com'
   };
 
-  const eventCalInfo = await connection.sql(`
+  const request = new sql.Request();
+  request.input('eventID', sql.Int, Number(eventID));
+  const result = await request.query(`
     USE ${dbName};
     SELECT
         e._guid AS eventGUID,
@@ -95,9 +97,8 @@ export async function getEventCalendarDescInfo(eventID, vert) {
     FROM b_events e 
     LEFT JOIN veo_options v ON v.eventGuid = e._guid
     WHERE e.event_id = @eventID
-  `)
-  .parameter('eventID', TYPES.Int, Number(eventID))
-  .execute();
+  `);
+  const eventCalInfo = result.recordset;
 
   if (!eventCalInfo.length) {
     return '';
@@ -117,18 +118,19 @@ export async function getEventCalendarDescInfo(eventID, vert) {
  */
 export async function getEventFeeCode(eventFeeID, vert) {
   const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
-  const connection = await getConnection(vert);
+  const sql = await getConnection(vert);
   const dbName = getDatabaseName(vert);
 
-  const eventFee = await connection.sql(`
+  const request = new sql.Request();
+  request.input('eventFeeID', sql.Int, Number(eventFeeID));
+  const result = await request.query(`
     USE ${dbName};
     SELECT
         ISNULL(f.purchasedKey,'') AS prk
     FROM event_fees f
     WHERE eventFeeID = @eventFeeID
-  `)
-  .parameter('eventFeeID', TYPES.Int, Number(eventFeeID))
-  .execute();
+  `);
+  const eventFee = result.recordset;
 
   return eventFee.length ? eventFee[0].prk : '';
 }

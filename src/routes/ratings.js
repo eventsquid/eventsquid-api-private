@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import RatingsService from '../services/RatingsService.js';
-
-const _ratingsService = new RatingsService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _ratingsService from '../services/RatingsService.js';
 
 /**
  * GET /ratings/session-by-slot/:eventID/:slotID
@@ -19,7 +17,7 @@ export const getSessionBySlotRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _ratingsService.getSessionBySlotID(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting session by slot:', error);
       return errorResponse('Failed to get session ratings', 500, error.message);
@@ -37,7 +35,7 @@ export const saveSessionBySlotRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _ratingsService.saveSessionBySlotID(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error saving session ratings:', error);
       return errorResponse('Failed to save session ratings', 500, error.message);

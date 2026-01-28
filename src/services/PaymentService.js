@@ -14,6 +14,23 @@ import {
 import { getAvailableGateways } from '../functions/system.js';
 import { sendUnconfirmedPaymentAlerts } from '../functions/paymentTransactions.js';
 
+/**
+ * Get header value case-insensitively
+ */
+function getHeader(headers, name) {
+  if (!headers) return undefined;
+  // Try exact match first
+  if (headers[name]) return headers[name];
+  // Try case-insensitive match
+  const lowerName = name.toLowerCase();
+  for (const key in headers) {
+    if (key.toLowerCase() === lowerName) {
+      return headers[key];
+    }
+  }
+  return undefined;
+}
+
 class PaymentService {
   /**
    * Send unconfirmed payment alerts
@@ -29,11 +46,13 @@ class PaymentService {
 
   /**
    * Get affiliate gateways
+   * Matches old behavior: directly accesses request.session.affiliate_id
    */
   async getAffiliateGateways(request) {
     try {
-      const affiliateID = request.session?.affiliate_id || request.user?.affiliate_id;
-      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      // Match old code: directly access session.affiliate_id (old code: req.session.affiliate_id)
+      const affiliateID = request.session?.affiliate_id;
+      const vert = getHeader(request.headers, 'vert') || request.pathParameters?.vert;
 
       if (!affiliateID) {
         throw new Error('Affiliate ID required');
@@ -52,12 +71,14 @@ class PaymentService {
 
   /**
    * Update gateway
+   * Matches old behavior: directly accesses request.session.affiliate_id
    */
   async updateGateway(request) {
     try {
-      const affiliateID = request.session?.affiliate_id || request.user?.affiliate_id;
+      // Match old code: directly access session.affiliate_id (old code: req.session.affiliate_id)
+      const affiliateID = request.session?.affiliate_id;
       const gatewayID = request.pathParameters?.gatewayID;
-      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const vert = getHeader(request.headers, 'vert') || request.pathParameters?.vert;
 
       if (!affiliateID) {
         throw new Error('Affiliate ID required');
@@ -80,12 +101,14 @@ class PaymentService {
 
   /**
    * Delete gateway
+   * Matches old behavior: directly accesses request.session.affiliate_id
    */
   async deleteGateway(request) {
     try {
-      const affiliateID = request.session?.affiliate_id || request.user?.affiliate_id;
+      // Match old code: directly access session.affiliate_id (old code: req.session.affiliate_id)
+      const affiliateID = request.session?.affiliate_id;
       const gatewayID = request.pathParameters?.gatewayID;
-      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const vert = getHeader(request.headers, 'vert') || request.pathParameters?.vert;
 
       if (!affiliateID) {
         throw new Error('Affiliate ID required');
@@ -111,7 +134,7 @@ class PaymentService {
    */
   async getAvailableGateways(request) {
     try {
-      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const vert = getHeader(request.headers, 'vert') || request.pathParameters?.vert;
       return await getAvailableGateways(vert);
     } catch (error) {
       console.error('Error getting available gateways:', error);
@@ -121,11 +144,13 @@ class PaymentService {
 
   /**
    * Reset payment processor
+   * Matches old behavior: directly accesses request.session.affiliate_id
    */
   async resetPaymentProcessor(request) {
     try {
-      const affiliateID = request.session?.affiliate_id || request.user?.affiliate_id;
-      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      // Match old code: directly access session.affiliate_id (old code: req.session.affiliate_id)
+      const affiliateID = request.session?.affiliate_id;
+      const vert = getHeader(request.headers, 'vert') || request.pathParameters?.vert;
 
       if (!affiliateID) {
         throw new Error('Affiliate ID required');

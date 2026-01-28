@@ -11,16 +11,17 @@ import _ from 'lodash';
  */
 export async function getAvailableGateways(vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    const result = await request.query(`
       USE ${dbName};
       SELECT attribute_valueText AS gatewayList
       FROM a_globalVars
       WHERE attribute_name = 'payMethod'
-    `)
-    .execute();
+    `);
+    const results = result.recordset;
 
     if (!results || !results.length || !results[0].gatewayList) {
       return [];

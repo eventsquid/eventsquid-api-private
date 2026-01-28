@@ -12,14 +12,16 @@ import { getMyItinerarySlotsByContestantID } from './agenda.js';
  */
 export async function getEventResources(eventID, filter, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const filterClause = filter && filter.length 
       ? `AND u.resource_type IN (${filter.map(item => `'${item}'`).join(',')})`
       : '';
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT
         u.upload_id,
@@ -66,15 +68,11 @@ export async function getEventResources(eventID, filter, vert) {
           ORDER BY sl.level_order ASC, sl.level_id DESC
         ) levelID,
         rc.name as categoryName,
-        ISNULL(JSON_VALUE(
-          REPLACE(
-            (
-              SELECT CAST(slot_id as varchar) as slot_id FROM event_resources_to_agenda_slots
-              WHERE resource_id = u.upload_id
-              FOR JSON path
-            ), '"},{"slot_id":"', ','
-          ),
-          '$[0].slot_id'
+        ISNULL((
+          SELECT CAST(slot_id as varchar) + ','
+          FROM event_resources_to_agenda_slots
+          WHERE resource_id = u.upload_id
+          FOR XML PATH('')
         ), '') as slots
       FROM eventUploads u
       LEFT JOIN resource_categories rc ON rc.category_id = u.category_id
@@ -85,14 +83,15 @@ export async function getEventResources(eventID, filter, vert) {
       WHERE u.event_id = @eventID
         AND u.deleted = 0
         ${filterClause}
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results.map(resource => {
-      resource.slots = resource.slots.trim().length 
-        ? resource.slots.split(',').map(id => Number(id))
-        : [];
+      // FOR XML PATH returns comma-separated string with trailing comma, so trim it
+      const slotsStr = resource.slots.trim();
+      resource.slots = slotsStr.length && slotsStr.endsWith(',')
+        ? slotsStr.slice(0, -1).split(',').map(id => Number(id))
+        : (slotsStr.length ? slotsStr.split(',').map(id => Number(id)) : []);
       resource.uploadCategory = resource.categoryName;
       resource.linkedDoc = resource.linkedLibraryDocID 
         ? {
@@ -121,21 +120,21 @@ export async function getAccessibleResources(filter, userID, eventID, vert) {
     let resources = await getEventResources(eventID, [], vert);
     
     // Apply filter parameters (showOnWebsite, showOnMobile, showOnVeo)
+    // Match old codebase: filter by loose equality (allows type coercion)
     if (filter) {
-      if (filter.showOnWebsite !== undefined) {
-        resources = resources.filter(r => r.showOnWebsite === (filter.showOnWebsite ? 1 : 0));
-      }
-      if (filter.showOnMobile !== undefined) {
-        resources = resources.filter(r => r.showOnMobile === (filter.showOnMobile ? 1 : 0));
-      }
-      if (filter.showOnVeo !== undefined) {
-        resources = resources.filter(r => r.showOnVeo === (filter.showOnVeo ? 1 : 0));
+      for (const key in filter) {
+        if (filter.hasOwnProperty(key) && filter[key] !== undefined) {
+          resources = resources.filter(r => r[key] == filter[key]);
+        }
       }
     }
     
     // If no userID, return public resources only (no access restrictions)
     if (!userID || Number(userID) === 0) {
-      return resources.filter(r => !r.accessRestriction || r.accessRestriction === 'public');
+      return resources.filter(r => {
+        const accessRestriction = Number(r.accessRestriction) || 0;
+        return accessRestriction === 0 || !r.accessRestriction;
+      });
     }
     
     // Get registered attendee to check registration status
@@ -143,42 +142,35 @@ export async function getAccessibleResources(filter, userID, eventID, vert) {
     const isRegistered = !!attendee;
     
     // Get attendee's registered slots if registered (for slot-based filtering)
+    // Match old codebase: use getAttendeeAgendaSlots which returns array of slot IDs directly
     let registeredSlotIDs = [];
     if (isRegistered) {
-      const itinerary = await getMyItinerarySlotsByContestantID(attendee.c, vert);
-      registeredSlotIDs = itinerary.regSlots || [];
+      // Import getAttendeeAgendaSlots dynamically to avoid circular dependency
+      const { getAttendeeAgendaSlots } = await import('./attendees.js');
+      registeredSlotIDs = await getAttendeeAgendaSlots(attendee.c, vert) || [];
     }
     
     // Filter based on access restrictions
+    // Match old codebase behavior exactly: use switch statement with accessRestriction
     resources = resources.filter(resource => {
-      // Public resources are always accessible
-      if (!resource.accessRestriction || resource.accessRestriction === 'public') {
-        return true;
+      // Handle access controls using switch (matching old codebase)
+      switch (resource.accessRestriction) {
+        // If accessRestriction is 1, must be registered for event
+        case 1:
+          if (!isRegistered) return false;
+          break;
+        // If accessRestriction is 2, must be registered for a session this resource is bound to
+        case 2:
+          // If the user isn't even registered, give em nothing
+          if (!isRegistered || !registeredSlotIDs || !registeredSlotIDs.length) return false;
+          // Check if any of the slots the user is registered for matches any of the slots this resource is connected to
+          // Match old codebase: use indexOf instead of includes, and don't check if slots exists
+          if (!registeredSlotIDs.some(id => resource.slots && resource.slots.indexOf(id) >= 0)) return false;
+          break;
       }
       
-      // Registered-only resources require registration
-      if (resource.accessRestriction === 'registered') {
-        return isRegistered;
-      }
-      
-      // Slot-specific resources require registration and slot assignment
-      if (resource.accessRestriction === 'slot' || (resource.slots && resource.slots.length > 0)) {
-        if (!isRegistered) {
-          return false;
-        }
-        
-        // If resource has slot assignments, check if user is registered for those slots
-        if (resource.slots && resource.slots.length > 0) {
-          // Check if any of the resource's slots match the attendee's registered slots
-          return resource.slots.some(slotID => registeredSlotIDs.includes(slotID));
-        }
-        
-        // If accessRestriction is 'slot' but no specific slots assigned, allow if registered
-        return true;
-      }
-      
-      // Default: deny access for unknown restriction types
-      return false;
+      // All other cases (including accessRestriction 0, null, undefined, or string values) return true
+      return true;
     });
     
     return resources;
@@ -193,18 +185,19 @@ export async function getAccessibleResources(filter, userID, eventID, vert) {
  */
 export async function getEventResourceCategories(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const data = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT *
       FROM resource_categories
       WHERE event_id = @eventID
           AND deleted = 0
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const data = result.recordset;
 
     return data.map(record => ({
       id: record.category_id,
@@ -224,14 +217,16 @@ export async function getEventResourceCategories(eventID, vert) {
  */
 export async function getAffiliateResources(affiliateID, filter, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const filterClause = filter && filter.length 
       ? `AND u.resource_type IN (${filter.map(item => `'${item}'`).join(',')})`
       : '';
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT
           u.*,
@@ -261,9 +256,8 @@ export async function getAffiliateResources(affiliateID, filter, vert) {
       WHERE u.affiliate_id = @affiliateID
           AND u.deleted = 0
           ${filterClause}
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results.map(resource => {
       resource.linkedTo = JSON.parse(resource.linkedTo || '[]');
@@ -284,18 +278,19 @@ export async function getAffiliateResources(affiliateID, filter, vert) {
  */
 export async function getAffiliateResourceCategories(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const data = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT *
       FROM resource_categories
       WHERE affiliate_id = @affiliateID
           AND deleted = 0
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const data = result.recordset;
 
     return data.map(record => ({
       id: record.category_id,
@@ -315,7 +310,7 @@ export async function getAffiliateResourceCategories(affiliateID, vert) {
  */
 export async function addAffiliateResource(affiliateID, data, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     let categoryID = null;
@@ -326,14 +321,23 @@ export async function addAffiliateResource(affiliateID, data, vert) {
       if (matchingCategory) {
         categoryID = matchingCategory.id;
       } else {
-        categoryID = await createResourceCategory(affiliateID, null, data.category, vert);
+        const newCategory = await createResourceCategory(affiliateID, null, data.category, vert);
+        categoryID = newCategory?.category_id || newCategory?.id;
       }
     }
 
     const categoryClause = categoryID ? 'category_id,' : '';
     const categoryValue = categoryID ? '@categoryID,' : '';
 
-    const result = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    request.input('title', sql.VarChar, data.title || '');
+    request.input('filename', sql.VarChar, data.filename || '');
+    request.input('ext', sql.VarChar, data.ext || '');
+    request.input('type', sql.VarChar, data.type || '');
+    request.input('url', sql.VarChar, data.url || '');
+    request.input('categoryID', sql.Int, categoryID);
+    const result = await request.query(`
       USE ${dbName};
       INSERT INTO user_uploads (
           ${categoryClause}
@@ -356,17 +360,9 @@ export async function addAffiliateResource(affiliateID, data, vert) {
           @url
       );
       SELECT SCOPE_IDENTITY() AS id;
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .parameter('title', TYPES.VarChar, data.title || '')
-    .parameter('filename', TYPES.VarChar, data.filename || '')
-    .parameter('ext', TYPES.VarChar, data.ext || '')
-    .parameter('type', TYPES.VarChar, data.type || '')
-    .parameter('url', TYPES.VarChar, data.url || '')
-    .parameter('categoryID', TYPES.Int, categoryID)
-    .execute();
+    `);
 
-    return result[0]?.id;
+    return result.recordset[0]?.id;
   } catch (error) {
     console.error('Error adding affiliate resource:', error);
     throw error;
@@ -378,23 +374,23 @@ export async function addAffiliateResource(affiliateID, data, vert) {
  */
 export async function updateAffiliateResource(affiliateID, uploadID, field, value, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const getUpdateData = (field) => {
       switch (field) {
         case 'uploadTitle':
-          return { type: TYPES.VarChar, fieldName: 'uploadTitle' };
+          return { type: sql.VarChar, fieldName: 'uploadTitle' };
         case 'description':
-          return { type: TYPES.VarChar, fieldName: 'description' };
+          return { type: sql.VarChar, fieldName: 'description' };
         case 'resource_url':
-          return { type: TYPES.VarChar, fieldName: 'resource_url' };
+          return { type: sql.VarChar, fieldName: 'resource_url' };
         case 'preview_url':
-          return { type: TYPES.VarChar, fieldName: 'preview_url' };
+          return { type: sql.VarChar, fieldName: 'preview_url' };
         case 'category_id':
-          return { type: TYPES.Int, fieldName: 'category_id' };
+          return { type: sql.Int, fieldName: 'category_id' };
         case 'resource_type':
-          return { type: TYPES.VarChar, fieldName: 'resource_type' };
+          return { type: sql.VarChar, fieldName: 'resource_type' };
         default:
           throw new Error(`Unknown field: ${field}`);
       }
@@ -402,17 +398,17 @@ export async function updateAffiliateResource(affiliateID, uploadID, field, valu
 
     const { fieldName, type } = getUpdateData(field);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('uploadID', sql.Int, Number(uploadID));
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    request.input('value', type, value);
+    await request.query(`
       USE ${dbName};
       UPDATE user_uploads
       SET ${fieldName} = @value
       WHERE doc_id = @uploadID
           AND affiliate_id = @affiliateID
-    `)
-    .parameter('uploadID', TYPES.Int, Number(uploadID))
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .parameter('value', type, value)
-    .execute();
+    `);
 
     return 'Updated Resource';
   } catch (error) {
@@ -426,17 +422,17 @@ export async function updateAffiliateResource(affiliateID, uploadID, field, valu
  */
 export async function deleteAffiliateResource(affiliateID, uploadID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('uploadID', sql.Int, Number(uploadID));
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    await request.query(`
       USE ${dbName};
       UPDATE user_uploads SET deleted = 1 WHERE doc_id = @uploadID AND affiliate_id = @affiliateID;
       UPDATE eventUploads SET linkedLibraryDocID = NULL WHERE linkedLibraryDocID = @uploadID;
-    `)
-    .parameter('uploadID', TYPES.Int, Number(uploadID))
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
 
     return 'Deleted resource from affiliate';
   } catch (error) {
@@ -450,10 +446,12 @@ export async function deleteAffiliateResource(affiliateID, uploadID, vert) {
  */
 export async function getLinkedResourcesByAffiliate(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT * 
       FROM eventUploads 
@@ -462,9 +460,8 @@ export async function getLinkedResourcesByAffiliate(affiliateID, vert) {
               SELECT doc_id FROM user_uploads WHERE affiliate_id = @affiliateID AND deleted = 0
           ) 
           AND deleted = 0
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results;
   } catch (error) {
@@ -478,26 +475,26 @@ export async function getLinkedResourcesByAffiliate(affiliateID, vert) {
  */
 export async function createResourceCategory(affiliate_id, event_id, name, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     if (affiliate_id !== null) {
       affiliate_id = Number(affiliate_id) === 0 ? 1 : Number(affiliate_id);
     }
 
-    const result = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliate_id', sql.Int, affiliate_id);
+    request.input('event_id', sql.Int, Number(event_id || 0));
+    request.input('name', sql.VarChar, String(name));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_resourceCategoryAdd
           @affiliate_id,
           @event_id,
           @name
-    `)
-    .parameter('affiliate_id', TYPES.Int, affiliate_id)
-    .parameter('event_id', TYPES.Int, Number(event_id || 0))
-    .parameter('name', TYPES.VarChar, String(name))
-    .execute();
+    `);
 
-    return result[0];
+    return result.recordset[0];
   } catch (error) {
     console.error('Error creating resource category:', error);
     throw error;
@@ -509,18 +506,18 @@ export async function createResourceCategory(affiliate_id, event_id, name, vert)
  */
 export async function updateResourceCategory(category_id, name, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('category_id', sql.Int, Number(category_id));
+    request.input('name', sql.VarChar, String(name));
+    await request.query(`
       USE ${dbName};
       EXEC dbo.node_resourceCategoryUpdate
           @category_id,
           @name
-    `)
-    .parameter('category_id', TYPES.Int, Number(category_id))
-    .parameter('name', TYPES.VarChar, String(name))
-    .execute();
+    `);
 
     return { status: 'success' };
   } catch (error) {
@@ -534,20 +531,20 @@ export async function updateResourceCategory(category_id, name, vert) {
  */
 export async function deleteAffiliateResourceCategory(affiliate_id, category_id, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliate_id', sql.Int, Number(affiliate_id));
+    request.input('category_id', sql.Int, Number(category_id));
+    await request.query(`
       USE ${dbName};
       UPDATE resource_categories
       SET deleted = 1
       WHERE affiliate_id = @affiliate_id
           AND category_id = @category_id;
       UPDATE user_uploads SET category_id = NULL WHERE category_id = @category_id;
-    `)
-    .parameter('affiliate_id', TYPES.Int, Number(affiliate_id))
-    .parameter('category_id', TYPES.Int, Number(category_id))
-    .execute();
+    `);
 
     return { status: 'success' };
   } catch (error) {
@@ -561,41 +558,41 @@ export async function deleteAffiliateResourceCategory(affiliate_id, category_id,
  */
 export async function updateEventResource(eventID, uploadID, field, value, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     const getUpdateData = (field) => {
       switch (field) {
         case 'uploadTitle':
-          return { type: TYPES.VarChar, fieldName: 'uploadTitle' };
+          return { type: sql.VarChar, fieldName: 'uploadTitle' };
         case 'description':
-          return { type: TYPES.VarChar, fieldName: 'description' };
+          return { type: sql.VarChar, fieldName: 'description' };
         case 'resource_url':
-          return { type: TYPES.VarChar, fieldName: 'resource_url' };
+          return { type: sql.VarChar, fieldName: 'resource_url' };
         case 'preview_url':
-          return { type: TYPES.VarChar, fieldName: 'preview_url' };
+          return { type: sql.VarChar, fieldName: 'preview_url' };
         case 'category_id':
-          return { type: TYPES.Int, fieldName: 'category_id' };
+          return { type: sql.Int, fieldName: 'category_id' };
         case 'sortOrder':
-          return { type: TYPES.Int, fieldName: 'sortOrder' };
+          return { type: sql.Int, fieldName: 'sortOrder' };
         case 'resource_type':
-          return { type: TYPES.VarChar, fieldName: 'resource_type' };
+          return { type: sql.VarChar, fieldName: 'resource_type' };
         case 'showOnWebsite':
-          return { type: TYPES.Bit, fieldName: 'showOnWebsite' };
+          return { type: sql.Bit, fieldName: 'showOnWebsite' };
         case 'showOnMobile':
-          return { type: TYPES.Bit, fieldName: 'showOnMobile' };
+          return { type: sql.Bit, fieldName: 'showOnMobile' };
         case 'showOnVeo':
-          return { type: TYPES.Bit, fieldName: 'showOnVeo' };
+          return { type: sql.Bit, fieldName: 'showOnVeo' };
         case 'accessRestriction':
-          return { type: TYPES.Int, fieldName: 'accessRestriction' };
+          return { type: sql.Int, fieldName: 'accessRestriction' };
         case 'linkedLibraryDocID':
-          return { type: TYPES.Int, fieldName: 'linkedLibraryDocID' };
+          return { type: sql.Int, fieldName: 'linkedLibraryDocID' };
         case 'deleted':
-          return { type: TYPES.Bit, fieldName: 'deleted' };
+          return { type: sql.Bit, fieldName: 'deleted' };
         case 'filename':
-          return { type: TYPES.VarChar, fieldName: 'filename' };
+          return { type: sql.VarChar, fieldName: 'filename' };
         case 'filenameS3':
-          return { type: TYPES.VarChar, fieldName: 'filename' };
+          return { type: sql.VarChar, fieldName: 'filename' };
         default:
           throw new Error(`Unknown field: ${field}`);
       }
@@ -604,17 +601,17 @@ export async function updateEventResource(eventID, uploadID, field, value, vert)
     const { fieldName, type } = getUpdateData(field);
     const filenameUpdate = fieldName === 'filename' ? ',filenameS3 = @value' : '';
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('uploadID', sql.Int, Number(uploadID));
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('value', type, value);
+    await request.query(`
       USE ${dbName};
       UPDATE eventUploads
       SET ${fieldName} = @value${filenameUpdate}
       WHERE upload_id = @uploadID
           AND event_id = @eventID
-    `)
-    .parameter('uploadID', TYPES.Int, Number(uploadID))
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('value', type, value)
-    .execute();
+    `);
 
     return 'Updated Resource';
   } catch (error) {
@@ -628,16 +625,16 @@ export async function updateEventResource(eventID, uploadID, field, value, vert)
  */
 export async function deleteEventResource(eventID, uploadID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('uploadID', sql.Int, Number(uploadID));
+    request.input('eventID', sql.Int, Number(eventID));
+    await request.query(`
       USE ${dbName};
       UPDATE eventUploads SET deleted = 1 WHERE upload_id = @uploadID AND event_id = @eventID;
-    `)
-    .parameter('uploadID', TYPES.Int, Number(uploadID))
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
 
     return 'Deleted resource from event';
   } catch (error) {
@@ -646,3 +643,125 @@ export async function deleteEventResource(eventID, uploadID, vert) {
   }
 }
 
+/**
+ * Get resource sponsors
+ */
+export async function getResourceSponsors(affiliate_id, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('affiliate_id', sql.Int, Number(affiliate_id));
+    const result = await request.query(`
+      USE ${dbName};
+      EXEC dbo.node_getResourceSponsors @affiliate_id
+    `);
+
+    return result.recordset;
+  } catch (error) {
+    console.error('Error getting resource sponsors:', error);
+    throw error;
+  }
+}
+
+/**
+ * Add event resource
+ */
+export async function addEventResource(eventID, data, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    let categoryID = null;
+    if (data.category && data.category.length) {
+      const eventCategories = await getEventResourceCategories(eventID, vert);
+      let matchingCategory = eventCategories.find(category => category.name == data.category);
+
+      if (matchingCategory) {
+        categoryID = matchingCategory.id;
+      } else {
+        const newCategory = await createResourceCategory(null, eventID, data.category, vert);
+        categoryID = newCategory?.category_id || newCategory?.id;
+      }
+    }
+
+    const categoryClause = categoryID ? 'category_id,' : '';
+    const categoryValue = categoryID ? '@categoryID,' : '';
+    const linkedClause = 'linkedID' in data ? 'linkedLibraryDocID,' : '';
+    const linkedValue = 'linkedID' in data ? '@linkedID,' : '';
+
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('title', sql.VarChar, data.title || '');
+    request.input('filename', sql.VarChar, data.filename || '');
+    request.input('ext', sql.VarChar, data.ext || '');
+    request.input('type', sql.VarChar, data.type || '');
+    request.input('url', sql.VarChar, data.url || '');
+    if (categoryID) {
+      request.input('categoryID', sql.Int, categoryID);
+    }
+    if ('linkedID' in data) {
+      request.input('linkedID', sql.Int, Number(data.linkedID));
+    }
+
+    const result = await request.query(`
+      USE ${dbName};
+      INSERT INTO eventUploads (
+        ${categoryClause}
+        ${linkedClause}
+        uploadTitle,
+        filename,
+        filenameS3,
+        uploadtype,
+        event_id,
+        resource_type,
+        resource_url
+      )
+      VALUES (
+        ${categoryValue}
+        ${linkedValue}
+        @title,
+        @filename,
+        @filename,
+        @ext,
+        @eventID,
+        @type,
+        @url
+      );
+      SELECT SCOPE_IDENTITY() AS id;
+    `);
+
+    return result.recordset[0]?.id;
+  } catch (error) {
+    console.error('Error adding event resource:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete event resource category
+ */
+export async function deleteEventResourceCategory(event_id, category_id, sortOrder, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('event_id', sql.Int, Number(event_id));
+    request.input('category_id', sql.Int, Number(category_id));
+    request.input('sortOrder', sql.Int, Number(sortOrder));
+    await request.query(`
+      USE ${dbName};
+      EXEC dbo.node_resourceCategoryDelete
+          @event_id,
+          @category_id,
+          @sortOrder
+    `);
+
+    return { status: 'success' };
+  } catch (error) {
+    console.error('Error deleting event resource category:', error);
+    throw error;
+  }
+}

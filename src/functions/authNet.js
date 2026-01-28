@@ -38,17 +38,17 @@ loadAuthorizeNet().then(loaded => { authNetLoaded = loaded; });
  */
 export async function getCredentials(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_authNetCredsByAffiliate @affiliateID
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID))
-    .execute();
+    `);
 
-    return results || [];
+    return result.recordset || [];
   } catch (error) {
     console.error('Error getting AuthNet credentials:', error);
     throw error;
@@ -60,17 +60,17 @@ export async function getCredentials(affiliateID, vert) {
  */
 export async function getCredentialsByAttendee(attendeeID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('attendeeID', sql.Int, Number(attendeeID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_authNetCredsByAttendee @attendeeID
-    `)
-    .parameter('attendeeID', TYPES.Int, Number(attendeeID))
-    .execute();
+    `);
 
-    return results || [];
+    return result.recordset || [];
   } catch (error) {
     console.error('Error getting AuthNet credentials by attendee:', error);
     throw error;
@@ -440,17 +440,18 @@ export async function checkMultiCheckout(request) {
     const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
     const contestantID = request.pathParameters?.contestantID;
 
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('contestantID', sql.Int, Number(contestantID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT multicheckout
       FROM eventContestant
       WHERE contestant_id = @contestantID
-    `)
-    .parameter('contestantID', TYPES.Int, Number(contestantID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     if (results && results.length > 0 && results[0].multicheckout) {
       return { multiCheckout: true, contestants: results[0].multicheckout };
@@ -496,18 +497,19 @@ export async function getPaymentForm(request) {
     }
 
     // Get event and contestant info
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const invQuery = await connection.sql(`
+    const request = new sql.Request();
+    request.input('contestantID', sql.Int, Number(contestantID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT c.multicheckout, e.event_title
       FROM eventContestant c
       JOIN b_events e ON e.event_id = c.event_id
       WHERE contestant_id = @contestantID
-    `)
-    .parameter('contestantID', TYPES.Int, Number(contestantID))
-    .execute();
+    `);
+    const invQuery = result.recordset;
 
     if (!invQuery || !invQuery.length) {
       return { error: 'Contestant not found' };

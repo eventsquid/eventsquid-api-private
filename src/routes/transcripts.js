@@ -3,7 +3,7 @@
  */
 
 import { requireAuth } from '../middleware/auth.js';
-import { successResponse, errorResponse } from '../utils/response.js';
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
 import CreditsService from '../services/CreditsService.js';
 
 const _creditsService = new CreditsService();
@@ -20,7 +20,7 @@ export const getTranscriptConfigRoute = {
       const eventID = Number(request.pathParameters.eventID);
       const vert = request.headers?.vert;
       const config = await _creditsService.getTranscriptTemplateConfig(eventID, vert);
-      return successResponse(config);
+      return createResponse(200, config);
     } catch (error) {
       console.error('Error getting transcript config:', error);
       return errorResponse('Failed to get transcript config', 500, error.message);
@@ -41,7 +41,7 @@ export const saveTranscriptConfigRoute = {
       const vert = request.headers?.vert;
       const transcriptID = await _creditsService.saveTranscriptConfig(eventID, request.body, vert);
       
-      return successResponse({
+      return createResponse(200, {
         success: transcriptID != null,
         message: `Updated/Created ${transcriptID}`
       });

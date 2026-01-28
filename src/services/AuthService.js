@@ -15,15 +15,21 @@ class AuthService {
    */
   async getSession(token) {
     try {
-      // Use 'cm' database for common/session data
-      // TODO: Update to use correct database connection based on vertical
-      const db = await getDatabase('cm'); // cm = eventsquid-common
+      // MUST use 'cm' database via mongodb/common secret - HARD FAIL if not available
+      // NO FALLBACK to other databases or connection strings
+      console.log('[AuthService] Attempting to get session from cm database...');
+      const db = await getDatabase('cm');
       const sessions = db.collection('cfsessions');
       const session = await sessions.findOne({ _id: token });
-      return session;
-    } catch (error) {
-      console.error('Error getting session:', error);
+      if (session) {
+        console.log(`[AuthService] Session found in 'cm' database`);
+        return session;
+      }
       return null;
+    } catch (error) {
+      console.error('[AuthService] Error accessing cm database:', error.message);
+      // HARD FAIL - do not catch and retry with different connection
+      throw error;
     }
   }
 

@@ -6,6 +6,7 @@
 import { createResponse } from './utils/response.js';
 import { connectToMongo } from './utils/mongodb.js';
 import { routes } from './routes/index.js';
+import { publishErrorToSNS } from './utils/sns.js';
 
 export const handler = async (event) => {
   // Log incoming request
@@ -51,12 +52,16 @@ export const handler = async (event) => {
 
     // Handle CORS preflight requests
     if (httpMethod === 'OPTIONS') {
-      return createResponse(200, {}, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
-        'Access-Control-Max-Age': '86400'
-      });
+      return {
+        statusCode: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS,PATCH',
+          'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,cftoken,cfid,vert',
+          'Access-Control-Max-Age': '86400'
+        },
+        body: ''
+      };
     }
 
     // Create request object
@@ -90,9 +95,21 @@ export const handler = async (event) => {
     const result = await route.handler(request);
     console.log('Route handler completed, status:', result?.statusCode || 200);
 
-    // If handler returns a response object, use it; otherwise wrap it
+    // If handler returns a response object, ensure it has CORS headers
     if (result && result.statusCode) {
-      return result;
+      // Ensure CORS headers are present (API Gateway CORS should handle this, but include as fallback)
+      const corsHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS,PATCH',
+        'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,cftoken,cfid,vert'
+      };
+      return {
+        ...result,
+        headers: {
+          ...corsHeaders,
+          ...(result.headers || {})
+        }
+      };
     }
 
     return createResponse(200, result);
@@ -111,6 +128,13 @@ export const handler = async (event) => {
     }
     console.error('Full Error Object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     console.error('=== End Error ===');
+    
+    // Publish error to SNS if configured
+    await publishErrorToSNS(error, {
+      requestId: event.requestContext?.requestId || 'unknown',
+      path: event.requestContext?.http?.path || event.path || event.rawPath,
+      method: event.requestContext?.http?.method || event.httpMethod
+    });
     
     return createResponse(500, {
       error: 'Internal Server Error',

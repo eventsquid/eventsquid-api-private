@@ -16,17 +16,18 @@ export async function findByGatewayAndID(request) {
     const vert = request.headers?.vert || request.vert || '';
     const affiliateID = request.session?.affiliate_id || 0;
 
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
     // Query using stored procedure
-    const qryRA = await connection.sql(`
+    const sqlRequest = new sql.Request();
+    sqlRequest.input('processID', sql.VarChar, `%${_.trim(transactionID)}%`);
+    sqlRequest.input('gateway', sql.VarChar, `%${_.trim(gateway)}%`);
+    const result = await sqlRequest.query(`
       USE ${dbName};
       EXEC dbo.node_transactionsByGatewayAndID @processID, @gateway
-    `)
-    .parameter('processID', TYPES.VarChar, `%${_.trim(transactionID)}%`)
-    .parameter('gateway', TYPES.VarChar, `%${_.trim(gateway)}%`)
-    .execute();
+    `);
+    const qryRA = result.recordset;
 
     let transactionDetails = {};
     let transaction = {};
@@ -177,17 +178,17 @@ export async function sendUnconfirmedPaymentAlerts(request) {
  */
 export async function getPending(affiliateID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('affiliateID', sql.Int, Number(affiliateID || 0));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_getPendingTransactions @affiliateID
-    `)
-    .parameter('affiliateID', TYPES.Int, Number(affiliateID || 0))
-    .execute();
+    `);
 
-    return results;
+    return result.recordset;
   } catch (error) {
     console.error('Error getting pending transactions:', error);
     throw error;

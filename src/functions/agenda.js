@@ -13,10 +13,14 @@ import _ from 'lodash';
  */
 export async function toggleSponsorBinding(eventID, slotID, sponsorID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    request.input('slotID', sql.Int, Number(slotID));
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+    await request.query(`
       USE ${dbName};
       IF NOT EXISTS (
           SELECT record_id
@@ -43,11 +47,7 @@ export async function toggleSponsorBinding(eventID, slotID, sponsorID, vert) {
                   AND sponsor_id = @sponsorID
                   AND event_id = @eventID
           END
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .parameter('sponsorID', TYPES.Int, Number(sponsorID))
-    .execute();
+    `);
 
     return 'Agenda Slot Binding Updated';
   } catch (error) {
@@ -62,15 +62,16 @@ export async function toggleSponsorBinding(eventID, slotID, sponsorID, vert) {
  */
 export async function getAgendaSlotsByEventID(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    let slots = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_getAgendaSlots @eventID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    let slots = result.recordset;
 
     // Format the reviewsOff to a boolean
     slots = slots.map(slot => ({ ...slot, reviewsOff: slot.reviewsOff ? true : false }));
@@ -96,14 +97,33 @@ export async function getAgendaSlotsByEventID(eventID, vert) {
         }
       });
 
+      // Get the first slot as base
+      const baseSlot = group[0];
+      
+      // Extract eventFeeID - ensure it's a single value, not an array
+      let eventFeeID = null;
+      if (baseSlot.eventFeeID !== undefined) {
+        // If it's an array, take the first value (shouldn't happen, but handle it)
+        eventFeeID = Array.isArray(baseSlot.eventFeeID) ? baseSlot.eventFeeID[0] : baseSlot.eventFeeID;
+      } else if (baseSlot.EventFeeID !== undefined) {
+        eventFeeID = Array.isArray(baseSlot.EventFeeID) ? baseSlot.EventFeeID[0] : baseSlot.EventFeeID;
+      }
+      
       // Return the slot with the combined speaker data
-      const combinedSlot = { ...group[0], speakers };
-      // Clean out now un-needed keys
+      // Explicitly set eventFeeID to ensure it's a single value
+      const combinedSlot = { 
+        ...baseSlot, 
+        speakers,
+        eventFeeID: eventFeeID
+      };
+      
+      // Clean out now un-needed keys and any duplicate eventFeeID variations
       delete combinedSlot['speaker_id'];
       delete combinedSlot['speaker_name'];
       delete combinedSlot['speakerReviewsOff'];
       delete combinedSlot['bundleIDList'];
       delete combinedSlot['eventFeeIDList'];
+      delete combinedSlot['EventFeeID']; // Remove any uppercase variant
 
       return combinedSlot;
     });
@@ -119,15 +139,16 @@ export async function getAgendaSlotsByEventID(eventID, vert) {
  */
 export async function getSlotDataByID(slotID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const data = await connection.sql(`
+    const request = new sql.Request();
+    request.input('slotID', sql.Int, Number(slotID));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_getAgendaSlot2 @slotID
-    `)
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .execute();
+    `);
+    const data = result.recordset;
 
     if (!data.length) return null;
 
@@ -207,10 +228,12 @@ export async function getSlotDataByID(slotID, vert) {
  */
 export async function getSlotSpeakers(slotID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('slotID', sql.Int, Number(slotID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT 
         s.speaker_id,
@@ -225,9 +248,8 @@ export async function getSlotSpeakers(slotID, vert) {
       WHERE s.speaker_id IN (
         SELECT speaker_id FROM speakerSchedule WHERE slot_id = @slotID
       )
-    `)
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results.map(speaker => ({
       name: speaker.speaker_name,
@@ -255,7 +277,9 @@ export async function getSlotSponsors(eventID, slotID, vert) {
     const { getEventSponsors } = await import('./sponsors.js');
     const eventSponsors = await getEventSponsors(eventID, vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('slotID', sql.Int, Number(slotID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT
         s.sponsorID,
@@ -309,9 +333,8 @@ export async function getSlotSponsors(eventID, slotID, vert) {
         s.sponsorID IN (
           SELECT sponsor_id FROM slotSponsor WHERE slot_id = @slotID
         )
-    `)
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results.map(sponsor => {
       if (!sponsor.level_id) return sponsor;
@@ -336,10 +359,12 @@ export async function getSlotSponsors(eventID, slotID, vert) {
  */
 export async function getSlotTrackAssignmentsByEventID(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const trackAssignments = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT 
         st.slot_id,
@@ -349,9 +374,8 @@ export async function getSlotTrackAssignmentsByEventID(eventID, vert) {
       FROM scheduleTracks st 
       LEFT JOIN b_tracks t ON t.trackID = st.trackID
       WHERE event_id = @eventID
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const trackAssignments = result.recordset;
 
     const condensedAssignments = {};
 
@@ -380,10 +404,12 @@ export async function getSlotTrackAssignmentsByEventID(eventID, vert) {
  */
 export async function getAgendaSpeakersByEventID(eventID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const results = await connection.sql(`
+    const request = new sql.Request();
+    request.input('eventID', sql.Int, Number(eventID));
+    const result = await request.query(`
       USE ${dbName};
       SELECT 
         ss.slot_id,
@@ -402,9 +428,8 @@ export async function getAgendaSpeakersByEventID(eventID, vert) {
           SELECT slot_id FROM scheduleTimes WHERE event_id = @eventID
         )
       )
-    `)
-    .parameter('eventID', TYPES.Int, Number(eventID))
-    .execute();
+    `);
+    const results = result.recordset;
 
     return results.map(speaker => ({
       slotID: speaker.slot_id,
@@ -426,22 +451,24 @@ export async function getAgendaSpeakersByEventID(eventID, vert) {
  */
 export async function getMyItinerarySlotsByContestantID(contestantID, vert) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const favorites = await connection.sql(`
+    const sqlRequest1 = new sql.Request();
+    sqlRequest1.input('contestantID', sql.Int, Number(contestantID));
+    const result1 = await sqlRequest1.query(`
       USE ${dbName};
       SELECT i.slot_id
       FROM contestantMyItinerary i
       INNER JOIN eventContestant ec ON ec.contestant_id = i.contestant_id
       WHERE i.contestant_id = @contestantID
-    `)
-    .parameter('contestantID', TYPES.Int, Number(contestantID))
-    .execute()
-    .then(favorites => favorites.map(slot => slot.slot_id));
+    `);
+    const favorites = result1.recordset.map(slot => slot.slot_id);
 
     const checkinData = [];
-    const regSlots = await connection.sql(`
+    const sqlRequest2 = new sql.Request();
+    sqlRequest2.input('contestantID', sql.Int, Number(contestantID));
+    const result2 = await sqlRequest2.query(`
       USE ${dbName};
       SELECT 
         cf.eventFeeID,
@@ -450,13 +477,11 @@ export async function getMyItinerarySlotsByContestantID(contestantID, vert) {
       FROM contestant_fees cf
       INNER JOIN eventContestant ec ON ec.contestant_id = cf.contestant_id
       WHERE cf.contestant_id = @contestantID
-    `)
-    .parameter('contestantID', TYPES.Int, Number(contestantID))
-    .execute()
-    .then(regSlots => regSlots.map(({ eventFeeID, checkedIn, checkedOut }) => {
+    `);
+    const regSlots = result2.recordset.map(({ eventFeeID, checkedIn, checkedOut }) => {
       checkinData.push({ eventFeeID, checkedIn, checkedOut });
       return eventFeeID;
-    }));
+    });
 
     return {
       favorites,
@@ -475,22 +500,23 @@ export async function getMyItinerarySlotsByContestantID(contestantID, vert) {
  */
 export async function getSpeakerDocuments({ slotID, userID, website = -1, mobile = -1, vert }) {
   try {
-    const connection = await getConnection(vert);
+    const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    return await connection.sql(`
+    const request = new sql.Request();
+    request.input('slotID', sql.Int, Number(slotID));
+    request.input('userID', sql.Int, Number(userID));
+    request.input('website', sql.Int, Number(website));
+    request.input('mobile', sql.Int, Number(mobile));
+    const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_getAgendaSlotDocumentsNew
         @slotID,
         @userID,
         @website,
         @mobile
-    `)
-    .parameter('slotID', TYPES.Int, Number(slotID))
-    .parameter('userID', TYPES.Int, Number(userID))
-    .parameter('website', TYPES.Int, Number(website))
-    .parameter('mobile', TYPES.Int, Number(mobile))
-    .execute();
+    `);
+    return result.recordset;
   } catch (error) {
     console.error('Error getting speaker documents:', error);
     throw error;

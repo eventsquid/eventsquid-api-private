@@ -4,10 +4,8 @@
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireVertical } from '../middleware/verticalCheck.js';
-import { successResponse, errorResponse } from '../utils/response.js';
-import AttendeeService from '../services/AttendeeService.js';
-
-const _attendeeService = new AttendeeService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _attendeeService from '../services/AttendeeService.js';
 
 /**
  * POST /attendee/attendees-pivoted
@@ -19,7 +17,8 @@ export const findPivotedAttendeesRoute = {
   handler: requireAuth(async (request) => {
     try {
       const result = await _attendeeService.findAndPivotAttendees(request);
-      return successResponse(result);
+      // Return the array directly without wrapper
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error finding pivoted attendees:', error);
       return errorResponse('Failed to find pivoted attendees', 500, error.message);
@@ -34,15 +33,16 @@ export const findPivotedAttendeesRoute = {
 export const findAttendeesRoute = {
   method: 'POST',
   path: '/attendee/:vert',
-  handler: requireAuth(async (request) => {
+  handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.findAttendees(request);
-      return successResponse(result);
+      // Return the array directly without wrapper
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error finding attendees:', error);
       return errorResponse('Failed to find attendees', 500, error.message);
     }
-  })
+  }))
 };
 
 /**
@@ -55,7 +55,7 @@ export const deleteAttendeePromptResponseRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.deleteAttendeePromptResponse(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error deleting attendee prompt response:', error);
       return errorResponse('Failed to delete prompt response', 500, error.message);
@@ -73,7 +73,7 @@ export const updateAttendeePromptResponseRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.updateAttendeePromptResponse(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating attendee prompt response:', error);
       return errorResponse('Failed to update prompt response', 500, error.message);
@@ -91,7 +91,7 @@ export const updateAttendeeEventDocsRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.updateAttendeeEventDocs(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating attendee event docs:', error);
       return errorResponse('Failed to update event docs', 500, error.message);
@@ -109,7 +109,7 @@ export const findAttendeeObjRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.findAttendeeObjByAPI(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error finding attendee obj:', error);
       return errorResponse('Failed to find attendee object', 500, error.message);
@@ -127,7 +127,7 @@ export const updateAttendeeLURoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.updateAttendeeLU(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating attendee last updated:', error);
       return errorResponse('Failed to update last updated', 500, error.message);
@@ -145,7 +145,7 @@ export const updateAttendeeLUbyUserRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.updateAttendeeLUbyUser(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating attendee last updated by user:', error);
       return errorResponse('Failed to update last updated by user', 500, error.message);
@@ -163,7 +163,7 @@ export const updateAttendeeLUbyUserAndEventRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.updateAttendeeLUbyUserAndEvent(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating attendee last updated by user and event:', error);
       return errorResponse('Failed to update last updated', 500, error.message);

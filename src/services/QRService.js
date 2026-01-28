@@ -22,8 +22,8 @@ class QRService {
    * Generate mobile attendee QR code
    */
   async generateMobileAttendeeQR(request) {
-    const { attendeeGUID } = request.pathParameters || {};
-    const vert = request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
+    const { attendeeGUID, vert: pathVert } = request.pathParameters || {};
+    const vert = pathVert || request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
     
     if (!vert || !attendeeGUID) {
       return {
@@ -98,8 +98,8 @@ class QRService {
    * Generate mobile spectator QR code
    */
   async generateMobileSpecQR(request) {
-    const { orderGUID } = request.pathParameters || {};
-    const vert = request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
+    const { orderGUID, vert: pathVert } = request.pathParameters || {};
+    const vert = pathVert || request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
     
     if (!vert || !orderGUID) {
       return {
@@ -174,8 +174,8 @@ class QRService {
    * Generate check-in spectator QR code
    */
   async generateCheckinSpecQR(request) {
-    const { orderGUID, ticketItemGUID } = request.pathParameters || {};
-    const vert = request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
+    const { orderGUID, ticketItemGUID, vert: pathVert } = request.pathParameters || {};
+    const vert = pathVert || request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
     
     if (!vert || !orderGUID || !ticketItemGUID) {
       return {

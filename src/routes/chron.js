@@ -3,10 +3,8 @@
  * These are typically called by scheduled tasks/cron jobs
  */
 
-import { successResponse, errorResponse } from '../utils/response.js';
-import ChronService from '../services/ChronService.js';
-
-const _chronService = new ChronService();
+import { successResponse, errorResponse, createResponse } from '../utils/response.js';
+import _chronService from '../services/ChronService.js';
 
 /**
  * GET /chron/pending-transactions
@@ -18,7 +16,7 @@ export const getPendingTransactionsRoute = {
   handler: async (request) => {
     try {
       const result = await _chronService.getPendingTransactions(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting pending transactions:', error);
       return errorResponse('Failed to get pending transactions', 500, error.message);
@@ -36,7 +34,7 @@ export const getPendingTransactionsByAffiliateRoute = {
   handler: async (request) => {
     try {
       const result = await _chronService.getPendingTransactions(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error getting pending transactions by affiliate:', error);
       return errorResponse('Failed to get pending transactions', 500, error.message);
@@ -54,7 +52,7 @@ export const updatePendingTransactionsRoute = {
   handler: async (request) => {
     try {
       const result = await _chronService.updatePendingTransactions(request);
-      return successResponse(result);
+      return createResponse(200, result);
     } catch (error) {
       console.error('Error updating pending transactions:', error);
       return errorResponse('Failed to update pending transactions', 500, error.message);

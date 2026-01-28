@@ -70,8 +70,14 @@ class TableAssignerService {
       const db = await getDatabase(null, vert);
       const tableAssignerConfig = db.collection('tableAssignerConfig');
 
+      // Query for both Number and String eventID (data might be stored as either)
       const configs = await tableAssignerConfig
-        .find({ eventID: eventID })
+        .find({ 
+          $or: [
+            { eventID: eventID },
+            { eventID: String(eventID) }
+          ]
+        })
         .toArray();
 
       return configs;
@@ -218,11 +224,33 @@ class TableAssignerService {
       const db = await getDatabase(null, vert);
       const tableAssignerData = db.collection('tableAssignerData');
 
-      const data = await tableAssignerData
-        .find({ e: eventID, active: true })
-        .toArray();
+      console.log(`[TableAssignerService] Querying for eventID: ${eventID}, vertical: ${vert}`);
 
-      return data;
+      // Query with $or to handle both Number and String eventID formats
+      // First try without active filter to see if data exists
+      const query = {
+        $or: [
+          { e: eventID },
+          { e: String(eventID) }
+        ]
+      };
+
+      console.log(`[TableAssignerService] Query:`, JSON.stringify(query));
+
+      let data = await tableAssignerData.find(query).toArray();
+
+      console.log(`[TableAssignerService] Found ${data.length} documents (without active filter)`);
+
+      // If we got results, filter by active if the field exists
+      if (data.length > 0) {
+        data = data.filter(doc => !doc.hasOwnProperty('active') || doc.active === true);
+        console.log(`[TableAssignerService] After active filter: ${data.length} documents`);
+      }
+
+      console.log(`[TableAssignerService] Found ${data.length} documents`);
+
+      // Always return an array, even if empty
+      return Array.isArray(data) ? data : [];
     } catch (error) {
       console.error('Error finding table assigner data by event:', error);
       throw error;
