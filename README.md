@@ -6,6 +6,7 @@ This repository contains the migrated EventSquid API from Mantle to AWS Lambda w
 
 **All 247 routes have been migrated and are fully functional.** All core services and functions are implemented. See [MIGRATION_STATUS.md](./MIGRATION_STATUS.md) for detailed status.
 
+
 ## Architecture
 
 - **Runtime**: Node.js 24
