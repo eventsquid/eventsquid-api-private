@@ -10,7 +10,25 @@ Parameters:
       - staging
       - prod
     Description: Environment name
-  
+
+  VpcId:
+    Type: String
+    Description: VPC ID where the Lambda will run
+
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of subnet IDs for the Lambda VPC config
+
+  MongoSecretName:
+    Type: String
+    Default: mongodb/eventsquid
+    Description: Name of the MongoDB secret in AWS Secrets Manager
+
+  MongoDbName:
+    Type: String
+    Default: eventsquid
+    Description: Name of the MongoDB database
+
   ErrorNotificationEmail:
     Type: String
     Default: ''
@@ -90,12 +108,11 @@ Resources:
       Environment:
         Variables:
           NODE_ENV: !Ref Environment
+          MONGO_SECRET_NAME: !Ref MongoSecretName
+          MONGO_DB_NAME: !Ref MongoDbName
           ERROR_SNS_TOPIC_ARN: !Ref ErrorNotificationTopic
       VpcConfig:
-        SubnetIds:
-          - subnet-3c625f4a
-          - subnet-3a650c62
-          - subnet-5af1ef72  # Match working Lambda subnet
+        SubnetIds: !Ref SubnetIds
         SecurityGroupIds:
           - sg-277a3b5e  # Use existing security group from working Lambda
           - sg-d087f8ac   # Use existing security group from working Lambda
