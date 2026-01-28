@@ -34,7 +34,7 @@
     "moment": "^2.30.1",
     "moment-timezone": "^0.5.45",
     "uuid": "^11.0.3",
-    "axios": "^1.7.9",
+    "axios": "^1.13.3",
     "qr-image": "^3.2.0",
     "mssql": "^10.0.0",
     "@touch4it/ical-timezones": "^1.5.0",
