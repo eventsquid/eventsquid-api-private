@@ -19,16 +19,6 @@ Parameters:
     Type: CommaDelimitedList
     Description: Comma-separated list of subnet IDs for the Lambda VPC config
 
-  MongoSecretName:
-    Type: String
-    Default: mongodb/eventsquid
-    Description: Name of the MongoDB secret in AWS Secrets Manager
-
-  MongoDbName:
-    Type: String
-    Default: eventsquid
-    Description: Name of the MongoDB database
-
   ErrorNotificationEmail:
     Type: String
     Default: ''
@@ -108,8 +98,6 @@ Resources:
       Environment:
         Variables:
           NODE_ENV: !Ref Environment
-          MONGO_SECRET_NAME: !Ref MongoSecretName
-          MONGO_DB_NAME: !Ref MongoDbName
           ERROR_SNS_TOPIC_ARN: !Ref ErrorNotificationTopic
       VpcConfig:
         SubnetIds: !Ref SubnetIds

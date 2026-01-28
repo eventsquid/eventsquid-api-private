@@ -20,7 +20,15 @@ Parameters:
     Type: String
     Description: Deployment stage name (e.g. dev, v1)
     Default: dev
-  
+
+  VpcId:
+    Type: String
+    Description: VPC ID where the Lambda will run
+
+  SubnetIds:
+    Type: String
+    Description: Comma-separated list of subnet IDs for the Lambda VPC config
+
   GitHubConnectionArn:
     Type: String
     Description: ARN of the GitHub connection from AWS Connector
@@ -170,6 +178,12 @@ Resources:
           - Name: DEPLOY_ENV
             Value: !Ref DeploymentEnvironment
             Type: PLAINTEXT
+          - Name: VPC_ID
+            Value: !Ref VpcId
+            Type: PLAINTEXT
+          - Name: SUBNET_IDS
+            Value: !Ref SubnetIds
+            Type: PLAINTEXT
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
@@ -184,7 +198,7 @@ Resources:
               commands:
                 - npm install --production
                 - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
-                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api-${DEPLOY_ENV} --parameter-overrides Environment=${DEPLOY_ENV} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
+                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api-${DEPLOY_ENV} --parameter-overrides Environment=${DEPLOY_ENV} VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
                 - aws lambda update-function-code --function-name eventsquid-private-api-${DEPLOY_ENV} --zip-file fileb://function.zip --region ${AWS_REGION}
                 - aws lambda wait function-updated --function-name eventsquid-private-api-${DEPLOY_ENV} --region ${AWS_REGION}
                 - aws lambda update-function-configuration --function-name eventsquid-private-api-${DEPLOY_ENV} --environment Variables="{NODE_ENV=${DEPLOY_ENV}}" --region ${AWS_REGION}
