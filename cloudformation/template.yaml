@@ -138,17 +138,9 @@ Resources:
       AuthorizationType: NONE
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
-  # CloudWatch Log Group for API Gateway execution logs (must exist before stage with AccessLogSettings)
-  ApiGatewayExecutionLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/apigateway/eventsquid-private-api-${Environment}'
-      RetentionInDays: 14
-
-  # API Gateway Stage
+  # API Gateway Stage (access logging removed for now to simplify deployment)
   ApiGatewayStage:
     Type: AWS::ApiGatewayV2::Stage
-    DependsOn: ApiGatewayExecutionLogGroup
     Properties:
       ApiId: !Ref ApiGatewayRestApi
       StageName: !Ref Environment
@@ -156,9 +148,6 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: 100
         ThrottlingRateLimit: 50
-      AccessLogSettings:
-        DestinationArn: !GetAtt ApiGatewayExecutionLogGroup.Arn
-        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":$context.status,"protocol":"$context.protocol","responseLength":$context.responseLength,"error":{"message":"$context.error.message","messageString":"$context.error.messageString"},"integration":{"status":"$context.integration.status","error":"$context.integration.error","latency":"$context.integration.latency","requestId":"$context.integration.requestId"},"authorizer":{"error":"$context.authorizer.error","latency":"$context.authorizer.latency","requestId":"$context.authorizer.requestId","status":"$context.authorizer.status"}}'
 
   # Lambda Permission for API Gateway
   LambdaApiGatewayPermission:
