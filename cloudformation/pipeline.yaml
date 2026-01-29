@@ -198,6 +198,12 @@ Resources:
               commands:
                 - npm install --production
                 - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
+                - |
+                  if [ -z "$VPC_ID" ] || [ -z "$SUBNET_IDS" ]; then
+                    echo "ERROR: VPC_ID and SUBNET_IDS must be set. Update the pipeline stack with VpcId and SubnetIds parameters."
+                    echo "Redeploy pipeline: aws cloudformation deploy --template-file cloudformation/pipeline.yaml --stack-name <pipeline-stack-name> --parameter-overrides file://pipeline-params.json --capabilities CAPABILITY_NAMED_IAM"
+                    exit 1
+                  fi
                 - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api-${DEPLOY_ENV} --parameter-overrides Environment=${DEPLOY_ENV} VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
                 - aws lambda update-function-code --function-name eventsquid-private-api-${DEPLOY_ENV} --zip-file fileb://function.zip --region ${AWS_REGION}
                 - aws lambda wait function-updated --function-name eventsquid-private-api-${DEPLOY_ENV} --region ${AWS_REGION}

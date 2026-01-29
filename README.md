@@ -355,6 +355,44 @@ If you're seeing GitHub Actions errors:
 - Ensure the CodeStar Connection is properly configured and authorized
 - Verify the pipeline stack is deployed and active
 
+#### Error: "Parameters: [VpcId, SubnetIds] must have values"
+
+This happens when the **pipeline stack** was created/updated without passing `VpcId` and `SubnetIds`, or the CodeBuild project is using an older pipeline template that didn't pass these to the deploy command.
+
+**Fix:** Update the pipeline stack so CodeBuild receives VPC parameters. Use the same stack name and region as your pipeline, and pass at least `VpcId` and `SubnetIds` (plus other pipeline parameters: `GitHubOwner`, `GitHubRepo`, `GitHubBranch`, `GitHubConnectionArn`). Example:
+
+Bash:
+
+```bash
+aws cloudformation update-stack \
+  --stack-name <your-pipeline-stack-name> \
+  --template-body file://cloudformation/pipeline.yaml \
+  --parameters \
+    ParameterKey=GitHubOwner,ParameterValue=eventsquid \
+    ParameterKey=GitHubRepo,ParameterValue=eventsquid-api-private \
+    ParameterKey=GitHubBranch,ParameterValue=main \
+    ParameterKey=GitHubConnectionArn,ParameterValue=arn:aws:codestar-connections:... \
+    ParameterKey=VpcId,ParameterValue=vpc-xxxxx \
+    ParameterKey=SubnetIds,ParameterValue=subnet-xxx,subnet-yyy,subnet-zzz \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-west-2
+```
+
+PowerShell (use a parameters file to avoid comma-splitting of `SubnetIds`):
+
+```powershell
+aws cloudformation update-stack `
+  --stack-name "eventsquid-api-pipeline" `
+  --template-body file://cloudformation/pipeline.yaml `
+  --parameters file://pipeline-stack-params.json `
+  --capabilities CAPABILITY_NAMED_IAM `
+  --region us-west-2
+```
+
+Use `pipeline-stack-params.json` (pipeline parameters only; `pipeline-params.json` includes Mongo keys not used by the pipeline template). Edit that file to change VPC/subnet or connection ARN.
+
+Replace `<your-pipeline-stack-name>` with your actual pipeline stack name. Replace `vpc-xxxxx` and the subnet list with your VPC and subnet IDs (e.g. from `pipeline-params.json`). After the stack update completes, re-run the pipeline.
+
 #### Other deployment issues:
 - Check CodePipeline status in AWS Console
 - Review CodeBuild logs for specific error messages
