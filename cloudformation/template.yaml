@@ -115,13 +115,15 @@ Resources:
       ProtocolType: HTTP
       Description: EventSquid API Gateway
 
-  # API Gateway Integration
+  # API Gateway Integration (uses function ARN so stack create succeeds; alias live-${Environment} is created by pipeline after deploy)
   ApiGatewayIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
       ApiId: !Ref ApiGatewayRestApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:eventsquid-private-api-${Environment}:live-${Environment}/invocations'
+      IntegrationUri: !Sub
+        - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations'
+        - LambdaArn: !GetAtt LambdaFunction.Arn
       PayloadFormatVersion: '2.0'
 
   # API Gateway Route - Catch all

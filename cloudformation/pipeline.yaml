@@ -117,7 +117,15 @@ Resources:
               - Effect: Allow
                 Resource: '*'
                 Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
                   - sns:GetTopicAttributes
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:ListSubscriptionsByTopic
+                  - sns:TagResource
+                  - sns:UntagResource
               - Effect: Allow
                 Resource: '*'
                 Action:
