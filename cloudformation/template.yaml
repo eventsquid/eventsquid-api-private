@@ -169,16 +169,8 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*'
 
-  # CloudWatch Log Group for Lambda
-  # Note: Lambda automatically creates this if it doesn't exist, but we define it here for retention policy
-  # If it already exists, CloudFormation will update it rather than fail
-  LambdaLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/eventsquid-private-api-${Environment}'
-      RetentionInDays: 14
+  # Note: Lambda creates /aws/lambda/eventsquid-private-api-${Environment} automatically. Omitted from template
+  # to avoid AlreadyExists when re-deploying (e.g. after rollback). Set retention in Console or: aws logs put-retention-policy --log-group-name /aws/lambda/eventsquid-private-api-dev --retention-in-days 14
 
   # SNS Topic for Error Notifications
   ErrorNotificationTopic:
