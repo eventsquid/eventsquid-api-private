@@ -57,6 +57,22 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/eventsquid-private-api:*'
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/eventsquid-private-api:*'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:GetObjectVersion
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::eventsquid'
+                  - !Sub 'arn:aws:s3:::eventsquid/*'
+                  - !Sub 'arn:aws:s3:::eventsquid-private'
+                  - !Sub 'arn:aws:s3:::eventsquid-private/*'
 
   # Use existing security groups from working Lambda
   # sg-277a3b5e (default/redis) and sg-d087f8ac (SquidSQL/SQUID App Servers)

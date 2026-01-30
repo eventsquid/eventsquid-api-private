@@ -22,6 +22,24 @@ const PUBLIC_BUCKET = process.env.S3_PUBLIC_BUCKET || 'eventsquid';
 const PRIVATE_BUCKET = process.env.S3_PRIVATE_BUCKET || 'eventsquid-private';
 const S3_BASE_URL = process.env.S3_BASE_URL || 'https://s3-us-west-2.amazonaws.com/eventsquid/';
 
+const VPC_S3_HINT = ' If Lambda runs in a VPC, ensure subnets have a NAT Gateway or add an S3 VPC Gateway Endpoint so the function can reach S3.';
+
+/**
+ * Build a clear error message for S3 failures (surfaces ETIMEDOUT and VPC hint).
+ * @param {Error|{ code?: string, name?: string, message?: string, errors?: Array }} error
+ * @param {string} operation - e.g. 'upload', 'download', 'delete', 'copy'
+ * @returns {string}
+ */
+function buildS3ErrorMessage(error, operation) {
+  const op = operation || 'complete S3 operation';
+  const raw = error?.message ?? String(error);
+  const code = error?.code ?? error?.name;
+  const isTimeout = code === 'ETIMEDOUT' || code === 'TimeoutError' ||
+    (Array.isArray(error?.errors) && error.errors.some(e => e?.code === 'ETIMEDOUT'));
+  const base = `Failed to ${op}: ${raw}`;
+  return isTimeout ? base + VPC_S3_HINT : base;
+}
+
 /**
  * Upload a file to S3
  * @param {string|Buffer} data - File data (base64 string or Buffer)
@@ -75,7 +93,8 @@ export async function uploadS3(data, subFolder = '', ext, contentType, name = ''
     };
   } catch (error) {
     console.error('Error uploading to S3:', error);
-    throw new Error(`Failed to upload file to S3: ${error.message}`);
+    const msg = buildS3ErrorMessage(error, 'upload file to S3');
+    throw new Error(msg);
   }
 }
 
@@ -115,7 +134,7 @@ export async function downloadS3(name, subFolder = '', isPrivate = false) {
     };
   } catch (error) {
     console.error('Error downloading from S3:', error);
-    throw new Error(`Failed to download file from S3: ${error.message}`);
+    throw new Error(buildS3ErrorMessage(error, 'download file from S3'));
   }
 }
 
@@ -165,7 +184,7 @@ export async function deleteS3(name, subFolder = '', isPrivate = false) {
     return { success: true };
   } catch (error) {
     console.error('Error deleting from S3:', error);
-    throw new Error(`Failed to delete file from S3: ${error.message}`);
+    throw new Error(buildS3ErrorMessage(error, 'delete file from S3'));
   }
 }
 
@@ -207,7 +226,7 @@ export async function copyS3(sourceName, subFolder = '', isPrivate = false) {
     };
   } catch (error) {
     console.error('Error copying in S3:', error);
-    throw new Error(`Failed to copy file in S3: ${error.message}`);
+    throw new Error(buildS3ErrorMessage(error, 'copy file in S3'));
   }
 }
 
@@ -232,7 +251,7 @@ export async function getPresignedUrl(key, isPrivate = false, expiresIn = 3600) 
     return url;
   } catch (error) {
     console.error('Error generating presigned URL:', error);
-    throw new Error(`Failed to generate presigned URL: ${error.message}`);
+    throw new Error(buildS3ErrorMessage(error, 'generate presigned URL'));
   }
 }
 
@@ -294,7 +313,7 @@ export async function getFileMetadata(name, subFolder = '', isPrivate = false) {
     };
   } catch (error) {
     console.error('Error getting file metadata:', error);
-    throw new Error(`Failed to get file metadata: ${error.message}`);
+    throw new Error(buildS3ErrorMessage(error, 'get file metadata from S3'));
   }
 }
 
