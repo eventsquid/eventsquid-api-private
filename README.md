@@ -393,6 +393,18 @@ Use `pipeline-stack-params.json` (pipeline parameters only; `pipeline-params.jso
 
 Replace `<your-pipeline-stack-name>` with your actual pipeline stack name. Replace `vpc-xxxxx` and the subnet list with your VPC and subnet IDs (e.g. from `pipeline-params.json`). After the stack update completes, re-run the pipeline.
 
+#### Error: "Stage already exists" (ConflictException)
+
+This happens when the API already has a `dev` or `v1` stage (e.g. from a previous template or failed update). CloudFormation cannot create a stage that already exists.
+
+**Fix:** Delete the API stack and let the pipeline recreate it so the API and both stages are created in one pass:
+
+```powershell
+aws cloudformation delete-stack --stack-name eventsquid-private-api --region us-west-2
+```
+
+Wait for deletion to complete, then run the pipeline again. It will create a fresh stack with one API and both `dev` and `v1` stages.
+
 #### Other deployment issues:
 - Check CodePipeline status in AWS Console
 - Review CodeBuild logs for specific error messages
