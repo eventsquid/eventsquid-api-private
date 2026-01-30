@@ -1,16 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'EventSquid API - Lambda function with API Gateway for private VPC access'
+Description: 'EventSquid API - Single API Gateway with dev and v1 stages, one Lambda'
 
 Parameters:
-  Environment:
-    Type: String
-    Default: dev
-    AllowedValues:
-      - dev
-      - staging
-      - prod
-    Description: Environment name
-
   VpcId:
     Type: String
     Description: VPC ID where the Lambda will run
@@ -32,7 +23,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub eventsquid-private-api-lambda-role-${Environment}
+      RoleName: eventsquid-private-api-lambda-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -72,13 +63,11 @@ Resources:
   # These security groups already have proper egress rules configured
   # Note: VPC endpoints for Secrets Manager and CloudWatch Logs already exist in the VPC
 
-  # Lambda Function
-  # Note: Initial deployment uses placeholder code
-  # After first deployment, use GitHub Actions or AWS CLI to update with actual code
+  # Lambda Function (single function for all stages; pipeline updates code)
   LambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub eventsquid-private-api-${Environment}
+      FunctionName: eventsquid-private-api
       Runtime: nodejs24.x
       Handler: src/handler.handler
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -88,7 +77,7 @@ Resources:
             return {
               statusCode: 200,
               body: JSON.stringify({ 
-                message: 'Placeholder - deploy actual code via GitHub Actions or AWS CLI',
+                message: 'Placeholder - deploy actual code via pipeline',
                 note: 'See README.md for deployment instructions'
               })
             };
@@ -97,7 +86,7 @@ Resources:
       MemorySize: 1024  # Increased for production: supports VPC, multiple DB connections, and large codebase
       Environment:
         Variables:
-          NODE_ENV: !Ref Environment
+          NODE_ENV: dev
           ERROR_SNS_TOPIC_ARN: !Ref ErrorNotificationTopic
       VpcConfig:
         SubnetIds: !Ref SubnetIds
@@ -115,7 +104,7 @@ Resources:
       ProtocolType: HTTP
       Description: EventSquid API Gateway
 
-  # API Gateway Integration (uses function ARN so stack create succeeds; alias live-${Environment} is created by pipeline after deploy)
+  # API Gateway Integration (uses function ARN; pipeline creates alias 'live' after deploy)
   ApiGatewayIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
@@ -138,12 +127,23 @@ Resources:
       AuthorizationType: NONE
       Target: !Sub 'integrations/${ApiGatewayIntegration}'
 
-  # API Gateway Stage (access logging removed for now to simplify deployment)
-  ApiGatewayStage:
+  # API Gateway Stage: dev
+  ApiGatewayStageDev:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
       ApiId: !Ref ApiGatewayRestApi
-      StageName: !Ref Environment
+      StageName: dev
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+
+  # API Gateway Stage: v1
+  ApiGatewayStageV1:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGatewayRestApi
+      StageName: v1
       AutoDeploy: true
       DefaultRouteSettings:
         ThrottlingBurstLimit: 100
@@ -158,18 +158,14 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*'
 
-  # Note: Lambda creates /aws/lambda/eventsquid-private-api-${Environment} automatically. Omitted from template
-  # to avoid AlreadyExists when re-deploying (e.g. after rollback). Set retention in Console or: aws logs put-retention-policy --log-group-name /aws/lambda/eventsquid-private-api-dev --retention-in-days 14
+  # Note: Lambda creates /aws/lambda/eventsquid-private-api automatically. Set retention in Console or: aws logs put-retention-policy --log-group-name /aws/lambda/eventsquid-private-api --retention-in-days 14
 
   # SNS Topic for Error Notifications
   ErrorNotificationTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Sub eventsquid-private-api-errors-${Environment}
+      TopicName: eventsquid-private-api-errors
       DisplayName: EventSquid Private API Errors
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
 
   # Email Subscription (optional - only if email is provided)
   ErrorNotificationSubscription:
@@ -197,27 +193,33 @@ Resources:
 
 
 Outputs:
-  ApiGatewayUrl:
-    Description: API Gateway endpoint URL
-    Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+  ApiGatewayUrlDev:
+    Description: API Gateway URL (dev stage)
+    Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/dev'
     Export:
-      Name: !Sub eventsquid-private-api-url-${Environment}
+      Name: eventsquid-private-api-url-dev
+
+  ApiGatewayUrlV1:
+    Description: API Gateway URL (v1 stage)
+    Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/v1'
+    Export:
+      Name: eventsquid-private-api-url-v1
 
   LambdaFunctionArn:
     Description: Lambda function ARN
     Value: !GetAtt LambdaFunction.Arn
     Export:
-      Name: !Sub eventsquid-private-api-lambda-arn-${Environment}
+      Name: eventsquid-private-api-lambda-arn
 
   LambdaFunctionName:
     Description: Lambda function name
     Value: !Ref LambdaFunction
     Export:
-      Name: !Sub eventsquid-private-api-lambda-name-${Environment}
+      Name: eventsquid-private-api-lambda-name
 
   ErrorNotificationTopicArn:
     Description: SNS Topic ARN for error notifications
     Value: !Ref ErrorNotificationTopic
     Export:
-      Name: !Sub eventsquid-private-api-error-topic-arn-${Environment}
+      Name: eventsquid-private-api-error-topic-arn
 
