@@ -2,7 +2,7 @@
 
 This repository contains the migrated EventSquid API from Mantle to AWS Lambda with API Gateway, designed for private VPC access.
 
-## ✅ Migration Status: COMPLETE
+## ✅ Migration Status: COMPLETE  
 
 **All 247 routes have been migrated and are fully functional.** All core services and functions are implemented. See [MIGRATION_STATUS.md](./MIGRATION_STATUS.md) for detailed status.
 
