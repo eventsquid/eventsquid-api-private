@@ -84,8 +84,8 @@ export const handler = async (event) => {
           // leave body as array
         }
       }
-      // Fallback: application/x-www-form-urlencoded (e.g. base64=...&type=jpg&fileName=...&_guid=...)
-      if (typeof body === 'string' && body.includes('=') && (body.includes('&') || body.includes('base64='))) {
+      // Fallback: application/x-www-form-urlencoded (e.g. date=...&zone=... or base64=...&type=jpg&...)
+      if (typeof body === 'string' && body.includes('=') && (body.includes('&') || body.includes('='))) {
         try {
           const parsed = {};
           for (const pair of body.split('&')) {
@@ -96,11 +96,22 @@ export const handler = async (event) => {
               parsed[k] = v;
             }
           }
-          if (parsed.base64 != null || parsed.type != null || parsed.fileName != null || parsed._guid != null) {
+          if (Object.keys(parsed).length > 0) {
             body = parsed;
           }
         } catch (e5) {
           // leave body as string
+        }
+      }
+      // Fallback: body is a string that looks like JSON (starts with " or {) — try parse again (e.g. BOM or whitespace)
+      if (typeof body === 'string') {
+        const trimmed = body.trim().replace(/^\uFEFF/, '');
+        if (trimmed.startsWith('{') || trimmed.startsWith('[') || (trimmed.startsWith('"') && trimmed.length > 1)) {
+          try {
+            body = JSON.parse(trimmed);
+          } catch (e6) {
+            // leave body as string
+          }
         }
       }
     }
