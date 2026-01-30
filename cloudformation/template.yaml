@@ -128,7 +128,7 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub
-          - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:eventsquid-private-api:$${stageVariables.lambdaAlias}/invocations'
+          - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:eventsquid-private-api:${!stageVariables.lambdaAlias}/invocations'
           - {}
 
   ApiGatewayMethodProxy:
@@ -142,7 +142,7 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub
-          - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:eventsquid-private-api:$${stageVariables.lambdaAlias}/invocations'
+          - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:eventsquid-private-api:${!stageVariables.lambdaAlias}/invocations'
           - {}
 
   ApiGatewayDeployment:
