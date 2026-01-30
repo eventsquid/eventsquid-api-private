@@ -37,18 +37,26 @@ export const handler = async (event) => {
     const pathParameters = event.pathParameters || {};
     const queryStringParameters = event.queryStringParameters || {};
     
-    // Parse body if present
+    // Parse body if present (API Gateway may send base64-encoded body when binary media types are configured)
     let body = null;
     if (event.body) {
       try {
-        body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+        let rawBody = event.body;
+        if (event.isBase64Encoded && typeof rawBody === 'string') {
+          rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
+        }
+        body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
       } catch (e) {
         // If body is not JSON, keep as string
         body = event.body;
       }
     }
     
-    const headers = event.headers || {};
+    // Normalize headers to lowercase so Vert/vert/VERT all work (API Gateway can pass different casing)
+    const rawHeaders = event.headers || {};
+    const headers = Object.fromEntries(
+      Object.entries(rawHeaders).map(([k, v]) => [k.toLowerCase(), v])
+    );
 
     // Handle CORS preflight requests
     if (httpMethod === 'OPTIONS') {

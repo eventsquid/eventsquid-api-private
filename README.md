@@ -399,6 +399,10 @@ aws cloudformation delete-stack --stack-name eventsquid-private-api --region us-
 
 Wait for deletion to complete, then run the pipeline again. It will create a fresh stack with one API and both `dev` and `v1` stages.
 
+#### 400 Bad Request (e.g. POST /dev/images/es) with no error logs in CloudWatch
+
+If the request never reaches Lambda, API Gateway may be rejecting it (e.g. **payload over 10 MB** for REST APIs). Reduce image/body size or use a smaller image. If the request does reach Lambda, the handler now logs the reason for 400 (e.g. `[postImages] 400: Missing required fields` or `[requireVertical] 400`) so you can filter CloudWatch by these messages. Headers are normalized to lowercase so `Vert`/`vert` from API Gateway both work; the vertical can also come from the path (e.g. `/images/es` → `vert=es`).
+
 #### Other deployment issues:
 - Check CodePipeline status in AWS Console
 - Review CodeBuild logs for specific error messages

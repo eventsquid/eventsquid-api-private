@@ -94,6 +94,12 @@ export const postImagesRoute = {
       
       // Validate required fields
       if (!body.base64 || !body.type || !body.fileName || !body._guid) {
+        const missing = [];
+        if (!body.base64) missing.push('base64');
+        if (!body.type) missing.push('type');
+        if (!body.fileName) missing.push('fileName');
+        if (!body._guid) missing.push('_guid');
+        console.log('[postImages] 400: Missing required fields:', missing.join(', '), 'bodyKeys:', body ? Object.keys(body) : []);
         return errorResponse('Missing required fields: base64, type, fileName, _guid', 400);
       }
 
@@ -105,6 +111,7 @@ export const postImagesRoute = {
 
       const fileType = fileTypes[body.type];
       if (!fileType) {
+        console.log('[postImages] 400: Invalid file type:', body.type);
         return errorResponse('Invalid file type. Must be jpg or png', 400);
       }
 
@@ -182,6 +189,7 @@ export const postImagesRoute = {
           WHERE user_id = @userID
         `);
       } else {
+        console.log('[postImages] 400: Invalid fileName:', body.fileName);
         return errorResponse('Invalid fileName. Must be org-logo, speaker-photo, or avatars', 400);
       }
 
