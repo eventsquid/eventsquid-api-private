@@ -182,11 +182,31 @@ Resources:
           ThrottlingBurstLimit: 100
           ThrottlingRateLimit: 50
 
-  # Lambda Permission for API Gateway
+  # Lambda permissions for API Gateway (required per alias when using stage variables)
   LambdaApiGatewayPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*'
+
+  # Permission for dev stage (invokes alias :dev)
+  LambdaApiGatewayPermissionDev:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaAliasDev
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*'
+
+  # Permission for v1 stage (invokes alias :live – pipeline creates this alias)
+  LambdaApiGatewayPermissionLive:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Sub
+        - '${LambdaName}:live'
+        - LambdaName: !Ref LambdaFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*'
