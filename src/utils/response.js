@@ -11,7 +11,7 @@ export function createResponse(statusCode, body, contentType = 'application/json
   const defaultHeaders = {
     'Content-Type': contentType,
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,cftoken,cfid,vert',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,cftoken,cfid,vert,s3domain',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS,PATCH',
   };
 
