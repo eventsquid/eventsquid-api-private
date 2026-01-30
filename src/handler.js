@@ -40,6 +40,14 @@ export const handler = async (event) => {
     // Parse body if present (API Gateway may send base64-encoded body when binary media types are configured)
     let body = null;
     if (event.body) {
+      // Diagnostic: log what we received (safe preview only) so deployed vs local can be compared
+      const bodyType = typeof event.body;
+      const bodyLen = bodyType === 'string' ? event.body.length : (Array.isArray(event.body) ? event.body.length : 0);
+      const preview = bodyType === 'string'
+        ? event.body.substring(0, 150) + (event.body.length > 150 ? '...' : '')
+        : (Array.isArray(event.body) ? `[array len=${event.body.length} first=${JSON.stringify(event.body.slice(0, 3))}]` : bodyType);
+      console.log('[body] received type=', bodyType, 'length=', bodyLen, 'isBase64Encoded=', event.isBase64Encoded, 'preview=', preview);
+
       let rawBody = event.body;
       if (event.isBase64Encoded && typeof rawBody === 'string') {
         rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
@@ -71,7 +79,7 @@ export const handler = async (event) => {
           // leave body as string
         }
       }
-      // Handle body as array of bytes (API Gateway or client may send JSON as array of char codes) — same client works locally because Express parses JSON to object
+      // Handle body as array of bytes (API Gateway or client may send JSON as array of char codes)
       if (Array.isArray(body) && body.length > 0) {
         try {
           const str = typeof body[0] === 'number'
@@ -84,6 +92,28 @@ export const handler = async (event) => {
           // leave body as array
         }
       }
+      // Fallback: application/x-www-form-urlencoded (e.g. base64=...&type=jpg&fileName=...&_guid=...)
+      if (typeof body === 'string' && body.includes('=') && (body.includes('&') || body.includes('base64='))) {
+        try {
+          const parsed = {};
+          for (const pair of body.split('&')) {
+            const eq = pair.indexOf('=');
+            if (eq !== -1) {
+              const k = decodeURIComponent(pair.slice(0, eq).replace(/\+/g, ' '));
+              const v = decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '));
+              parsed[k] = v;
+            }
+          }
+          if (parsed.base64 != null || parsed.type != null || parsed.fileName != null || parsed._guid != null) {
+            body = parsed;
+          }
+        } catch (e5) {
+          // leave body as string
+        }
+      }
+
+      const resultKeys = body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body).slice(0, 15) : [];
+      console.log('[body] result type=', typeof body, 'isArray=', Array.isArray(body), 'keys=', resultKeys.join(', ') || 'n/a');
     }
     
     // Normalize headers to lowercase so Vert/vert/VERT all work (API Gateway can pass different casing)
