@@ -40,19 +40,49 @@ export const handler = async (event) => {
     // Parse body if present (API Gateway may send base64-encoded body when binary media types are configured)
     let body = null;
     if (event.body) {
+      let rawBody = event.body;
+      if (event.isBase64Encoded && typeof rawBody === 'string') {
+        rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
+      }
+      // Try parse as JSON; if body is base64-encoded JSON (without isBase64Encoded set), try decode then parse
       try {
-        let rawBody = event.body;
-        if (event.isBase64Encoded && typeof rawBody === 'string') {
-          rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
-        }
         body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
-        // Handle double-encoded JSON: API Gateway or client may send JSON as a string value, so parsed body is still a string
-        if (typeof body === 'string' && (body.trim().startsWith('{') || body.trim().startsWith('['))) {
-          body = JSON.parse(body);
-        }
       } catch (e) {
-        // If body is not JSON, keep as string
-        body = event.body;
+        if (typeof rawBody === 'string') {
+          try {
+            const decoded = Buffer.from(rawBody, 'base64').toString('utf8');
+            if (decoded.trim().startsWith('{') || decoded.trim().startsWith('[')) {
+              body = JSON.parse(decoded);
+            } else {
+              body = rawBody;
+            }
+          } catch (e2) {
+            body = rawBody;
+          }
+        } else {
+          body = rawBody;
+        }
+      }
+      // Handle double-encoded JSON: parsed body can still be a string (e.g. JSON string value)
+      if (typeof body === 'string' && body.trim().startsWith('{')) {
+        try {
+          body = JSON.parse(body);
+        } catch (e3) {
+          // leave body as string
+        }
+      }
+      // Handle body as array of bytes (API Gateway or client may send JSON as array of char codes) — same client works locally because Express parses JSON to object
+      if (Array.isArray(body) && body.length > 0) {
+        try {
+          const str = typeof body[0] === 'number'
+            ? Buffer.from(body).toString('utf8')
+            : body.join('');
+          if (str.trim().startsWith('{') || str.trim().startsWith('[')) {
+            body = JSON.parse(str);
+          }
+        } catch (e4) {
+          // leave body as array
+        }
       }
     }
     
