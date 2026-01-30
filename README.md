@@ -187,6 +187,8 @@ export const routes = [
 
 This project uses AWS CodePipeline for CI/CD, similar to other EventSquid projects.
 
+**Pre-commit deploy (versioned dev/v1):** To delete old stacks and create the two pipelines (develop + main) before your first commit, see **[docs/DEPLOY-PRE-COMMIT.md](docs/DEPLOY-PRE-COMMIT.md)** for step-by-step delete/create commands.
+
 #### Initial Pipeline Setup
 
 1. **Create GitHub Connection** (if not already exists):
@@ -222,37 +224,34 @@ aws cloudformation create-stack \
   --profile eventsquid
 ```
 
-3. **Pipeline Behavior**:
-   - Push to `main` branch → deploys to `prod` environment
-   - Push to `develop` branch → deploys to `staging` environment
-   - Push to other branches → deploys to `dev` environment
+3. **Stage versioning (dev vs v1)**:
+   - **dev** stage invokes Lambda alias `dev` (always `$LATEST`). Use for develop branch.
+   - **v1** stage invokes Lambda alias `live` (a published version). Use for main branch.
+   - Commit to **develop** → pipeline updates code only; dev gets latest.
+   - Commit to **main** → pipeline updates code, publishes a version, and points `live` to it; v1 gets that version until the next main deploy.
+
+4. **Two pipelines (recommended)**:
+   - **Main pipeline**: branch `main`, `DeploymentEnvironment=prod`. Deploys code and updates the `live` alias (v1 stage).
+   - **Develop pipeline**: branch `develop`, `DeploymentEnvironment=dev`. Deploys code only (dev stage uses `$LATEST`).
+
+Create both pipeline stacks (e.g. `eventsquid-api-pipeline-main` and `eventsquid-api-pipeline-develop`) with the same template; set `GitHubBranch` and `DeploymentEnvironment` per pipeline. The **v1** stage works only after the **main** pipeline has run at least once (it creates the `live` alias).
 
 The pipeline will automatically:
 - Build the Lambda function package
-- Deploy CloudFormation stack
+- Deploy CloudFormation stack (one API, dev + v1 stages)
 - Update Lambda function code
-- Update Lambda function configuration
+- On **main** (prod): publish version and update alias `live` for v1
 
 #### Multiple Pipeline Setups
 
-You can create separate pipelines for different branches:
+Create one pipeline stack per branch (main and develop):
 
 ```bash
-# Pipeline for main branch (prod)
-aws cloudformation create-stack \
-  --stack-name eventsquid-api-pipeline-prod \
-  --template-body file://cloudformation/pipeline.yaml \
-  --parameters \
-    ParameterKey=GitHubBranch,ParameterValue=main \
-    ...
+# Pipeline for main branch (prod) – publishes version and updates v1 stage
+# Use pipeline-stack-params.json but set DeploymentEnvironment=prod, GitHubBranch=main
 
-# Pipeline for develop branch (staging)
-aws cloudformation create-stack \
-  --stack-name eventsquid-api-pipeline-staging \
-  --template-body file://cloudformation/pipeline.yaml \
-  --parameters \
-    ParameterKey=GitHubBranch,ParameterValue=develop \
-    ...
+# Pipeline for develop branch (dev) – updates code only; dev stage uses $LATEST
+# Use pipeline-stack-params.json with DeploymentEnvironment=dev, GitHubBranch=develop
 ```
 
 ### Manual Deployment
@@ -276,12 +275,7 @@ aws lambda update-function-code \
 aws cloudformation deploy \
   --template-file cloudformation/template.yaml \
   --stack-name eventsquid-private-api \
-  --parameter-overrides \
-    Environment=dev \
-    VpcId=vpc-xxxxx \
-    SubnetIds=subnet-xxxxx,subnet-yyyyy \
-    MongoSecretName=mongodb/eventsquid \
-    MongoDbName=eventsquid \
+  --parameter-overrides VpcId=vpc-xxxxx SubnetIds=subnet-xxxxx,subnet-yyyyy \
   --capabilities CAPABILITY_NAMED_IAM \
   --profile eventsquid
 ```

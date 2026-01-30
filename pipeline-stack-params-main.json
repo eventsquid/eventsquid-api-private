@@ -9,11 +9,11 @@
   },
   {
     "ParameterKey": "GitHubBranch",
-    "ParameterValue": "develop"
+    "ParameterValue": "main"
   },
   {
     "ParameterKey": "DeploymentEnvironment",
-    "ParameterValue": "dev"
+    "ParameterValue": "prod"
   },
   {
     "ParameterKey": "VpcId",

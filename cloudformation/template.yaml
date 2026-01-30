@@ -95,59 +95,92 @@ Resources:
           - sg-d087f8ac   # Use existing security group from working Lambda
       ReservedConcurrentExecutions: 10
 
-  # API Gateway - HTTP API (public access via route authorization)
-  # Note: CORS is handled by Lambda, not API Gateway, to ensure headers are always present
+  # Lambda alias dev -> $LATEST (develop branch). Alias "live" is created/updated by pipeline on main.
+  LambdaAliasDev:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      FunctionVersion: $LATEST
+      Name: dev
+
+  # REST API with stage variables: dev -> :dev ($LATEST), v1 -> :live (published version)
   ApiGatewayRestApi:
-    Type: AWS::ApiGatewayV2::Api
+    Type: AWS::ApiGateway::RestApi
     Properties:
       Name: eventsquid-private-api
-      ProtocolType: HTTP
-      Description: EventSquid API Gateway
+      Description: EventSquid API Gateway (REST API for stage-based Lambda aliases)
 
-  # API Gateway Integration (uses function ARN; pipeline creates alias 'live' after deploy)
-  ApiGatewayIntegration:
-    Type: AWS::ApiGatewayV2::Integration
+  ApiGatewayResourceProxy:
+    Type: AWS::ApiGateway::Resource
     Properties:
-      ApiId: !Ref ApiGatewayRestApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub
-        - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations'
-        - LambdaArn: !GetAtt LambdaFunction.Arn
-      PayloadFormatVersion: '2.0'
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: '{proxy+}'
 
-  # API Gateway Route - Catch all
-  # AuthorizationType: NONE allows public access (no authentication required)
-  # Note: OPTIONS requests are handled automatically by API Gateway CORS configuration
-  # Do NOT create explicit OPTIONS routes - let API Gateway handle them
-  ApiGatewayRoute:
-    Type: AWS::ApiGatewayV2::Route
+  ApiGatewayMethodRoot:
+    Type: AWS::ApiGateway::Method
     Properties:
-      ApiId: !Ref ApiGatewayRestApi
-      RouteKey: '$default'
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !GetAtt ApiGatewayRestApi.RootResourceId
+      HttpMethod: ANY
       AuthorizationType: NONE
-      Target: !Sub 'integrations/${ApiGatewayIntegration}'
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:eventsquid-private-api:$${stageVariables.lambdaAlias}/invocations'
+          - {}
 
-  # API Gateway Stage: dev
+  ApiGatewayMethodProxy:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceProxy
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:eventsquid-private-api:$${stageVariables.lambdaAlias}/invocations'
+          - {}
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiGatewayMethodRoot
+      - ApiGatewayMethodProxy
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      Description: Deployment for dev and v1 stages
+
   ApiGatewayStageDev:
-    Type: AWS::ApiGatewayV2::Stage
+    Type: AWS::ApiGateway::Stage
     Properties:
-      ApiId: !Ref ApiGatewayRestApi
+      RestApiId: !Ref ApiGatewayRestApi
+      DeploymentId: !Ref ApiGatewayDeployment
       StageName: dev
-      AutoDeploy: true
-      DefaultRouteSettings:
-        ThrottlingBurstLimit: 100
-        ThrottlingRateLimit: 50
+      Variables:
+        lambdaAlias: dev
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 100
+          ThrottlingRateLimit: 50
 
-  # API Gateway Stage: v1
   ApiGatewayStageV1:
-    Type: AWS::ApiGatewayV2::Stage
+    Type: AWS::ApiGateway::Stage
     Properties:
-      ApiId: !Ref ApiGatewayRestApi
+      RestApiId: !Ref ApiGatewayRestApi
+      DeploymentId: !Ref ApiGatewayDeployment
       StageName: v1
-      AutoDeploy: true
-      DefaultRouteSettings:
-        ThrottlingBurstLimit: 100
-        ThrottlingRateLimit: 50
+      Variables:
+        lambdaAlias: live
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 100
+          ThrottlingRateLimit: 50
 
   # Lambda Permission for API Gateway
   LambdaApiGatewayPermission:
