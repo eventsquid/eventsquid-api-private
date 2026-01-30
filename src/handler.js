@@ -46,6 +46,10 @@ export const handler = async (event) => {
           rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
         }
         body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+        // Handle double-encoded JSON: API Gateway or client may send JSON as a string value, so parsed body is still a string
+        if (typeof body === 'string' && (body.trim().startsWith('{') || body.trim().startsWith('['))) {
+          body = JSON.parse(body);
+        }
       } catch (e) {
         // If body is not JSON, keep as string
         body = event.body;
