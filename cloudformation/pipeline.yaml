@@ -216,6 +216,7 @@ Resources:
                 - aws lambda update-function-code --function-name eventsquid-private-api-${DEPLOY_ENV} --zip-file fileb://function.zip --region ${AWS_REGION}
                 - aws lambda wait function-updated --function-name eventsquid-private-api-${DEPLOY_ENV} --region ${AWS_REGION}
                 - aws lambda update-function-configuration --function-name eventsquid-private-api-${DEPLOY_ENV} --environment Variables="{NODE_ENV=${DEPLOY_ENV}}" --region ${AWS_REGION}
+                - aws lambda wait function-updated --function-name eventsquid-private-api-${DEPLOY_ENV} --region ${AWS_REGION}
                 - VERSION=$(aws lambda publish-version --function-name eventsquid-private-api-${DEPLOY_ENV} --region ${AWS_REGION} --query 'Version' --output text)
                 - aws lambda update-alias --function-name eventsquid-private-api-${DEPLOY_ENV} --name live-${DEPLOY_ENV} --function-version $VERSION --region ${AWS_REGION} || aws lambda create-alias --function-name eventsquid-private-api-${DEPLOY_ENV} --name live-${DEPLOY_ENV} --function-version $VERSION --region ${AWS_REGION}
           artifacts:
