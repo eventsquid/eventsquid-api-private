@@ -19,14 +19,28 @@ export const utcToEventZoneRoute = {
   path: '/utcToEventZone',
   handler: requireAuth(async (request) => {
     try {
-      const { date, zone, format } = request.body || {};
-      
+      const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const { date, zone, format } = body;
+
       if (!date || !zone) {
+        console.log('[utcToEventZone] 400: Missing date or zone. bodyType=', typeof request.body, 'bodyKeys=', typeof request.body === 'object' && request.body ? Object.keys(request.body).slice(0, 10) : 'n/a');
         return errorResponse('date and zone are required', 400);
       }
-      
-      const convertedDate = utcToTimezone(new Date(date), zone, format || 'YYYY-MM-DD HH:mm:ss');
-      
+
+      const dateObj = new Date(date);
+      if (Number.isNaN(dateObj.getTime())) {
+        console.log('[utcToEventZone] 400: Invalid date value.', { date, zone });
+        return errorResponse('Invalid date value', 400);
+      }
+
+      const convertedDate = utcToTimezone(dateObj, zone, format || 'YYYY-MM-DD HH:mm:ss');
+      if (convertedDate == null || String(convertedDate).toLowerCase().includes('invalid')) {
+        console.log('[utcToEventZone] 400: Conversion failed.', { date, zone, result: convertedDate });
+        return errorResponse('Invalid timezone or conversion failed', 400);
+      }
+
       return createResponse(200, { date: convertedDate });
     } catch (error) {
       console.error('Error in utcToEventZone:', error);
@@ -44,14 +58,28 @@ export const timezoneToUTCRoute = {
   path: '/timezoneToUTC',
   handler: requireAuth(async (request) => {
     try {
-      const { date, zone, format } = request.body || {};
-      
+      const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const { date, zone, format } = body;
+
       if (!date || !zone) {
+        console.log('[timezoneToUTC] 400: Missing date or zone. bodyType=', typeof request.body, 'bodyKeys=', typeof request.body === 'object' && request.body ? Object.keys(request.body).slice(0, 10) : 'n/a');
         return errorResponse('date and zone are required', 400);
       }
-      
-      const utcDate = timezoneToUTC(new Date(date), zone, format || 'YYYY-MM-DD HH:mm:ss');
-      
+
+      const dateObj = new Date(date);
+      if (Number.isNaN(dateObj.getTime())) {
+        console.log('[timezoneToUTC] 400: Invalid date value.', { date, zone });
+        return errorResponse('Invalid date value', 400);
+      }
+
+      const utcDate = timezoneToUTC(dateObj, zone, format || 'YYYY-MM-DD HH:mm:ss');
+      if (utcDate == null || String(utcDate).toLowerCase().includes('invalid')) {
+        console.log('[timezoneToUTC] 400: Conversion failed (invalid zone or result).', { date, zone, result: utcDate });
+        return errorResponse('Invalid timezone or conversion failed', 400);
+      }
+
       return createResponse(200, { date: utcDate });
     } catch (error) {
       console.error('Error in timezoneToUTC:', error);

@@ -40,14 +40,6 @@ export const handler = async (event) => {
     // Parse body if present (API Gateway may send base64-encoded body when binary media types are configured)
     let body = null;
     if (event.body) {
-      // Diagnostic: log what we received (safe preview only) so deployed vs local can be compared
-      const bodyType = typeof event.body;
-      const bodyLen = bodyType === 'string' ? event.body.length : (Array.isArray(event.body) ? event.body.length : 0);
-      const preview = bodyType === 'string'
-        ? event.body.substring(0, 150) + (event.body.length > 150 ? '...' : '')
-        : (Array.isArray(event.body) ? `[array len=${event.body.length} first=${JSON.stringify(event.body.slice(0, 3))}]` : bodyType);
-      console.log('[body] received type=', bodyType, 'length=', bodyLen, 'isBase64Encoded=', event.isBase64Encoded, 'preview=', preview);
-
       let rawBody = event.body;
       if (event.isBase64Encoded && typeof rawBody === 'string') {
         rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
@@ -111,9 +103,6 @@ export const handler = async (event) => {
           // leave body as string
         }
       }
-
-      const resultKeys = body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body).slice(0, 15) : [];
-      console.log('[body] result type=', typeof body, 'isArray=', Array.isArray(body), 'keys=', resultKeys.join(', ') || 'n/a');
     }
     
     // Normalize headers to lowercase so Vert/vert/VERT all work (API Gateway can pass different casing)
