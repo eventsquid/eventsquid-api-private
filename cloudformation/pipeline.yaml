@@ -15,7 +15,20 @@ Parameters:
     Type: String
     Description: GitHub branch name
     Default: main
-  
+
+  DeploymentEnvironment:
+    Type: String
+    Description: Deployment stage name (e.g. dev, v1)
+    Default: dev
+
+  VpcId:
+    Type: String
+    Description: VPC ID where the Lambda will run
+
+  SubnetIds:
+    Type: String
+    Description: Comma-separated list of subnet IDs for the Lambda VPC config
+
   GitHubConnectionArn:
     Type: String
     Description: ARN of the GitHub connection from AWS Connector
@@ -104,6 +117,18 @@ Resources:
               - Effect: Allow
                 Resource: '*'
                 Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:GetTopicAttributes
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:ListSubscriptionsByTopic
+                  - sns:TagResource
+                  - sns:UntagResource
+              - Effect: Allow
+                Resource: '*'
+                Action:
                   - apigateway:*
                   - execute-api:*
 
@@ -158,6 +183,15 @@ Resources:
           - Name: AWS_REGION
             Value: us-west-2
             Type: PLAINTEXT
+          - Name: DEPLOY_ENV
+            Value: !Ref DeploymentEnvironment
+            Type: PLAINTEXT
+          - Name: VPC_ID
+            Value: !Ref VpcId
+            Type: PLAINTEXT
+          - Name: SUBNET_IDS
+            Value: !Ref SubnetIds
+            Type: PLAINTEXT
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
@@ -172,10 +206,22 @@ Resources:
               commands:
                 - npm install --production
                 - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
-                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides Environment=dev --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
+                - |
+                  if [ -z "$VPC_ID" ] || [ -z "$SUBNET_IDS" ]; then
+                    echo "ERROR: VPC_ID and SUBNET_IDS must be set. Update the pipeline stack with VpcId and SubnetIds parameters."
+                    echo "Redeploy pipeline: aws cloudformation deploy --template-file cloudformation/pipeline.yaml --stack-name <pipeline-stack-name> --parameter-overrides file://pipeline-params.json --capabilities CAPABILITY_NAMED_IAM"
+                    exit 1
+                  fi
+                - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
                 - aws lambda update-function-code --function-name eventsquid-private-api --zip-file fileb://function.zip --region ${AWS_REGION}
                 - aws lambda wait function-updated --function-name eventsquid-private-api --region ${AWS_REGION}
-                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=dev}" --region ${AWS_REGION}
+                - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=${DEPLOY_ENV}}" --region ${AWS_REGION}
+                - aws lambda wait function-updated --function-name eventsquid-private-api --region ${AWS_REGION}
+                - |
+                  if [ "$DEPLOY_ENV" = "prod" ]; then
+                    VERSION=$(aws lambda publish-version --function-name eventsquid-private-api --region ${AWS_REGION} --query 'Version' --output text)
+                    aws lambda update-alias --function-name eventsquid-private-api --name live --function-version $VERSION --region ${AWS_REGION} || aws lambda create-alias --function-name eventsquid-private-api --name live --function-version $VERSION --region ${AWS_REGION}
+                  fi
           artifacts:
             files: '**/*'
 

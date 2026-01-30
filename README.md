@@ -6,6 +6,7 @@ This repository contains the migrated EventSquid API from Mantle to AWS Lambda w
 
 **All 247 routes have been migrated and are fully functional.** All core services and functions are implemented. See [MIGRATION_STATUS.md](./MIGRATION_STATUS.md) for detailed status.
 
+
 ## Architecture
 
 - **Runtime**: Node.js 24
@@ -186,6 +187,8 @@ export const routes = [
 
 This project uses AWS CodePipeline for CI/CD, similar to other EventSquid projects.
 
+**Pre-commit deploy (versioned dev/v1):** To delete old stacks and create the two pipelines (develop + main) before your first commit, see **[docs/DEPLOY-PRE-COMMIT.md](docs/DEPLOY-PRE-COMMIT.md)** for step-by-step delete/create commands.
+
 #### Initial Pipeline Setup
 
 1. **Create GitHub Connection** (if not already exists):
@@ -221,37 +224,34 @@ aws cloudformation create-stack \
   --profile eventsquid
 ```
 
-3. **Pipeline Behavior**:
-   - Push to `main` branch → deploys to `prod` environment
-   - Push to `develop` branch → deploys to `staging` environment
-   - Push to other branches → deploys to `dev` environment
+3. **Stage versioning (dev vs v1)**:
+   - **dev** stage invokes Lambda alias `dev` (always `$LATEST`). Use for develop branch.
+   - **v1** stage invokes Lambda alias `live` (a published version). Use for main branch.
+   - Commit to **develop** → pipeline updates code only; dev gets latest.
+   - Commit to **main** → pipeline updates code, publishes a version, and points `live` to it; v1 gets that version until the next main deploy.
+
+4. **Two pipelines (recommended)**:
+   - **Main pipeline**: branch `main`, `DeploymentEnvironment=prod`. Deploys code and updates the `live` alias (v1 stage).
+   - **Develop pipeline**: branch `develop`, `DeploymentEnvironment=dev`. Deploys code only (dev stage uses `$LATEST`).
+
+Create both pipeline stacks (e.g. `eventsquid-api-pipeline-main` and `eventsquid-api-pipeline-develop`) with the same template; set `GitHubBranch` and `DeploymentEnvironment` per pipeline. The **v1** stage works only after the **main** pipeline has run at least once (it creates the `live` alias).
 
 The pipeline will automatically:
 - Build the Lambda function package
-- Deploy CloudFormation stack
+- Deploy CloudFormation stack (one API, dev + v1 stages)
 - Update Lambda function code
-- Update Lambda function configuration
+- On **main** (prod): publish version and update alias `live` for v1
 
 #### Multiple Pipeline Setups
 
-You can create separate pipelines for different branches:
+Create one pipeline stack per branch (main and develop):
 
 ```bash
-# Pipeline for main branch (prod)
-aws cloudformation create-stack \
-  --stack-name eventsquid-api-pipeline-prod \
-  --template-body file://cloudformation/pipeline.yaml \
-  --parameters \
-    ParameterKey=GitHubBranch,ParameterValue=main \
-    ...
+# Pipeline for main branch (prod) – publishes version and updates v1 stage
+# Use pipeline-stack-params.json but set DeploymentEnvironment=prod, GitHubBranch=main
 
-# Pipeline for develop branch (staging)
-aws cloudformation create-stack \
-  --stack-name eventsquid-api-pipeline-staging \
-  --template-body file://cloudformation/pipeline.yaml \
-  --parameters \
-    ParameterKey=GitHubBranch,ParameterValue=develop \
-    ...
+# Pipeline for develop branch (dev) – updates code only; dev stage uses $LATEST
+# Use pipeline-stack-params.json with DeploymentEnvironment=dev, GitHubBranch=develop
 ```
 
 ### Manual Deployment
@@ -275,12 +275,7 @@ aws lambda update-function-code \
 aws cloudformation deploy \
   --template-file cloudformation/template.yaml \
   --stack-name eventsquid-private-api \
-  --parameter-overrides \
-    Environment=dev \
-    VpcId=vpc-xxxxx \
-    SubnetIds=subnet-xxxxx,subnet-yyyyy \
-    MongoSecretName=mongodb/eventsquid \
-    MongoDbName=eventsquid \
+  --parameter-overrides VpcId=vpc-xxxxx SubnetIds=subnet-xxxxx,subnet-yyyyy \
   --capabilities CAPABILITY_NAMED_IAM \
   --profile eventsquid
 ```
@@ -353,6 +348,56 @@ If you're seeing GitHub Actions errors:
 - CodeBuild logs for build errors
 - Ensure the CodeStar Connection is properly configured and authorized
 - Verify the pipeline stack is deployed and active
+
+#### Error: "Parameters: [VpcId, SubnetIds] must have values"
+
+This happens when the **pipeline stack** was created/updated without passing `VpcId` and `SubnetIds`, or the CodeBuild project is using an older pipeline template that didn't pass these to the deploy command.
+
+**Fix:** Update the pipeline stack so CodeBuild receives VPC parameters. Use the same stack name and region as your pipeline, and pass at least `VpcId` and `SubnetIds` (plus other pipeline parameters: `GitHubOwner`, `GitHubRepo`, `GitHubBranch`, `GitHubConnectionArn`). Example:
+
+Bash:
+
+```bash
+aws cloudformation update-stack \
+  --stack-name <your-pipeline-stack-name> \
+  --template-body file://cloudformation/pipeline.yaml \
+  --parameters \
+    ParameterKey=GitHubOwner,ParameterValue=eventsquid \
+    ParameterKey=GitHubRepo,ParameterValue=eventsquid-api-private \
+    ParameterKey=GitHubBranch,ParameterValue=main \
+    ParameterKey=GitHubConnectionArn,ParameterValue=arn:aws:codestar-connections:... \
+    ParameterKey=VpcId,ParameterValue=vpc-xxxxx \
+    ParameterKey=SubnetIds,ParameterValue=subnet-xxx,subnet-yyy,subnet-zzz \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-west-2
+```
+
+PowerShell (use a parameters file to avoid comma-splitting of `SubnetIds`):
+
+```powershell
+aws cloudformation update-stack `
+  --stack-name "eventsquid-api-pipeline" `
+  --template-body file://cloudformation/pipeline.yaml `
+  --parameters file://pipeline-stack-params.json `
+  --capabilities CAPABILITY_NAMED_IAM `
+  --region us-west-2
+```
+
+Use `pipeline-stack-params.json` (pipeline parameters only; `pipeline-params.json` includes Mongo keys not used by the pipeline template). Edit that file to change VPC/subnet or connection ARN.
+
+Replace `<your-pipeline-stack-name>` with your actual pipeline stack name. Replace `vpc-xxxxx` and the subnet list with your VPC and subnet IDs (e.g. from `pipeline-params.json`). After the stack update completes, re-run the pipeline.
+
+#### Error: "Stage already exists" (ConflictException)
+
+This happens when the API already has a `dev` or `v1` stage (e.g. from a previous template or failed update). CloudFormation cannot create a stage that already exists.
+
+**Fix:** Delete the API stack and let the pipeline recreate it so the API and both stages are created in one pass:
+
+```powershell
+aws cloudformation delete-stack --stack-name eventsquid-private-api --region us-west-2
+```
+
+Wait for deletion to complete, then run the pipeline again. It will create a fresh stack with one API and both `dev` and `v1` stages.
 
 #### Other deployment issues:
 - Check CodePipeline status in AWS Console
