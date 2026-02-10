@@ -256,7 +256,25 @@ export async function setUsage(eventID, slotID, actionID, session, vert) {
 }
 
 /**
+ * Normalize a scheduling grid row to prod shape (single values, not arrays).
+ * node-mssql returns time_slot and eventFeeID as arrays when the proc has duplicate column names.
+ */
+function normalizeSchedulingGridRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  const out = { ...row };
+  if (Array.isArray(out.time_slot) && out.time_slot.length > 0) {
+    out.time_slot = out.time_slot[out.time_slot.length - 1];
+  }
+  if (Array.isArray(out.eventFeeID)) {
+    out.eventFeeID = out.eventFeeID.length > 0 ? out.eventFeeID[0] : null;
+  }
+  return out;
+}
+
+/**
  * Scheduling Grid - Get slots
+ * Stored proc node_veoGetSchedulingGrid2 may return multiple result sets; return all to match Mantle/tedious-promises behavior.
+ * Rows are normalized so time_slot is a single string (prod shape).
  */
 export async function schedulingGridGetSlots(scheduleID, vert) {
   try {
@@ -264,13 +282,19 @@ export async function schedulingGridGetSlots(scheduleID, vert) {
     const dbName = getDatabaseName(vert);
 
     const request = new sql.Request();
+    request.multiple = true; // allow multiple result sets from stored proc
     request.input('scheduleID', sql.Int, Number(scheduleID));
     const result = await request.query(`
       USE ${dbName};
       EXEC dbo.node_veoGetSchedulingGrid2 @scheduleID
     `);
 
-    return result.recordset;
+    if (result.recordsets && result.recordsets.length > 1) {
+      return result.recordsets;
+    }
+    const recordset = result.recordset != null ? result.recordset : (result.recordsets && result.recordsets[0]) || [];
+    if (!Array.isArray(recordset)) return recordset;
+    return recordset.map(normalizeSchedulingGridRow);
   } catch (error) {
     console.error('Error getting scheduling grid slots:', error);
     throw error;
