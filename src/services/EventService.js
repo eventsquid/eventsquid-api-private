@@ -1630,11 +1630,26 @@ class EventService {
         eventData.eei = await dateAndTimeToDatetime(eventData.ee, eventData.eet);
       }
 
-      // Delete any existing record
-      await eventsCollection.deleteOne({ '_id.s': vert, '_id.e': Number(eventID) });
+      const filter = { '_id.s': vert, '_id.e': Number(eventID) };
 
-      // Save the updated version
-      await eventsCollection.insertOne(eventData);
+      // Keep a backup so we can restore if insert fails (avoids leaving the event missing in Mongo).
+      const existingDoc = await eventsCollection.findOne(filter);
+
+      await eventsCollection.deleteOne(filter);
+
+      try {
+        await eventsCollection.insertOne(eventData);
+      } catch (insertError) {
+        if (existingDoc) {
+          try {
+            await eventsCollection.insertOne(existingDoc);
+            console.error('Error touching event: insert failed; restored previous event document.', insertError);
+          } catch (restoreError) {
+            console.error('Error touching event: insert failed and restore failed.', { insertError, restoreError });
+          }
+        }
+        throw insertError;
+      }
 
       return {
         status: 'success',

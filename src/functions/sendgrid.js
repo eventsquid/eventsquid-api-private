@@ -23,10 +23,15 @@ export async function logEmail(form) {
     const inboundAPIKey = process.env.TWILIO_INBOUND_API_KEY || process.env.SENDGRID_INBOUND_API_KEY;
 
     // Filter the array down to those that include the eventsquid API key (_esk),
-    // AND the eventsquid tracking indicator (_est - without this we won't track the email)
-    const sendgridRA = Array.isArray(form) 
-      ? _.filter(form, { '_esk': inboundAPIKey, '_est': 1 })
+    // AND the eventsquid tracking indicator (_est - without this we won't track the email).
+    // SendGrid sends unique_args as strings, so _est may be "1" or 1.
+    const sendgridRA = Array.isArray(form)
+      ? _.filter(form, (evt) => evt && evt._esk === inboundAPIKey && (evt._est === 1 || evt._est === '1' || Number(evt._est) === 1))
       : [];
+
+    if (Array.isArray(form) && form.length > 0 && sendgridRA.length === 0) {
+      console.log('[logEmail] No events matched _esk/_est. formLength=', form.length, 'inboundKeySet=', !!inboundAPIKey, 'firstEvtKeys=', typeof form[0] === 'object' && form[0] ? Object.keys(form[0]).slice(0, 15) : 'n/a');
+    }
 
     const messageIDs = {};
     let thisMsgID = '';
