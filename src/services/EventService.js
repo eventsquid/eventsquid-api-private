@@ -58,19 +58,121 @@ class EventService {
   }
 
   /**
-   * Prepare event results - post-processes results for specific resultsets
+   * Prepare event results - post-processes results for specific resultsets.
+   * Matches Mantle prepEventResults: builds fees-by-cat from evfs, questions-with-options from eq/eqo,
+   * then removes evfs, eq, eqo from each doc.
    */
   async prepEventResults(resultset, docs) {
     if (!docs || !Array.isArray(docs)) {
       return docs;
     }
 
-    // For the event config in the new group tool
-    if (resultset === "grouptool-event") {
-      // This is complex restructuring logic - simplified version
-      // Full implementation would restructure fees-by-cat and questions-with-options
-      // For now, return docs as-is (full implementation can be added later)
-      return docs;
+    if (resultset === 'grouptool-event') {
+      for (let i = 0; i < docs.length; i++) {
+        const doc = docs[i];
+        const feeCatObj = {};
+        const feeCatRA = [];
+
+        if (doc.evfs && Array.isArray(doc.evfs)) {
+          doc['fees-by-cat'] = [];
+
+          for (let j = 0; j < doc.evfs.length; j++) {
+            const thisFee = doc.evfs[j];
+            let thisFeeCatName = thisFee.fgn || thisFee.fc;
+            if (!thisFeeCatName) {
+              thisFeeCatName = thisFee.fc;
+            }
+            const key = String(thisFeeCatName);
+            if (!feeCatObj[key]) {
+              feeCatObj[key] = [];
+              feeCatRA.push(key);
+            }
+            feeCatObj[key].push(thisFee);
+          }
+
+          feeCatRA.sort((a, b) => {
+            const la = (a || '').toLowerCase();
+            const lb = (b || '').toLowerCase();
+            if (la < lb) return -1;
+            if (la > lb) return 1;
+            return 0;
+          });
+
+          for (let k = 0; k < feeCatRA.length; k++) {
+            const thisFeeCat = String(feeCatRA[k]);
+            feeCatObj[thisFeeCat].sort((a, b) => {
+              const am = (a.fm || '').toLowerCase();
+              const bm = (b.fm || '').toLowerCase();
+              if (am < bm) return -1;
+              if (am > bm) return 1;
+              return 0;
+            });
+            doc['fees-by-cat'].push({
+              category: thisFeeCat,
+              fees: feeCatObj[thisFeeCat]
+            });
+          }
+
+          delete doc.evfs;
+        }
+
+        if (doc.eq && Array.isArray(doc.eq)) {
+          doc['questions-with-options'] = [];
+          const questionObj = {};
+          const questionRA = [];
+
+          for (let l = 0; l < doc.eq.length; l++) {
+            const thisQ = doc.eq[l];
+            if (thisQ && thisQ.fo === 1) {
+              const fiKey = '_' + String(thisQ.fi);
+              questionObj[fiKey] = { ...thisQ, op: [] };
+              questionRA.push({ fi: Number(thisQ.fi), fl: String(thisQ.fl || '') });
+            }
+          }
+
+          questionRA.sort((a, b) => {
+            const al = (a.fl || '').toLowerCase();
+            const bl = (b.fl || '').toLowerCase();
+            if (al < bl) return -1;
+            if (al > bl) return 1;
+            return 0;
+          });
+
+          if (doc.eqo && Array.isArray(doc.eqo)) {
+            for (let m = 0; m < doc.eqo.length; m++) {
+              const thisOpt = doc.eqo[m];
+              if (thisOpt && questionObj['_' + String(thisOpt.fid)]) {
+                questionObj['_' + String(thisOpt.fid)].op.push({
+                  ol: String(thisOpt.ol || ''),
+                  ov: String(thisOpt.ov || ''),
+                  id: Number(thisOpt.id)
+                });
+              }
+            }
+          }
+
+          for (let n = 0; n < questionRA.length; n++) {
+            const thisQObj = questionObj['_' + String(questionRA[n].fi)];
+            if (thisQObj && thisQObj.op && thisQObj.op.length > 0) {
+              thisQObj.op.sort((a, b) => {
+                const ao = (a.ol || '').toLowerCase();
+                const bo = (b.ol || '').toLowerCase();
+                if (ao < bo) return -1;
+                if (ao > bo) return 1;
+                return 0;
+              });
+              doc['questions-with-options'].push({
+                fl: String(thisQObj.fl || ''),
+                fi: Number(thisQObj.fi),
+                op: thisQObj.op
+              });
+            }
+          }
+
+          delete doc.eq;
+          delete doc.eqo;
+        }
+      }
     }
 
     return docs;
@@ -334,7 +436,9 @@ class EventService {
         }
       }
 
-      return event;
+      // Match production shape: transform evfs/eq/eqo into fees-by-cat and questions-with-options
+      const [transformed] = await this.prepEventResults('grouptool-event', [event]);
+      return transformed;
     } catch (error) {
       console.error('Error getting event data:', error);
       throw error;
@@ -1379,60 +1483,196 @@ class EventService {
     const result1 = await request1.query(`
       USE ${dbName};
       SELECT TOP 1
-          -- Basic event identifiers
+          a._guid AS ag,
+          a.affiliate_name AS an,
+          a.customAffiliateID AS cai,
+          a.logoS3 AS al3,
           e._guid AS eg,
-          e.Event_id AS e,
+          e.accessCode AS eac,
+          e.addOnReg AS eao,
+          e.addOnRegExpires AS eax,
+          e.address_req AS rqa,
+          e.adultReg AS etp,
           e.affiliate_id AS a,
-          -- Event dates and times
-          e.Event_begins AS eb,
-          e.Event_ends AS ee,
-          e.startTime AS est,
+          e.affiliate_notes AS ano,
+          e.ama_district AS amd,
+          e.ama_sanction AS ams,
+          e.archive AS av,
+          e.deleted AS dp,
+          e.balesLive AS egl,
+          e.billingComplete AS ebc,
+          e.bio_req AS rqb,
+          e.birthdate_req AS rqd,
+          e.boothReg AS ebr,
+          e.booths_req AS rqu,
+          e.boothTitle AS ebt,
+          e.bringing_req AS rqr,
+          e.bringingLimit AS ebl,
+          e.bringingNotes AS ebg,
+          e.calSum AS ecl,
+          e.checkOutNotes AS eco,
+          e.company_req AS rqc,
+          e.confirmLabel1 AS em1,
+          e.confirmLabel2 AS em2,
+          e.confirmLabel3 AS em3,
+          e.confirmLink1 AS eu1,
+          e.confirmLink2 AS eu2,
+          e.confirmLink3 AS eu3,
+          e.ContestantReg AS cr,
+          e.conversionRate AS ecv,
+          e.customHost AS ech,
+          e.departure_req AS rqe,
+          e.disclaimer AS edr,
+          e.docNotes AS edn,
+          e.docNotesVendor AS env,
+          e.docsNeeded AS edd,
+          e.docsNeededVendor AS evd,
           e.endTime AS eet,
-          -- Event information
-          e.Event_title AS et,
-          e.Event_description AS de,
+          e.entryLimit AS emc,
+          e.entryLimitSpec AS emt,
+          e.entryLimitVendor AS emv,
+          e.equipRecordCompleteRequired AS rqq,
+          e.Event_active AS ea,
+          e.Event_altemail AS ema,
+          e.Event_begins AS eb,
           e.Event_contact AS en,
+          e.Event_count AS evv,
+          dbo.udf_StripHTML(REPLACE(CAST(e.Event_description AS VARCHAR(MAX)), CHAR(3), '')) AS de,
+          REPLACE(REPLACE(REPLACE(CAST(e.Event_description AS VARCHAR(MAX)), '"', '\"'), '&', '\\&'), CHAR(3), '') AS dh,
+          e.Event_deviations AS edv,
           e.Event_email AS em,
+          e.Event_emailFrom AS eef,
+          e.Event_ends AS ee,
+          e.Event_id AS e,
+          e.Event_indoor AS [in],
+          e.Event_parking AS epk,
+          e.Event_parking_link AS epu,
           e.Event_phone AS eph,
-          -- Event logo S3 URL
+          e.Event_results_link AS erl,
+          e.Event_room AS erm,
+          e.Event_title AS et,
+          e.Event_type_id AS t,
+          e.Event_website AS ew,
+          e.EventFeeDue AS efd,
+          e.EventFeePaid AS efp,
+          e.EventFeePaidDate AS epd,
+          e.EventFeeTotalPaid AS ept,
+          e.EventFlyerS3 AS ef3,
           CASE WHEN (ISNULL(NULLIF(e.EventlogoS3, ''), '') = '')
-            THEN a.logo
-            ELSE
-              CASE WHEN (LEFT(ISNULL(NULLIF(e.EventlogoS3, ''), ''), 5) = 'https')
-                THEN e.EventlogoS3
-              ELSE
-                '${s3RootURL || ''}/' + e.EventlogoS3
-              END
+            THEN (SELECT logo FROM b_affiliates WHERE affiliate_id = e.affiliate_id)
+            ELSE CASE WHEN (LEFT(ISNULL(NULLIF(e.EventlogoS3, ''), ''), 5) = 'https')
+              THEN e.EventlogoS3
+              ELSE '${(s3RootURL || '').replace(/'/g, "''")}/' + e.EventlogoS3
+            END
           END AS el3,
-          -- Venue information
+          e.firstPublished AS fpb,
+          e.fullguest AS ege,
+          e.gender_req AS rqj,
+          e.GuestCustomPrompt AS gp1,
+          e.GuestCustomPrompt2 AS gp2,
+          e.GuestCustomPrompt3 AS gp3,
+          e.GuestCustomPrompt4 AS gp4,
+          e.GuestCustomPrompt5 AS gp5,
+          e.guestLimit AS emg,
+          e.hotel_req AS rqh,
+          e.isPrivateSeries AS eip,
+          e.isSeries AS eis,
+          e.jobslive AS ejl,
+          REPLACE(e.keywords, ',', '|^^|,|^^|') AS ek,
+          e.minorReg AS emr,
+          e.mobile_req AS rqm,
+          CASE WHEN (ISNULL(NULLIF(e.newEventBannerS3, ''), '') = '')
+            THEN CASE WHEN (ISNULL(NULLIF(e.newEventBanner, ''), '') = '') THEN NULL
+              ELSE 'http://${(siteURL || '').replace(/'/g, "''")}/eventBanners/' + e.newEventBanner END
+            ELSE CASE WHEN (LEFT(ISNULL(NULLIF(e.newEventBannerS3, ''), ''), 5) = 'https')
+              THEN e.newEventBannerS3
+              ELSE '${(s3RootURL || '').replace(/'/g, "''")}/' + e.newEventBannerS3
+            END
+          END AS eb3,
+          CASE WHEN (LEFT(ISNULL(e.regBackgroundS3, ''), 5) = 'https')
+            THEN e.regBackgroundS3
+            ELSE '${(s3RootURL || '').replace(/'/g, "''")}/' + e.regBackgroundS3
+          END AS rb3,
+          e.payMethodEvent AS cpd,
+          e.payMethodEventVendor AS vpd,
+          e.payMethodMail AS cpm,
+          e.payMethodMailVendor AS vpm,
+          e.payMethodOnline AS cpo,
+          e.payMethodOnlineVendor AS vpo,
+          e.payRequired AS epr,
+          e.payRequiredVendor AS vpr,
+          e.phone_req AS rqn,
+          e.position_req AS rqo,
+          e.private AS pvt,
+          e.RegistrationEnd AS re,
+          e.RegistrationEndDate AS ere,
+          e.RegistrationStart AS rs,
+          e.RegistrationStartDate AS ers,
+          e.regNotes AS ern,
+          e.roomTypeList AS rtl,
+          e.schedulesLive AS ekl,
+          e.scoreslive AS esl,
+          e.sellTickets AS etr,
+          e.series_Contestant_cost AS scc,
+          e.series_id AS sr,
+          e.series_notes AS esn,
+          e.series_team_cost AS stc,
+          e.seriesPayment AS spm,
+          e.seriesPaymentDue AS spd,
+          e.seriesRevShare AS sef,
+          e.startTime AS est,
+          e.surcharge AS su,
+          e.surchargeFlat AS suf,
+          e.surchargeflatVendor AS svf,
+          e.surchargeSpec AS sp,
+          e.surchargeSpecFlat AS spf,
+          e.surchargeVendor AS sv,
+          e.team_req AS rqt,
+          e.TeamLink AS tu,
+          e.timeZone_id AS tz,
+          e.totalAttending AS eta,
+          e.travelNotes AS etn,
+          e.user_id AS u,
+          e.Vendor_instructions AS vi,
+          e.VendorReg AS rqv,
           e.venue_id AS vn,
-          vu.venue_name AS vm,
-          vu.venue_address AS va,
+          e.volunteer_end AS eve,
+          e.volunteer_start AS evs,
+          e.volunteerNotes AS evn,
+          e.voting AS vt,
+          ISNULL(e.isWebsitePublished, 0) AS epb,
+          CASE WHEN (RTRIM(LTRIM(ISNULL(e.taxID, ''))) = '') THEN NULL ELSE RTRIM(LTRIM(e.taxID)) END AS tx,
+          et.team_id AS ti,
+          ISNULL(etz.zoneName, 'UTC') AS tzn,
+          t.Event_type AS ep,
+          t.Event_type_category AS epc,
+          t.Event_type_subcat AS eps,
           vu.venue_city AS vc,
-          vu.venue_region AS vr,
+          vu.venue_country AS vcy,
           vu.venue_lat AS vlt,
           vu.venue_long AS vlg,
-          -- Timezone
-          e.timeZone_id AS tz,
-          ISNULL(tz.zoneName, 'UTC') AS tzn,
-          -- Check-in app settings (from b_events)
+          vu.venue_name AS vm,
+          vu.venue_region AS vr,
+          vu.venue_address AS va,
+          vu.venue_directions AS vdi,
+          c.currencyVar AS cu,
+          getDate() AS lu,
           e.autoAdvance AS aa,
           e.autoAdvanceRevert AS aar,
           e.multiDayCheckIn AS mdc,
-          -- Contact scan app settings (from b_events)
           e.scanAppActive AS saa,
           e.scanAppCode AS sac,
-          -- CEU settings (from b_events)
           e.ceuAcronym AS ceua,
           e.ceuDisplayOnReg AS ceud,
           e.ceuValueLabel AS ceuv,
-          e.ceuDisplayCounterOnReg AS ceuc,
-          -- Timestamps
-          getDate() AS lu
+          e.ceuDisplayCounterOnReg AS ceuc
       FROM b_Events AS e
+          LEFT JOIN b_Event_types AS t ON e.Event_type_id = t.Event_type_id
           LEFT JOIN b_venues AS vu ON vu.venue_id = e.venue_id
-          LEFT JOIN b_timezones AS tz ON tz.timeZoneID = e.timeZone_id
+          LEFT JOIN Event_team AS et ON et.affiliate_id = e.affiliate_id AND et.Event_id = e.Event_id
+          LEFT JOIN b_timeZones AS etz ON etz.timeZoneID = e.timeZone_id
           JOIN b_affiliates AS a ON a.affiliate_id = e.affiliate_id
+          JOIN b_currency AS c ON ISNULL(e.Event_currency, 1) = c.currencyID
       WHERE e.Event_id = @eventID
     `);
 
@@ -1441,20 +1681,6 @@ class EventService {
     }
 
     let eventData = result1.recordset[0];
-
-    // Get affiliate name
-    const request2 = new sql.Request();
-    request2.input('affiliateID', sql.Int, Number(eventData.a));
-    const result2 = await request2.query(`
-      USE ${dbName};
-      SELECT TOP 1 affiliate_name AS an
-      FROM b_affiliates
-      WHERE affiliate_id = @affiliateID
-    `);
-
-    if (result2.recordset.length) {
-      eventData.an = result2.recordset[0].an;
-    }
 
     // Get authority data
     const request3 = new sql.Request();
@@ -1620,6 +1846,22 @@ class EventService {
         eventData.ek = eventData.ek.split(',').map(item => item.replace(/\|\^\^\|/g, ''));
       } else if (!eventData.ek) {
         eventData.ek = [];
+      }
+
+      // Registration time defaults (match Mantle)
+      if (!eventData.rs || String(eventData.rs).trim() === '') {
+        eventData.rs = '12:00 AM';
+      }
+      if (!eventData.re || String(eventData.re).trim() === '') {
+        eventData.re = '12:00 AM';
+      }
+
+      // Registration start/end datetimes (match Mantle)
+      if (eventData.rs && eventData.ers) {
+        eventData.rsi = await dateAndTimeToDatetime(eventData.ers, eventData.rs);
+      }
+      if (eventData.re && eventData.ere) {
+        eventData.rei = await dateAndTimeToDatetime(eventData.ere, eventData.re);
       }
 
       // Event start / end time - combine date and time in JavaScript (matching old code)

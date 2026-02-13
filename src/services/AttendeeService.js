@@ -51,6 +51,98 @@ class AttendeeService {
   }
 
   /**
+   * Prepare attendee filter for MongoDB (matches Mantle prepAttendeeFilter).
+   * Mutates filterObj in place: transforms contestant-with-guests, profiles, items,
+   * subclasses, fieldoptions, fs, keyword, dash, string→regex, and adds rc=1 unless dash.
+   */
+  async prepAttendeeFilter(filterObj) {
+    if (!filterObj || typeof filterObj !== 'object') {
+      return {};
+    }
+    let onlyRegComplete = true;
+    if (filterObj.hasOwnProperty('rc') && filterObj.rc === 0) {
+      onlyRegComplete = false;
+      delete filterObj.rc;
+    }
+    const keys = Object.keys(filterObj);
+    for (const key of keys) {
+      const value = filterObj[key];
+      if (value === undefined) continue;
+
+      if (['c', 'e', 'p'].indexOf(key) >= 0 && value === 0) {
+        delete filterObj[key];
+      } else if (typeof value === 'string' && value === '') {
+        delete filterObj[key];
+      } else if (key === 'contestant-with-guests') {
+        if (Number(value) > 0) {
+          filterObj.$or = [
+            { u: Number(value) },
+            { 'hs.u': Number(value) }
+          ];
+        }
+        delete filterObj['contestant-with-guests'];
+      } else if (key === 'profiles') {
+        if (Array.isArray(value) && value.length > 0) {
+          filterObj.p = { $in: [].concat(value) };
+        }
+        delete filterObj.profiles;
+      } else if (key === 'items') {
+        if (Array.isArray(value) && value.length > 0) {
+          filterObj['fees.f'] = { $in: [].concat(value) };
+        }
+        delete filterObj.items;
+      } else if (key === 'subclasses') {
+        if (Array.isArray(value) && value.length > 0) {
+          filterObj.$or = value.map((pair) =>
+            ({ $and: [{ 'fees.f': Number(pair[0]) }, { 'fees.op.o': Number(pair[1]) }] })
+          );
+        }
+        delete filterObj.subclasses;
+      } else if (key === 'fieldoptions') {
+        if (Array.isArray(value) && value.length > 0) {
+          filterObj['ce.o'] = { $in: [].concat(value) };
+        }
+        delete filterObj.fieldoptions;
+      } else if (key === 'fs') {
+        filterObj.fs = Number(value) === 1 ? 1 : { $ne: 1 };
+      } else if (typeof value === 'string') {
+        const escaped = value.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+        const regex = new RegExp(escaped, 'i');
+        const numeric = Number(value);
+        if (key === 'keyword') {
+          filterObj.$or = [
+            { pn: regex },
+            { uc: regex },
+            { uf: regex },
+            { ul: regex }
+          ];
+          delete filterObj.keyword;
+        } else if (key === 'dash') {
+          onlyRegComplete = false;
+          filterObj.$or = [
+            { ue: regex },
+            { uc: regex },
+            { uf: regex },
+            { ul: regex },
+            { 'gu.gf': regex },
+            { 'gu.gl': regex },
+            { 'rb.uf': regex },
+            { 'rb.ul': regex }
+          ];
+          if (numeric) filterObj.$or.push({ c: Number(numeric) });
+          delete filterObj.dash;
+        } else {
+          filterObj[key] = regex;
+        }
+      }
+    }
+    if (onlyRegComplete) {
+      filterObj.rc = 1;
+    }
+    return filterObj;
+  }
+
+  /**
    * Column sets for different resultsets
    */
   getColumnSets() {
@@ -80,8 +172,15 @@ class AttendeeService {
       if (Array.isArray(body) && body.length > 0) {
         body = body[0];
       }
-      
-      const { filter, resultset, columns, limit: limitParam } = body || {};
+      if (!body || typeof body !== 'object') {
+        body = {};
+      }
+      // Default resultset and filter when empty (e.g. GET /attendee/es with no query, or POST with empty body)
+      const { filter, resultset, columns, limit: limitParam } = {
+        resultset: 'grouptool',
+        filter: {},
+        ...body
+      };
       // Check request.vert (set by requireVertical), pathParameters, then headers
       const vert = request.vert || request.pathParameters?.vert || request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
       
@@ -91,10 +190,6 @@ class AttendeeService {
       
       if (!vert) {
         throw new Error('Vertical is required');
-      }
-
-      if (!resultset) {
-        throw new Error('Resultset is required in request body');
       }
 
       const db = await getDatabase(null, vert);
@@ -136,89 +231,36 @@ class AttendeeService {
         finalColumns.cmpy = 1;
       }
 
-      // Get limit from filter if present
+      // Get limit from filter if present (before prep)
       let limit = limitParam;
-      const filterCopy = filter ? { ...filter } : {};
+      const filterCopy = filter && typeof filter === 'object'
+        ? JSON.parse(JSON.stringify(filter))
+        : {};
       if (filterCopy && filterCopy.hasOwnProperty('limit')) {
         limit = filterCopy.limit;
         delete filterCopy.limit;
       }
 
-      // Build MongoDB filter - handle special cases but preserve filter structure
-      // IMPORTANT: Match old codebase behavior exactly
-      const mongoFilter = {};
-      const hasIdG = filterCopy && filterCopy.hasOwnProperty('_id.g') && filterCopy['_id.g'] === 0;
-      
-      // OLD CODE BEHAVIOR: Default to rc=1 (complete registrations only) unless explicitly set to 0
-      // Check if rc is explicitly set to 0 in the filter
-      const rcExplicitlyZero = filterCopy && filterCopy.hasOwnProperty('rc') && filterCopy.rc === 0;
-      
-      // Only process filter if it exists and has keys
-      if (filterCopy && typeof filterCopy === 'object') {
-        for (const key in filterCopy) {
-          const value = filterCopy[key];
-          
-          // Skip empty strings (they shouldn't be used in queries)
-          if (value === '' || value === null || value === undefined) {
-            continue;
-          }
-          
-          // Handle event ID (e) - support both Number and String formats for compatibility
-          if (key === 'e') {
-            const numValue = Number(value);
-            mongoFilter[key] = {
-              $in: [numValue, String(numValue)]
-            };
-          }
-          // Handle _id.g: 0 - should match where _id.g is 0 OR doesn't exist
-          else if (key === '_id.g' && value === 0) {
-            // Don't add it here - we'll handle it with $or at the end
-            continue;
-          }
-          // Handle p: 0 - in the old codebase, p: 0 means "don't filter on profile" (ignore p field)
-          // So we skip adding it to the filter entirely
-          else if (key === 'p' && value === 0) {
-            // Skip p: 0 - it means don't filter on profile
-            continue;
-          }
-          // Handle rc (regcomplete) - OLD CODE BEHAVIOR: Default to rc=1 (complete only) unless explicitly set to 0
-          // If rc is not in filter, default to rc=1 (show only complete registrations)
-          // If rc is 0, show both rc=0 and rc=1 (show all registrations)
-          // If rc is 1, show only rc=1 (show only complete registrations)
-          else if (key === 'rc') {
-            if (value === 0) {
-              // rc=0 means "show all" - don't filter on rc (include both complete and incomplete)
-              // Don't add rc to filter
-            } else {
-              // Default to rc=1 (complete only) if rc is 1 or not explicitly 0
-              mongoFilter[key] = 1;
-            }
-          }
-          // Copy all other fields as-is (MongoDB handles nested fields like '_id.g' correctly)
-          else {
-            mongoFilter[key] = value;
-          }
-        }
+      // Match Mantle: run prepAttendeeFilter on the payload filter (transforms contestant-with-guests,
+      // profiles, items, subclasses, fieldoptions, fs, keyword, dash, string→regex, adds rc=1)
+      let mongoFilter = await this.prepAttendeeFilter(filterCopy);
+
+      // API compatibility: event ID (e) match both number and string in MongoDB
+      if (mongoFilter.hasOwnProperty('e') && mongoFilter.e != null) {
+        const numVal = Number(mongoFilter.e);
+        mongoFilter.e = { $in: [numVal, String(numVal)] };
       }
-      
-      // OLD CODE BEHAVIOR: Default to rc=1 (complete registrations only) unless explicitly set to 0
-      // If rc was not explicitly set to 0, add rc=1 filter
-      if (!rcExplicitlyZero && !mongoFilter.hasOwnProperty('rc')) {
-        mongoFilter.rc = 1;
-      }
-      
-      // If _id.g: 0 was in the filter, use $or to match 0 or missing
-      // Note: p: 0 means "don't filter on profile" so it's already been skipped above
-      if (hasIdG) {
+
+      // API compatibility: _id.g: 0 match either 0 or missing field (Mantle passes _id.g: 0 directly)
+      if (mongoFilter.hasOwnProperty('_id.g') && mongoFilter['_id.g'] === 0) {
         const baseFilter = { ...mongoFilter };
-        mongoFilter.$or = [
-          { ...baseFilter, '_id.g': 0 },
-          { ...baseFilter, '_id.g': { $exists: false } }
-        ];
-        // Remove base filter keys since they're now in $or
-        Object.keys(baseFilter).forEach(k => {
-          if (k !== '$or') delete mongoFilter[k];
-        });
+        delete baseFilter['_id.g'];
+        mongoFilter = {
+          $or: [
+            { ...baseFilter, '_id.g': 0 },
+            { ...baseFilter, '_id.g': { $exists: false } }
+          ]
+        };
       }
 
       console.log(`[AttendeeService] ===== FILTER DEBUG =====`);

@@ -45,6 +45,7 @@ import {
 import {
   findPivotedAttendeesRoute,
   findAttendeesRoute,
+  findAttendeesGetRoute,
   deleteAttendeePromptResponseRoute,
   updateAttendeePromptResponseRoute,
   updateAttendeeEventDocsRoute,
@@ -396,9 +397,10 @@ export const routes = [
   addEventDocumentRoute,
   createEventResourceCategoryRoute,
   deleteEventResourceCategoryRoute,
-  // Attendee routes (9 routes)
+  // Attendee routes (10 routes)
   findPivotedAttendeesRoute,
   findAttendeesRoute,
+  findAttendeesGetRoute,
   deleteAttendeePromptResponseRoute,
   updateAttendeePromptResponseRoute,
   updateAttendeeEventDocsRoute,
