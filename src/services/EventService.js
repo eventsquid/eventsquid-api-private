@@ -1675,7 +1675,7 @@ class EventService {
         FROM event_fees
         WHERE
             event_id = @eventID
-            AND fee_disable <> 1
+            AND ISNULL(fee_disable, 0) <> 1
             AND autoInactive = 1
             AND isnull(activityEnd,'') <> '' 
             AND getDate() >= dateadd(d,1,activityEnd)
@@ -1696,7 +1696,7 @@ class EventService {
         SET fee_disable = 1
         WHERE
             event_id = @eventID
-            AND fee_disable <> 1
+            AND ISNULL(fee_disable, 0) <> 1
             AND autoInactive = 1
             AND isnull(activityEnd,'') <> '' 
             AND getDate() >= dateadd(d,1,activityEnd)

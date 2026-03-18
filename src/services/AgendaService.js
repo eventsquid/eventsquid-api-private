@@ -467,7 +467,8 @@ class AgendaService {
           e.affiliate_id,
           e.event_title,
           ISNULL(e.sponsorFirstAgenda, 1) as sponsorFirstAgenda,
-          b.buttonCustomName as sponsorLabel
+          --b.buttonCustomName as sponsorLabel
+				  e.sponsorLabel
         FROM b_events e
         inner join b_venues v on v.venue_id = e.venue_id
         inner join b_buttons b on b.eventID = e.event_id
