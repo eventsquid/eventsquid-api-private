@@ -12,6 +12,54 @@ import { utcToTimezone, timezoneToUTCDateObj } from '../functions/conversions.js
 import EventService from '../services/EventService.js';
 import { sendEmail } from './sendgrid.js';
 
+const INVITEE_REPORT_TYPE = 'invitee';
+
+// Fixed column set to match the legacy "invitee export"
+// Internal keys are used as object properties in the exported rows.
+const INVITEE_EXPORT_COL_DEFS = [
+  { key: 'user_id', header: 'USER_ID' },
+  { key: 'invitee_firstname', header: 'First Name' },
+  { key: 'invitee_lastname', header: 'Last Name' },
+  { key: 'invitee_email', header: 'Email' },
+  { key: 'profileName', header: 'Registration Profile' },
+  { key: 'sourceName', header: 'Source' },
+  { key: 'subAccountLimit', header: 'Sub Account Limit' },
+  { key: 'emailCount', header: 'Invitations Send' },
+  { key: 'lastEmailSent', header: 'Last Sent' },
+  { key: 'accept', header: 'Registered' },
+  { key: 'decline', header: 'Declined' },
+  { key: 'declineDate', header: 'Date of Registration / Decline' }
+];
+
+const INVITEE_EXPORT_DEFAULT_RSC = INVITEE_EXPORT_COL_DEFS.map(c => c.key);
+
+/**
+ * Resolve numeric MSSQL event_id from the public event GUID.
+ * Used by invitee report exports to avoid MongoDB lookups for row data.
+ */
+async function getEventIDByGUID(eventGUID, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('eventGUID', TYPES.UniqueIdentifier, eventGUID);
+
+    const result = await request.query(`
+      USE ${dbName};
+      SELECT TOP 1
+        e.event_id AS eventID
+      FROM b_events e
+      WHERE e._guid = @eventGUID;
+    `);
+
+    return result.recordset?.[0]?.eventID || null;
+  } catch (error) {
+    console.error('Error resolving event_id by GUID:', error);
+    throw error;
+  }
+}
+
 /**
  * Get event details by GUID
  */
@@ -1087,6 +1135,192 @@ export async function registrantReportExport(reportGUID, format, checkID, vert, 
 }
 
 /**
+ * Invitee report export
+ * Mimics the legacy invitee export columns.
+ */
+export async function inviteeReportExport(reportGUID, format, checkID, vert, session) {
+  try {
+    const isDefault = reportGUID.split('-')[0] === 'default';
+
+    let eventID = null;
+    let keyword = '';
+    let profile = '';
+    let generalFilter = '';
+    let requestedRsc = INVITEE_EXPORT_DEFAULT_RSC;
+
+    if (isDefault) {
+      const eventGUID = reportGUID.replace('default-', '');
+      eventID = await getEventIDByGUID(eventGUID, vert);
+    } else {
+      const reportDetail = await getReportDetailsByGUID(reportGUID, vert, session);
+
+      if (!reportDetail?.eventDetails?.length || !reportDetail?.eventDetails?.[0]?.e) {
+        throw new Error('Invitee report event details not found');
+      }
+
+      eventID = Number(reportDetail.eventDetails[0].e);
+
+      const rsf = reportDetail.reportDetails?.rsf || {};
+      keyword = String(rsf.keyword || '');
+      profile = String(rsf.profile || '');
+      generalFilter = String(rsf.generalFilter || '');
+
+      requestedRsc = Array.isArray(reportDetail.reportDetails?.rsc) && reportDetail.reportDetails.rsc.length
+        ? reportDetail.reportDetails.rsc
+        : INVITEE_EXPORT_DEFAULT_RSC;
+    }
+
+    if (!eventID) {
+      throw new Error('Invitee report event not found');
+    }
+
+    const colDefsInOrder = INVITEE_EXPORT_COL_DEFS.filter(def => requestedRsc.includes(def.key));
+    if (colDefsInOrder.length === 0) {
+      throw new Error('Invitee report has no valid columns (rsc)');
+    }
+
+    const colSqlMap = {
+      user_id: 'u.user_id AS user_id',
+      invitee_firstname: 'i.invitee_firstname AS invitee_firstname',
+      invitee_lastname: 'i.invitee_lastname AS invitee_lastname',
+      invitee_email: 'i.invitee_email AS invitee_email',
+      profileName: 'ISNULL(i.profileName, \'\') AS profileName',
+      sourceName: 'ISNULL(i.sourceName, \'\') AS sourceName',
+      subAccountLimit: 'ISNULL(i.subAccountLimit, 99) AS subAccountLimit',
+      emailCount: 'ISNULL(i.emailCount, 0) AS emailCount',
+      lastEmailSent: 'i.lastEmailSent AS lastEmailSent',
+      accept: 'CASE WHEN (u.user_id > 0) THEN 1 ELSE 0 END AS accept',
+      decline: 'ISNULL(i.decline, 0) AS decline',
+      declineDate: 'i.declineDate AS declineDate'
+    };
+
+    const selectRA = colDefsInOrder.map(def => `[${def.key}] AS [${def.header}]`);
+    const colSqlStr = colDefsInOrder.map(def => colSqlMap[def.key]).join(',\n          ');
+
+    const defaultObj = {};
+    colDefsInOrder.forEach(def => {
+      defaultObj[def.key] = '';
+    });
+
+    let keywordFilter = '';
+    if (keyword.length) {
+      keywordFilter = `
+        AND (
+          i.invitee_firstname LIKE @keyword
+          OR i.invitee_lastname LIKE @keyword
+          OR i.invitee_email LIKE @keyword
+          OR i.sourceName LIKE @keyword
+        )
+      `;
+    }
+
+    let profileFilter = '';
+    if (profile.length) {
+      if (profile === 'noprofile') {
+        profileFilter = `AND ISNULL(i.profileName, '') = ''`;
+      } else {
+        profileFilter = `AND i.profileName = @profile`;
+      }
+    }
+
+    let generalFilterSql = '';
+    if (generalFilter.length) {
+      if (generalFilter === 'noreply') {
+        generalFilterSql = `
+          AND ISNULL(i.decline, 0) = 0
+          AND IsDate(i.lastEmailSent) = 1
+          AND (
+            ISNULL(ec.contestant_id, 0) = 0
+            OR (
+              ISNULL(ec.regcomplete, 0) = 0
+              AND ISNULL(ec.pendingDenied, 0) = 0
+            )
+          )
+        `;
+      } else if (generalFilter === 'uninvited') {
+        generalFilterSql = `
+          AND ISNULL(i.emailCount, 0) = 0
+          AND ISNULL(i.decline, 0) = 0
+        `;
+      } else if (generalFilter === 'declined') {
+        generalFilterSql = `
+          AND i.decline = 1
+          AND ISNULL(ec.regcomplete, 0) = 0
+        `;
+      }
+    }
+
+    const sql = await getConnection(vert);
+    const request = new sql.Request();
+    const dbName = getDatabaseName(vert);
+
+    request.input('eventID', sql.Int, Number(eventID));
+    if (keyword.length) {
+      request.input('keyword', sql.VarChar, `%${keyword}%`);
+    }
+    if (profile.length && profile !== 'noprofile') {
+      request.input('profile', sql.VarChar, profile);
+    }
+
+    const result = await request.query(`
+      USE ${dbName};
+      SELECT
+        ${colSqlStr}
+      FROM b_invitees i
+      LEFT JOIN b_users u ON i.invitee_email = u.user_email
+      LEFT JOIN eventContestant ec ON ec.user_id = u.user_id
+        AND ec.event_id = i.event_id
+      WHERE i.event_id = @eventID
+      ${keywordFilter}
+      ${generalFilterSql}
+      ${profileFilter}
+      ORDER BY
+        i.decline,
+        i.emailCount,
+        i.lastEmailSent,
+        ec.contestant_id,
+        i.invitee_lastname;
+    `);
+
+    const reportRA = result.recordset || [];
+
+    // Import-breaking metadata rows (kept consistent with registrant report exports)
+    const importBreakingInfo = [];
+    importBreakingInfo.push(_.assign({}, defaultObj));
+    importBreakingInfo.push(_.assign({}, defaultObj));
+
+    const firstKey = colDefsInOrder[0]?.key;
+    const junkDataObj = {};
+    if (firstKey) {
+      junkDataObj[String(firstKey)] = 'Report Filters';
+    }
+    importBreakingInfo.push(_.assign({}, defaultObj, junkDataObj));
+
+    const generalFilterLabels = {
+      noreply: 'No Reply',
+      uninvited: 'Uninvited',
+      declined: 'Declined'
+    };
+    const filterParts = [];
+    if (keyword.length) filterParts.push(`Keyword: ${keyword}`);
+    if (profile.length) filterParts.push(`Profile: ${profile}`);
+    if (generalFilter.length) filterParts.push(`Status: ${generalFilterLabels[generalFilter] || generalFilter}`);
+
+    const filtersSummary = filterParts.length ? filterParts.join(' | ') : 'All Invitees';
+    if (firstKey) {
+      junkDataObj[String(firstKey)] = filtersSummary;
+    }
+    importBreakingInfo.push(_.assign({}, defaultObj, junkDataObj));
+
+    const finalReportRA = _.concat([], reportRA, importBreakingInfo);
+    return { selectRA, reportRA: finalReportRA };
+  } catch (error) {
+    console.error('Error exporting invitee report:', error);
+    throw error;
+  }
+}
+
+/**
  * Get registrant transactions report
  * Gets transaction report using stored procedure
  */
@@ -1186,6 +1420,73 @@ export async function saveRegistrantTemplate(eventID, vert, body, session) {
     return templatesRA;
   } catch (error) {
     console.error('Error saving registrant template:', error);
+    throw error;
+  }
+}
+
+/**
+ * Save invitee template (share/export without Event Builder access).
+ */
+export async function saveInviteeTemplate(eventID, vert, body, session) {
+  try {
+    const db = await getDatabase(null, vert);
+    const templatesColl = db.collection('report-templates');
+
+    const templateData = {
+      ...body,
+      e: Number(eventID),
+      a: Number(session.affiliate_id),
+      ty: INVITEE_REPORT_TYPE,
+      da: new Date(),
+      lu: new Date(),
+      rsc: Array.isArray(body?.rsc) && body.rsc.length ? body.rsc : INVITEE_EXPORT_DEFAULT_RSC,
+      rsf: body?.rsf && typeof body.rsf === 'object' ? body.rsf : {},
+      tmn: body?.tmn || 'Default',
+      own: {
+        ue: String(session.user_email || ''),
+        uf: String(session.user_firstname || ''),
+        ul: String(session.user_lastname || ''),
+        u: Number(session.user_id)
+      }
+    };
+
+    if (body.mode === 'new') {
+      // Generate new GUID for template
+      const { v4: uuidv4 } = await import('uuid');
+      templateData.idg = uuidv4();
+      templateData._id = templateData.idg;
+
+      await templatesColl.insertOne(templateData);
+    } else {
+      // Update existing template
+      const { lu, ...updateData } = templateData;
+      await templatesColl.updateOne(
+        { idg: body.idg, e: Number(eventID) },
+        {
+          $set: updateData,
+          $currentDate: { lu: { $type: 'date' } }
+        }
+      );
+    }
+
+    // Return the full templates list for this event + report type
+    const templatesRA = await templatesColl.find({
+      e: Number(eventID),
+      ty: INVITEE_REPORT_TYPE,
+      _x: { $ne: true }
+    }, {
+      projection: { _id: 0, idg: 1, lu: 1, rsc: 1, rsf: 1, nm: 1, tmn: 1, pvt: 1, own: 1 }
+    })
+      .sort({ tmn: 1 })
+      .toArray();
+
+    for (let i = 0; i < templatesRA.length; i++) {
+      templatesRA[i].isOwner = (Number(templatesRA[i].own.u) === Number(session.user_id));
+    }
+
+    return templatesRA;
+  } catch (error) {
+    console.error('Error saving invitee template:', error);
     throw error;
   }
 }
