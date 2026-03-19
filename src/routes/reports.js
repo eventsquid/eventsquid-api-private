@@ -81,6 +81,18 @@ export const exportRegistrantReportRoute = {
   }
 };
 
+// Export invitee report
+export const exportInviteeReportRoute = {
+  method: 'GET',
+  path: '/reports/invitee/:reportGUID/export/:format/:checkID',
+  handler: async (request) => {
+    await authenticate(request);
+    await verticalCheck(request);
+    const result = await reportService.inviteeReportExport(request);
+    return createResponse(200, result);
+  }
+};
+
 // Get registrant filters
 export const getRegistrantFiltersRoute = {
   method: 'GET',
@@ -105,6 +117,18 @@ export const saveRegistrantTemplateRoute = {
   }
 };
 
+// Save invitee template
+export const saveInviteeTemplateRoute = {
+  method: 'POST',
+  path: '/reports/invitee/:eventID/template',
+  handler: async (request) => {
+    await authenticate(request);
+    await verticalCheck(request);
+    const result = await reportService.saveInviteeTemplate(request);
+    return createResponse(200, result);
+  }
+};
+
 // Get registrant templates
 export const getRegistrantTemplatesRoute = {
   method: 'GET',
@@ -113,6 +137,18 @@ export const getRegistrantTemplatesRoute = {
     await authenticate(request);
     await verticalCheck(request);
     const result = await reportService.getRegistrantTemplates(request);
+    return createResponse(200, result);
+  }
+};
+
+// Get invitee templates
+export const getInviteeTemplatesRoute = {
+  method: 'GET',
+  path: '/reports/invitee/:eventID/templates',
+  handler: async (request) => {
+    await authenticate(request);
+    await verticalCheck(request);
+    const result = await reportService.getInviteeTemplates(request);
     return createResponse(200, result);
   }
 };

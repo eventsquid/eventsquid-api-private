@@ -17,8 +17,10 @@ import {
   getRegistrantFilters,
   registrantReport,
   registrantReportExport,
+  inviteeReportExport,
   getRegistrantTransactionsReport,
   saveRegistrantTemplate,
+  saveInviteeTemplate,
   deleteTemplate,
   shareTemplate
 } from '../functions/reports.js';
@@ -108,6 +110,24 @@ class ReportService {
   }
 
   /**
+   * Export invitee report
+   */
+  async inviteeReportExport(request) {
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const reportGUID = request.pathParameters?.reportGUID;
+      const format = request.pathParameters?.format;
+      const checkID = request.pathParameters?.checkID;
+      const session = request.session || request.user || {};
+
+      return await inviteeReportExport(reportGUID, format, checkID, vert, session);
+    } catch (error) {
+      console.error('Error exporting invitee report:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get registrant filters
    */
   async getRegistrantFilters(request) {
@@ -139,6 +159,22 @@ class ReportService {
   }
 
   /**
+   * Save invitee template
+   */
+  async saveInviteeTemplate(request) {
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+      const session = request.session || request.user || {};
+
+      return await saveInviteeTemplate(eventID, vert, request.body, session);
+    } catch (error) {
+      console.error('Error saving invitee template:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get registrant templates
    */
   async getRegistrantTemplates(request) {
@@ -150,6 +186,22 @@ class ReportService {
       return await getTemplates(eventID, vert, 'registrant', session);
     } catch (error) {
       console.error('Error getting registrant templates:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get invitee templates
+   */
+  async getInviteeTemplates(request) {
+    try {
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const eventID = request.pathParameters?.eventID;
+      const session = request.session || request.user || {};
+
+      return await getTemplates(eventID, vert, 'invitee', session);
+    } catch (error) {
+      console.error('Error getting invitee templates:', error);
       throw error;
     }
   }
