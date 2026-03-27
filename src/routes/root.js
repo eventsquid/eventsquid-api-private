@@ -93,6 +93,19 @@ function normalizePostImageBody(request) {
   let body = request.body;
   const qp = request.queryStringParameters || {};
 
+  // API Gateway / proxy may leave JSON as a string; base64 payloads contain "=" so handler must parse first,
+  // but keep this as a fallback for any code path that still passes a JSON string.
+  if (typeof body === 'string') {
+    const t = body.trim().replace(/^\uFEFF/, '');
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try {
+        body = JSON.parse(t);
+      } catch (_) {
+        /* continue to data:image / empty */
+      }
+    }
+  }
+
   if (body && typeof body === 'object' && !Array.isArray(body)) {
     const keys = Object.keys(body);
     if (keys.length === 1 && typeof body[keys[0]] === 'string') {

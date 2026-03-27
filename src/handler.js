@@ -40,19 +40,76 @@ export const handler = async (event) => {
     // Parse body if present (API Gateway may send base64-encoded body when binary media types are configured)
     let body = null;
     if (event.body) {
+      let rawBody = event.body;
+      if (event.isBase64Encoded && typeof rawBody === 'string') {
+        rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
+      }
+      // Try parse as JSON; if body is base64-encoded JSON (without isBase64Encoded set), try decode then parse
       try {
-        let rawBody = event.body;
-        if (event.isBase64Encoded && typeof rawBody === 'string') {
-          rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
-        }
         body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
-        // Handle double-encoded JSON: API Gateway or client may send JSON as a string value, so parsed body is still a string
-        if (typeof body === 'string' && (body.trim().startsWith('{') || body.trim().startsWith('['))) {
-          body = JSON.parse(body);
-        }
       } catch (e) {
-        // If body is not JSON, keep as string
-        body = event.body;
+        if (typeof rawBody === 'string') {
+          try {
+            const decoded = Buffer.from(rawBody, 'base64').toString('utf8');
+            if (decoded.trim().startsWith('{') || decoded.trim().startsWith('[')) {
+              body = JSON.parse(decoded);
+            } else {
+              body = rawBody;
+            }
+          } catch (e2) {
+            body = rawBody;
+          }
+        } else {
+          body = rawBody;
+        }
+      }
+      // Handle body as array of bytes (API Gateway or client may send JSON as array of char codes)
+      if (Array.isArray(body) && body.length > 0) {
+        try {
+          const str = typeof body[0] === 'number'
+            ? Buffer.from(body).toString('utf8')
+            : body.join('');
+          if (str.trim().startsWith('{') || str.trim().startsWith('[')) {
+            body = JSON.parse(str);
+          }
+        } catch (e4) {
+          // leave body as array
+        }
+      }
+      // JSON as string (BOM, whitespace): MUST run before form-urlencoded — JSON with base64 contains "="
+      // and would be mis-parsed as application/x-www-form-urlencoded if we split on "&" / first "=".
+      if (typeof body === 'string') {
+        const trimmed = body.trim().replace(/^\uFEFF/, '');
+        if (trimmed.startsWith('{') || trimmed.startsWith('[') || (trimmed.startsWith('"') && trimmed.length > 1)) {
+          try {
+            body = JSON.parse(trimmed);
+          } catch (e6) {
+            // leave body as string
+          }
+        }
+      }
+      // Fallback: application/x-www-form-urlencoded (e.g. date=...&zone=... or base64=...&type=jpg&...)
+      if (typeof body === 'string' && body.includes('=') && (body.includes('&') || body.includes('='))) {
+        const t = body.trim().replace(/^\uFEFF/, '');
+        const looksLikeJson = t.startsWith('{') || t.startsWith('[');
+        if (!looksLikeJson) {
+          try {
+            const parsed = {};
+            for (const pair of body.split('&')) {
+              const eq = pair.indexOf('=');
+              if (eq !== -1) {
+                const k = decodeURIComponent(pair.slice(0, eq).replace(/\+/g, ' '));
+                const v = decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '));
+                parsed[k] = v;
+              }
+            }
+            if (Object.keys(parsed).length > 0) {
+              body = parsed;
+            }
+          } catch (e5) {
+            // leave body as string
+          }
+        }
       }
     }
     
