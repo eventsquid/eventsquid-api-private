@@ -111,13 +111,56 @@ export const jurisdictionsRoute = {
  * POST /images/:vert
  * Save an image to S3 and update MSSQL/MongoDB
  */
+/**
+ * Normalize POST body for /images/:vert.
+ * - JSON object: use as-is (expected shape).
+ * - application/x-www-form-urlencoded with one field whose value is JSON: unwrap.
+ * - Raw string body `data:image/...;base64,...`: combine with query ?fileName=&_guid=&type=
+ */
+function normalizePostImageBody(request) {
+  let body = request.body;
+  const qp = request.queryStringParameters || {};
+
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const keys = Object.keys(body);
+    if (keys.length === 1 && typeof body[keys[0]] === 'string') {
+      const v = body[keys[0]].trim();
+      if ((v.startsWith('{') && v.endsWith('}')) || (v.startsWith('[') && v.endsWith(']'))) {
+        try {
+          body = JSON.parse(v);
+        } catch (_) {
+          /* keep object */
+        }
+      }
+    }
+  }
+
+  if (typeof body === 'string') {
+    const s = body.trim();
+    if (s.startsWith('data:image/')) {
+      const mime = s.match(/^data:image\/(png|jpeg|jpg);base64,/i);
+      const inferredType = mime
+        ? (mime[1].toLowerCase() === 'png' ? 'png' : 'jpg')
+        : null;
+      return {
+        base64: s,
+        type: qp.type || inferredType,
+        fileName: qp.fileName,
+        _guid: qp._guid,
+      };
+    }
+  }
+
+  return body && typeof body === 'object' ? body : {};
+}
+
 export const postImagesRoute = {
   method: 'POST',
   path: '/images/:vert',
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const vert = request.pathParameters?.vert;
-      const body = request.body || {};
+      const body = normalizePostImageBody(request);
       const session = request.session || request.user || {};
       
       // Validate required fields
@@ -127,8 +170,11 @@ export const postImagesRoute = {
         if (!body.type) missing.push('type');
         if (!body.fileName) missing.push('fileName');
         if (!body._guid) missing.push('_guid');
-        console.log('[postImages] 400: Missing required fields:', missing.join(', '), 'bodyKeys:', body ? Object.keys(body) : []);
-        return errorResponse('Missing required fields: base64, type, fileName, _guid', 400);
+        console.log('[postImages] 400: Missing required fields:', missing.join(', '), 'bodyKeys:', body ? Object.keys(body) : [], 'bodyType:', typeof request.body);
+        return errorResponse(
+          'Missing required fields: base64, type, fileName, _guid. Send Content-Type: application/json with those properties, or POST a raw data:image/png;base64,... body with query params ?fileName=org-logo&_guid=YOUR-GUID&type=png',
+          400
+        );
       }
 
       // File type mapping
