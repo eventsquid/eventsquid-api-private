@@ -63,6 +63,33 @@ export async function releaseEventTouchLock(db, vert, eventID) {
 }
 
 /**
+ * Run `fn` while holding the same per-(vert, eventID) lock used by touchEvent,
+ * so partial Mongo updates cannot interleave with touch or each other.
+ *
+ * @template T
+ * @param {import('mongodb').Db} db
+ * @param {string} vert
+ * @param {string|number} eventID
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export async function withEventMongoLock(db, vert, eventID, fn) {
+  await acquireEventTouchLock(db, vert, eventID);
+  try {
+    return await fn();
+  } finally {
+    try {
+      await releaseEventTouchLock(db, vert, eventID);
+    } catch (releaseErr) {
+      console.error(
+        `[eventMongoLock] release failed vert=${vert} eventID=${eventID}:`,
+        releaseErr.message
+      );
+    }
+  }
+}
+
+/**
  * Delete + insert in one transaction so a failed insert never leaves the document deleted.
  * Falls back to legacy non-atomic path only when the server cannot run transactions (e.g. local standalone).
  *

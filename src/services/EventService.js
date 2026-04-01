@@ -7,8 +7,7 @@
 import { getDatabase, isDeployed } from '../utils/mongodb.js';
 import { getTimeZoneDbApiKey } from '../utils/timezonedbApiKey.js';
 import {
-  acquireEventTouchLock,
-  releaseEventTouchLock,
+  withEventMongoLock,
   replaceEventDocumentInEventsCollection
 } from '../utils/eventTouchMongo.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
@@ -204,13 +203,15 @@ class EventService {
         }
       });
 
-      // Update the event record in MongoDB
-      const result = await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { eq: prompts, eqo: options }
-        }
+      // Update the event record in MongoDB (serialized with touchEvent)
+      const result = await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { eq: prompts, eqo: options }
+          }
+        )
       );
 
       return result;
@@ -868,13 +869,14 @@ class EventService {
         getSpeakers[i] = _.omitBy(getSpeakers[i], _.isNull);
       }
 
-      // Update the event record
-      await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { spk: getSpeakers }
-        }
+      await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { spk: getSpeakers }
+          }
+        )
       );
 
       return { success: true, speakerCount: getSpeakers.length };
@@ -1047,13 +1049,14 @@ class EventService {
         getItems[i] = _.omitBy(getItems[i], _.isNull);
       }
 
-      // Update the event record in MongoDB
-      const result = await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { evfs: getItems }
-        }
+      const result = await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { evfs: getItems }
+          }
+        )
       );
 
       return result;
@@ -1211,9 +1214,8 @@ class EventService {
       const updateObj = {};
       updateObj[String(key)] = updateTS;
 
-      await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        { $set: updateObj }
+      await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne({ e: Number(eventID) }, { $set: updateObj })
       );
 
       return { success: true };
@@ -1665,24 +1667,14 @@ class EventService {
       const eventFilter = { '_id.s': vert, '_id.e': Number(eventID) };
       const mongoClient = db.client;
 
-      await acquireEventTouchLock(db, vert, eventID);
-      try {
-        await replaceEventDocumentInEventsCollection(
+      await withEventMongoLock(db, vert, eventID, async () =>
+        replaceEventDocumentInEventsCollection(
           mongoClient,
           eventsCollection,
           eventFilter,
           eventData
-        );
-      } finally {
-        try {
-          await releaseEventTouchLock(db, vert, eventID);
-        } catch (releaseErr) {
-          console.error(
-            `[touchEvent] releaseEventTouchLock failed vert=${vert} eventID=${eventID}:`,
-            releaseErr.message
-          );
-        }
-      }
+        )
+      );
 
       return {
         status: 'success',
@@ -1754,23 +1746,23 @@ class EventService {
             AND getDate() >= dateadd(d,1,activityEnd)
       `);
 
-      // Update MongoDB event record
-      const event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
-      
-      if (event && event.evfs) {
-        // Update fees in the evfs array
-        const updatedFees = event.evfs.map(evf => {
-          if (updateIDs.includes(evf.f)) {
-            return { ...evf, fa: 0 }; // Set active to 0
-          }
-          return evf;
-        });
+      await withEventMongoLock(db, vert, eventID, async () => {
+        const event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
 
-        await eventsCollection.updateOne(
-          { '_id.e': Number(eventID) },
-          { $set: { evfs: updatedFees } }
-        );
-      }
+        if (event && event.evfs) {
+          const updatedFees = event.evfs.map(evf => {
+            if (updateIDs.includes(evf.f)) {
+              return { ...evf, fa: 0 };
+            }
+            return evf;
+          });
+
+          await eventsCollection.updateOne(
+            { '_id.e': Number(eventID) },
+            { $set: { evfs: updatedFees } }
+          );
+        }
+      });
 
       return { message: 'success', updateCount: updateIDs.length };
     } catch (error) {

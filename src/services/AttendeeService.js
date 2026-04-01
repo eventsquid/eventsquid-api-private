@@ -725,7 +725,6 @@ class AttendeeService {
       const db = await getDatabase(null, vert);
       const attendeesCollection = db.collection('attendees');
       const usersCollection = db.collection('users');
-      const eventsCollection = db.collection('events');
 
       const fi = Number(fieldID);
       const o = Number(optionID || 0);

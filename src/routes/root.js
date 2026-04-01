@@ -190,6 +190,7 @@ export const postImagesRoute = {
       // Update database based on file type
       const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
       const { getDatabase } = await import('../utils/mongodb.js');
+      const { withEventMongoLock } = await import('../utils/eventTouchMongo.js');
       const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
@@ -210,11 +211,15 @@ export const postImagesRoute = {
         const results = result.recordset;
 
         if (results.length) {
+          const affiliateId = Number(results[0].affiliate_id);
           const eventsColl = db.collection('events');
-          await eventsColl.updateMany(
-            { '_id.a': Number(results[0].affiliate_id) },
-            { $set: { al3: logoURL } }
-          );
+          const eventIds = await eventsColl.distinct('e', { '_id.a': affiliateId });
+          eventIds.sort((a, b) => a - b);
+          for (const eid of eventIds) {
+            await withEventMongoLock(db, vert, eid, async () => {
+              await eventsColl.updateOne({ e: eid }, { $set: { al3: logoURL } });
+            });
+          }
         }
       } else if (body.fileName === 'speaker-photo') {
         // Update speaker record
