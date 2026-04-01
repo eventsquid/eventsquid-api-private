@@ -98,7 +98,7 @@ Resources:
               })
             };
           };
-      Timeout: 60
+      Timeout: 120
       MemorySize: 1024  # Increased for production: supports VPC, multiple DB connections, and large codebase
       Environment:
         Variables:

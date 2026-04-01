@@ -5,6 +5,11 @@
  */
 
 import { getDatabase } from '../utils/mongodb.js';
+import {
+  acquireEventTouchLock,
+  releaseEventTouchLock,
+  replaceEventDocumentInEventsCollection
+} from '../utils/eventTouchMongo.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 // Note: getConnection now returns sql module, use new sql.Request() for queries
 import _ from 'lodash';
@@ -1630,11 +1635,27 @@ class EventService {
         eventData.eei = await dateAndTimeToDatetime(eventData.ee, eventData.eet);
       }
 
-      // Delete any existing record
-      await eventsCollection.deleteOne({ '_id.s': vert, '_id.e': Number(eventID) });
+      const eventFilter = { '_id.s': vert, '_id.e': Number(eventID) };
+      const mongoClient = db.client;
 
-      // Save the updated version
-      await eventsCollection.insertOne(eventData);
+      await acquireEventTouchLock(db, vert, eventID);
+      try {
+        await replaceEventDocumentInEventsCollection(
+          mongoClient,
+          eventsCollection,
+          eventFilter,
+          eventData
+        );
+      } finally {
+        try {
+          await releaseEventTouchLock(db, vert, eventID);
+        } catch (releaseErr) {
+          console.error(
+            `[touchEvent] releaseEventTouchLock failed vert=${vert} eventID=${eventID}:`,
+            releaseErr.message
+          );
+        }
+      }
 
       return {
         status: 'success',
@@ -1642,7 +1663,11 @@ class EventService {
         eventData: eventData
       };
     } catch (error) {
-      console.error('Error touching event:', error);
+      console.error(
+        `[touchEvent] failed vert=${request.headers?.vert || request.vert || '?'} eventID=${request.pathParameters?.eventID}:`,
+        error.message,
+        error.stack
+      );
       throw error;
     }
   }
