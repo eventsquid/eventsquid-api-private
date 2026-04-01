@@ -149,6 +149,8 @@ export NODE_ENV=development
 
 3. For local testing, you may want to use a local MongoDB or configure AWS credentials to access Secrets Manager.
 
+4. **TimeZoneDB** (optional): For `POST /event/:eventGUID/updateTimezoneData` and fee timezone updates, set `TIMEZONEDB_API_KEY` in `.env` for local testing. In **production (Lambda)**, the API key is read from **AWS Secrets Manager** by default: secret name `timezonedb/api-key`. The secret value may be either the raw API key string or JSON such as `{"apiKey":"YOUR_KEY"}`. To use a different secret name, set the Lambda environment variable `TIMEZONEDB_SECRET_NAME`. You can still override with `TIMEZONEDB_API_KEY` on the function if needed. Ensure the Lambda IAM role allows `secretsmanager:GetSecretValue` on that secret (the API stack includes `timezonedb/*`).
+
 ### Adding Routes
 
 Edit `src/routes/index.js` to add new routes:

@@ -15,7 +15,7 @@ let connectionPromise = null;
  * Check if running in AWS Lambda (deployed) vs local development
  * @returns {boolean} True if deployed in AWS Lambda
  */
-function isDeployed() {
+export function isDeployed() {
   // AWS Lambda sets AWS_LAMBDA_FUNCTION_NAME automatically
   return !!process.env.AWS_LAMBDA_FUNCTION_NAME;
 }

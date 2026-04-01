@@ -4,7 +4,8 @@
  * This is a placeholder - the full service is 2900+ lines and needs to be migrated incrementally
  */
 
-import { getDatabase } from '../utils/mongodb.js';
+import { getDatabase, isDeployed } from '../utils/mongodb.js';
+import { getTimeZoneDbApiKey } from '../utils/timezonedbApiKey.js';
 import {
   acquireEventTouchLock,
   releaseEventTouchLock,
@@ -487,13 +488,26 @@ class EventService {
 
       const startDateUnix = startDate.unix();
 
-      // Get timezone config from TimeZoneDB API
-      if (!process.env.TIMEZONEDB_API_KEY) {
-        throw new Error('TIMEZONEDB_API_KEY environment variable is required');
+      const timeZoneDbApiKey = await getTimeZoneDbApiKey();
+      if (!timeZoneDbApiKey) {
+        if (!isDeployed()) {
+          console.warn(
+            'TimeZoneDB API key not set; skipping TimeZoneDB call and SQL timezone update (local only). Set TIMEZONEDB_API_KEY in .env or configure the timezonedb/api-key secret in AWS.'
+          );
+          return {
+            success: false,
+            skipped: true,
+            message:
+              'TimeZoneDB API key not configured locally. Set TIMEZONEDB_API_KEY in .env to test this path.'
+          };
+        }
+        throw new Error(
+          'TimeZoneDB API key is missing (Secrets Manager or TIMEZONEDB_API_KEY)'
+        );
       }
 
       const tzConfigs = await axios.request({
-        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${process.env.TIMEZONEDB_API_KEY}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
+        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${timeZoneDbApiKey}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
         method: 'get'
       }).then(response => {
         response.data.dst = Number(response.data.dst);
@@ -576,13 +590,26 @@ class EventService {
 
       const startDateUnix = startDate.unix();
 
-      // Get timezone config from TimeZoneDB API
-      if (!process.env.TIMEZONEDB_API_KEY) {
-        throw new Error('TIMEZONEDB_API_KEY environment variable is required');
+      const timeZoneDbApiKey = await getTimeZoneDbApiKey();
+      if (!timeZoneDbApiKey) {
+        if (!isDeployed()) {
+          console.warn(
+            'TimeZoneDB API key not set; skipping TimeZoneDB call and SQL timezone update (local only). Set TIMEZONEDB_API_KEY in .env or configure the timezonedb/api-key secret in AWS.'
+          );
+          return {
+            success: false,
+            skipped: true,
+            message:
+              'TimeZoneDB API key not configured locally. Set TIMEZONEDB_API_KEY in .env to test this path.'
+          };
+        }
+        throw new Error(
+          'TimeZoneDB API key is missing (Secrets Manager or TIMEZONEDB_API_KEY)'
+        );
       }
 
       const tzConfigs = await axios.request({
-        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${process.env.TIMEZONEDB_API_KEY}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
+        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${timeZoneDbApiKey}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
         method: 'get'
       }).then(response => {
         response.data.dst = Number(response.data.dst);
