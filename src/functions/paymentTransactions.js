@@ -4,6 +4,7 @@
  */
 
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
+import { getSendGridConfig } from '../utils/sendgridConfig.js';
 import _ from 'lodash';
 import sgMail from '@sendgrid/mail';
 
@@ -59,15 +60,15 @@ export async function findByGatewayAndID(request) {
  */
 export async function sendUnconfirmedPaymentAlerts(request) {
   try {
-    const sgKey = process.env.SENDGRID_API_KEY;
+    const { apiKey: sgKey, sender: sgSenderResolved } = await getSendGridConfig();
     if (!sgKey) {
-      throw new Error('SENDGRID_API_KEY not configured');
+      throw new Error('SendGrid API key not configured (SENDGRID_API_KEY / SG_API_KEY or sendgrid secret)');
     }
 
     sgMail.setApiKey(sgKey);
 
     const dataObj = request.body?.dataObj || {};
-    const sgSender = process.env.SENDGRID_SENDER || 'noreply@eventsquid.com';
+    const sgSender = sgSenderResolved || 'noreply@eventsquid.com';
 
     const attendeeMsg = `
       <p>${dataObj.attendeeFirst},</p>

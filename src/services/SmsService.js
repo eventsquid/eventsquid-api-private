@@ -7,11 +7,7 @@ import { getDatabase } from '../utils/mongodb.js';
 import _ from 'lodash';
 import twilio from 'twilio';
 import { generateVerifyCode } from '../functions/verification.js';
-
-// Initialize Twilio client
-const accountSid = process.env.TWILIO_ACCT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const client = accountSid && authToken ? twilio(accountSid, authToken) : null;
+import { getTwilioConfig } from '../utils/twilioConfig.js';
 
 class SmsService {
   /**
@@ -51,9 +47,14 @@ class SmsService {
    */
   async sendMessage(request) {
     try {
-      if (!client) {
-        throw new Error('Twilio client not initialized. Check TWILIO_ACCT_SID and TWILIO_AUTH_TOKEN environment variables.');
+      const twilioCfg = await getTwilioConfig();
+      if (!twilioCfg.accountSid || !twilioCfg.authToken) {
+        throw new Error(
+          'Twilio not configured. Set TWILIO_ACCT_SID and TWILIO_AUTH_TOKEN (or twilio/api-credentials in Secrets Manager).'
+        );
       }
+
+      const client = twilio(twilioCfg.accountSid, twilioCfg.authToken);
 
       // SMS logs are stored in "cm" vertical
       const db = await getDatabase(null, 'cm');
@@ -86,8 +87,8 @@ class SmsService {
           const message = await client.messages.create({
             body: txt,
             to: String(toArray[i].to),
-            statusCallback: `${process.env.API_GATEWAY_PROTOCOL || 'https'}://${host}/sms/${process.env.TWILIO_STATUS_CALLBACK || 'twilio-status'}`,
-            messagingServiceSid: process.env.TWILIO_MSG_SERVICE_SID
+            statusCallback: `${process.env.API_GATEWAY_PROTOCOL || 'https'}://${host}/sms/${twilioCfg.statusCallback}`,
+            messagingServiceSid: twilioCfg.messagingServiceSid
           });
 
           const thisMsgID = 'ES:' + _.trim(message.sid);
