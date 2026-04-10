@@ -7,8 +7,7 @@ import { toXML } from 'jstoxml';
 import { xml2js } from 'xml-js';
 import axios from 'axios';
 import _ from 'lodash';
-import { getConnection, getDatabaseName } from '../utils/mssql.js';
-import { TYPES } from 'mssql';
+import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 import { recordRefund } from '../functions/paymentTransactions/recordRefund.js';
 
 const VANTIV_ENDPOINT = 'https://certtransaction.elementexpress.com/';
