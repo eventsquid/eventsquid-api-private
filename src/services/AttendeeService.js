@@ -85,10 +85,6 @@ class AttendeeService {
       // Check request.vert (set by requireVertical), pathParameters, then headers
       const vert = request.vert || request.pathParameters?.vert || request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
       
-      console.log(`[AttendeeService] findAttendees called with body:`, JSON.stringify(body));
-      console.log(`[AttendeeService] filter:`, JSON.stringify(filter));
-      console.log(`[AttendeeService] resultset:`, resultset);
-      
       if (!vert) {
         throw new Error('Vertical is required');
       }
@@ -221,19 +217,6 @@ class AttendeeService {
         });
       }
 
-      console.log(`[AttendeeService] ===== FILTER DEBUG =====`);
-      console.log(`[AttendeeService] Original filter:`, JSON.stringify(filter, null, 2));
-      console.log(`[AttendeeService] Processed mongoFilter:`, JSON.stringify(mongoFilter, null, 2));
-      console.log(`[AttendeeService] rc in original filter:`, filter?.rc);
-      console.log(`[AttendeeService] rc in mongoFilter:`, mongoFilter.rc || (mongoFilter.$or && mongoFilter.$or[0] && mongoFilter.$or[0].rc) || 'not set');
-      console.log(`[AttendeeService] p in original filter:`, filter?.p);
-      console.log(`[AttendeeService] _id.g in original filter:`, filter?.['_id.g'] || filter?.['_id']?.g);
-      console.log(`[AttendeeService] Query limit:`, limit);
-      console.log(`[AttendeeService] Using vertical:`, vert);
-      console.log(`[AttendeeService] Database name:`, db.databaseName);
-      console.log(`[AttendeeService] Collection name: attendees`);
-      console.log(`[AttendeeService] Sort:`, JSON.stringify(columnSet.sort));
-
       // Find attendees
       let query = attendeesCollection.find(mongoFilter || {}, { projection: finalColumns });
       
@@ -244,69 +227,6 @@ class AttendeeService {
       const attendees = await query
         .sort(columnSet.sort)
         .toArray();
-
-      console.log(`[AttendeeService] Found ${attendees.length} attendees with full filter`);
-      console.log(`[AttendeeService] First 3 attendees (c, u, ul, uf, rc):`, 
-        attendees.slice(0, 3).map(a => ({ c: a.c, u: a.u, ul: a.ul, uf: a.uf, rc: a.rc })));
-      
-      // Debug: Check total count with just event filter (no rc, _id.g, etc.)
-      // Extract event filter from mongoFilter (could be in $or or directly)
-      let eventFilter = null;
-      if (mongoFilter.e) {
-        eventFilter = mongoFilter.e;
-      } else if (mongoFilter.$or && mongoFilter.$or[0] && mongoFilter.$or[0].e) {
-        eventFilter = mongoFilter.$or[0].e;
-      } else if (filter && filter.e) {
-        eventFilter = { $in: [Number(filter.e), String(filter.e)] };
-      }
-      
-      if (eventFilter) {
-        // Handle $in format for event filter
-        const simpleEventFilter = typeof eventFilter === 'object' && eventFilter.$in 
-          ? { e: { $in: eventFilter.$in } }
-          : { e: eventFilter };
-        
-        const totalCount = await attendeesCollection.countDocuments(simpleEventFilter);
-        console.log(`[AttendeeService] Total attendees for event (no other filters): ${totalCount}`);
-        
-        // Also check with just event + rc filter
-        const rcValue = mongoFilter.rc || (mongoFilter.$or && mongoFilter.$or[0] && mongoFilter.$or[0].rc) || (filter && filter.rc);
-        if (rcValue !== undefined) {
-          const rcFilter = { ...simpleEventFilter, rc: rcValue };
-          const rcCount = await attendeesCollection.countDocuments(rcFilter);
-          console.log(`[AttendeeService] Attendees with event + rc=${rcValue}: ${rcCount}`);
-          
-          // Check attendees without rc filter
-          const noRcCount = await attendeesCollection.countDocuments(simpleEventFilter);
-          console.log(`[AttendeeService] Attendees with event but rc != ${rcValue} or missing: ${totalCount - rcCount}`);
-          
-          // Check with event + rc + _id.g: 0 (or missing) but no p filter
-          const idGFilter = { ...rcFilter };
-          const idGOr = [
-            { ...idGFilter, '_id.g': 0 },
-            { ...idGFilter, '_id.g': { $exists: false } }
-          ];
-          const idGCount = await attendeesCollection.countDocuments({ $or: idGOr });
-          console.log(`[AttendeeService] Attendees with event + rc=${rcValue} + (_id.g=0 OR missing): ${idGCount}`);
-        }
-        
-        // Get a sample of recent attendees to see their field values
-        const recentAttendees = await attendeesCollection
-          .find(simpleEventFilter)
-          .sort({ rt: -1 }) // Sort by registration time descending
-          .limit(5)
-          .toArray();
-        console.log(`[AttendeeService] Sample of 5 most recent attendees (showing rc, _id.g, p fields):`);
-        recentAttendees.forEach((att, idx) => {
-          console.log(`  [${idx + 1}] c: ${att.c}, u: ${att.u}, rc: ${att.rc}, _id.g: ${att._id?.g}, p: ${att.p}, rt: ${att.rt}`);
-        });
-        
-        // Check specifically for records with rc: 0
-        const rcZeroCount = await attendeesCollection.countDocuments({ ...simpleEventFilter, rc: 0 });
-        const rcOneCount = await attendeesCollection.countDocuments({ ...simpleEventFilter, rc: 1 });
-        const rcMissingCount = await attendeesCollection.countDocuments({ ...simpleEventFilter, rc: { $exists: false } });
-        console.log(`[AttendeeService] Attendees with rc=0: ${rcZeroCount}, rc=1: ${rcOneCount}, rc missing: ${rcMissingCount}`);
-      }
 
       // Always return an array, even if empty
       return Array.isArray(attendees) ? attendees : [];
@@ -329,10 +249,6 @@ class AttendeeService {
       
       // First get the base attendees
       let attendees = await this.findAttendees(request);
-      
-      console.log(`[AttendeeService] findAndPivotAttendees: Got ${attendees.length} attendees from findAttendees`);
-      console.log(`[AttendeeService] First 3 attendees before pivot (c, u, ul, uf):`, 
-        attendees.slice(0, 3).map(a => ({ c: a.c, u: a.u, ul: a.ul, uf: a.uf })));
       
       let eventData = {};
       let zoneData = {};
@@ -576,8 +492,6 @@ class AttendeeService {
         try {
           const userBios = await getBiosByEventID(filter.e, vert);
           
-          console.log(`[AttendeeService] Fetched ${userBios?.length || 0} bios for event ${filter.e}`);
-          
           if (userBios && Array.isArray(userBios) && userBios.length > 0) {
             // Create a lookup map for faster matching (handle both Number and String u values)
             const bioMap = new Map();
@@ -598,8 +512,6 @@ class AttendeeService {
               }
             });
             
-            console.log(`[AttendeeService] Found ${biosWithUbio} bios with ubio field`);
-            
             // Match attendees to bios
             let matchedCount = 0;
             attendees.forEach((attendee, index) => {
@@ -615,17 +527,12 @@ class AttendeeService {
               }
             });
             
-            console.log(`[AttendeeService] Added ub to ${matchedCount} of ${attendees.length} attendees`);
-          } else {
-            console.log(`[AttendeeService] No bios returned for event ${filter.e}`);
           }
         } catch (error) {
           // Log but don't fail if bios can't be fetched
           console.warn('Error fetching user bios:', error.message);
           console.warn('Error stack:', error.stack);
         }
-      } else {
-        console.log(`[AttendeeService] No event filter (filter.e) provided, skipping ub field`);
       }
 
       // OLD CODE BEHAVIOR: Don't re-sort after pivoting - preserve the original MongoDB sort order

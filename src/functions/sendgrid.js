@@ -299,11 +299,6 @@ export async function sendEmail(form) {
     if (!sgKey) {
       // OLD CODE BEHAVIOR: In local dev, log and return true when API key is missing (mock sending)
       console.warn('SendGrid API key not set, mocking email send for local dev');
-      console.log('Would send email:', {
-        to: form.to,
-        subject: form.subject,
-        from: form.fromName || sgSenderResolved || 'noreply@eventsquid.com'
-      });
       return true;
     }
 
@@ -340,28 +335,9 @@ export async function sendEmail(form) {
       ...(form.reply_to && { replyTo: form.reply_to })
     };
 
-    console.log('Attempting to send email via SendGrid:', {
-      to: form.to,
-      subject: form.subject,
-      from: from,
-      hasHtml: !!form.html,
-      hasText: !!form.text
-    });
-
     const result = await sgMail.send(payload);
-    
-    console.log('SendGrid API response:', {
-      statusCode: result[0]?.statusCode,
-      headers: result[0]?.headers,
-      body: result[0]?.body
-    });
 
     if (result[0]?.statusCode >= 200 && result[0]?.statusCode < 300) {
-      console.log('Email sent successfully via SendGrid:', {
-        to: form.to,
-        subject: form.subject,
-        statusCode: result[0]?.statusCode
-      });
       return true;
     } else {
       console.warn('SendGrid returned non-success status:', result[0]?.statusCode);

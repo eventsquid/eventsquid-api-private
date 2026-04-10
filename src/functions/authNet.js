@@ -8,6 +8,7 @@
 
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 import { getDatabase } from '../utils/mongodb.js';
+import { recordRefund } from './paymentTransactions/recordRefund.js';
 import _ from 'lodash';
 import moment from 'moment-timezone';
 
@@ -286,12 +287,6 @@ export async function payByCreditCard(request) {
               response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' && 
               response.transactionResponse?.transId && !request.body.multiCheckout) {
             
-            // TODO: Implement transaction recording and attendee status updates
-            // This would involve calling:
-            // - recordTransaction(request)
-            // - updateFinancialsMongo(request.body.c, vert)
-            // - updateAttendeeRegStatus(request)
-            console.log('Transaction successful - recording pending implementation');
           }
 
           // If we have a transaction response
@@ -331,6 +326,78 @@ export async function payByCreditCard(request) {
 }
 
 /**
+ * Void a transaction that is pending settlement (cannot be refunded until settled).
+ * Finds all attendees tied to the transaction and records a void against each one.
+ */
+export async function voidTransaction(affiliateID, transactionID, credsRA, transactionDetails, vert) {
+  if (!authNetLoaded) await loadAuthorizeNet();
+  if (!ApiContracts || !ApiControllers) throw new Error('authorizenet package not installed');
+
+  const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
+  merchantAuthenticationType.setName(credsRA[0].login);
+  merchantAuthenticationType.setTransactionKey(credsRA[0].key);
+
+  const transactionRequestType = new ApiContracts.TransactionRequestType();
+  transactionRequestType.setTransactionType(ApiContracts.TransactionTypeEnum.VOIDTRANSACTION);
+  transactionRequestType.setRefTransId(transactionDetails.transaction.transId);
+
+  const createRequest = new ApiContracts.CreateTransactionRequest();
+  createRequest.setMerchantAuthentication(merchantAuthenticationType);
+  createRequest.setTransactionRequest(transactionRequestType);
+
+  const ctrl = new ApiControllers.CreateTransactionController(createRequest.getJSON());
+  if (Number(credsRA[0].auth_sandbox) === 0 || !credsRA[0].auth_sandbox) {
+    ctrl.setEnvironment(SDKConstants.endpoint.production);
+  }
+
+  return new Promise((resolve) => {
+    ctrl.execute(async function() {
+      const apiResponse = ctrl.getResponse();
+      const response = new ApiContracts.CreateTransactionResponse(apiResponse);
+
+      try {
+        if (response.messages && response.messages.resultCode?.toLowerCase() === 'ok' &&
+            response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' &&
+            response.transactionResponse) {
+
+          // Find all attendees tied to this transaction
+          const sql = await getConnection(vert);
+          const dbName = getDatabaseName(vert);
+          const sqlRequest = new sql.Request();
+          sqlRequest.input('processID', sql.VarChar, `%${_.trim(transactionID)}%`);
+          sqlRequest.input('gateway',   sql.VarChar, '%authnet%');
+          const qryResult = await sqlRequest.query(`
+            USE ${dbName};
+            EXEC dbo.node_transactionsByGatewayAndID @processID, @gateway;
+          `);
+          const attendees = qryResult.recordset || [];
+
+          const rec = { body: {}, headers: { vert } };
+          const voidSucceeded = Number(response.transactionResponse.responseCode) === 1;
+
+          for (const attendee of attendees) {
+            rec.body.amount = voidSucceeded ? 0 - Number(attendee.amount) : 0;
+            rec.body.c   = Number(attendee.contestant_id);
+            rec.body.pi  = _.trim(transactionID);
+            rec.body.ptk = '';
+            rec.body.rfi = _.trim(response.transactionResponse.transId);
+            rec.body.rfn = voidSucceeded
+              ? 'Void of unsettled transaction'
+              : `Failed Void. ${_.trim(response.transactionResponse.messages?.[0]?.description || '')} (${response.transactionResponse.responseCode})`;
+            await recordRefund(rec);
+          }
+        }
+
+        resolve(response);
+      } catch (e) {
+        console.error('ERROR in voidTransaction:', e);
+        resolve(e);
+      }
+    });
+  });
+}
+
+/**
  * Refund transaction
  */
 export async function refundTransaction(request) {
@@ -344,6 +411,7 @@ export async function refundTransaction(request) {
 
     const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
     const affiliateID = request.pathParameters?.affiliateID;
+    const contestantID = request.pathParameters?.contestantID;
     const transactionID = _.trim(_.last(_.split(request.pathParameters?.transactionID, ':')));
     const refundAmount = Number(request.pathParameters?.refundAmount);
 
@@ -359,8 +427,7 @@ export async function refundTransaction(request) {
 
       // If pending settlement, void instead of refund
       if (transactionDetails.transaction?.transactionStatus?.toLowerCase() === 'capturedpendingsettlement') {
-        // TODO: Implement voidTransaction
-        return { error: 'Transaction is pending settlement - void required (not implemented)' };
+        return await voidTransaction(affiliateID, transactionID, credsRA, transactionDetails, vert);
       }
 
       const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
@@ -407,13 +474,28 @@ export async function refundTransaction(request) {
 
           try {
             // If successful
-            if (response.messages && response.messages.resultCode?.toLowerCase() === 'ok' && 
-                response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' && 
+            if (response.messages && response.messages.resultCode?.toLowerCase() === 'ok' &&
+                response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' &&
                 response.transactionResponse) {
-              
-              // TODO: Implement recordRefund
-              // This would involve calling recordRefund(request) with appropriate data
-              console.log('Refund successful - recording pending implementation');
+
+              const rec = { body: {}, headers: { vert } };
+              rec.body.c   = Number(contestantID);
+              rec.body.pi  = _.trim(transactionID);
+              rec.body.ptk = '';
+              rec.body.rfi = _.trim(response.transactionResponse.transId);
+
+              if (Number(response.transactionResponse.responseCode) === 1) {
+                // Successful refund — record negative amount
+                rec.body.amount = 0 - refundAmount;
+                rec.body.py     = 'authNet REFUND';
+              } else {
+                // Gateway declined the refund — record with zero amount and notes
+                rec.body.amount = 0;
+                rec.body.py     = 'authNet REFUND failed';
+                rec.body.rfn    = `Failed Refund. ${_.trim(response.transactionResponse.messages?.[0]?.description || '')} (${response.transactionResponse.responseCode})`;
+              }
+
+              await recordRefund(rec);
             }
 
             resolve(response);
@@ -600,7 +682,6 @@ export async function getPaymentForm(request) {
 
         if (response != null) {
           if (response.getMessages().getResultCode() == ApiContracts.MessageTypeEnum.OK) {
-            console.log('Hosted payment page token:', response.getToken());
             resolve({ token: response.getToken(), form: response });
           } else {
             console.error('Error Code:', response.getMessages().getMessage()[0].getCode());

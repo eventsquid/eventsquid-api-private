@@ -9,12 +9,10 @@ import { routes } from './routes/index.js';
 import { publishErrorToSNS } from './utils/sns.js';
 
 export const handler = async (event) => {
-  // Log incoming request
-  console.log('=== Lambda Request Start ===');
-  console.log('Event:', JSON.stringify(event, null, 2));
-  console.log('Request ID:', event.requestContext?.requestId || 'unknown');
-  console.log('HTTP Method:', event.requestContext?.http?.method || event.httpMethod);
-  console.log('Path:', event.requestContext?.http?.path || event.path || event.rawPath);
+  const reqMethod = event.requestContext?.http?.method || event.httpMethod;
+  const reqPath = event.requestContext?.http?.path || event.path || event.rawPath;
+  const reqId = event.requestContext?.requestId || 'unknown';
+  console.log(`[${reqId}] ${reqMethod} ${reqPath}`);
 
   try {
     // Extract HTTP method and path
@@ -160,9 +158,7 @@ export const handler = async (event) => {
     request.pathParameters = { ...request.pathParameters, ...extractedParams };
 
     // Execute route handler
-    console.log('Executing route:', route.path, 'with method:', route.method);
     const result = await route.handler(request);
-    console.log('Route handler completed, status:', result?.statusCode || 200);
 
     // If handler returns a response object, ensure it has CORS headers
     if (result && result.statusCode) {
@@ -185,33 +181,18 @@ export const handler = async (event) => {
 
   } catch (error) {
     // Enhanced error logging
-    console.error('=== Lambda Error ===');
-    console.error('Error Type:', error.constructor.name);
-    console.error('Error Message:', error.message);
-    console.error('Error Stack:', error.stack);
-    console.error('Request Path:', event.requestContext?.http?.path || event.path || event.rawPath);
-    console.error('Request Method:', event.requestContext?.http?.method || event.httpMethod);
-    console.error('Request ID:', event.requestContext?.requestId || 'unknown');
-    if (error.cause) {
-      console.error('Error Cause:', error.cause);
-    }
-    console.error('Full Error Object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    console.error('=== End Error ===');
-    
+    console.error(`[${reqId}] ${reqMethod} ${reqPath} — ${error.constructor.name}: ${error.message}`);
+    console.error(error.stack);
+    if (error.cause) console.error('Caused by:', error.cause);
+
     // Publish error to SNS if configured
-    await publishErrorToSNS(error, {
-      requestId: event.requestContext?.requestId || 'unknown',
-      path: event.requestContext?.http?.path || event.path || event.rawPath,
-      method: event.requestContext?.http?.method || event.httpMethod
-    });
+    await publishErrorToSNS(error, { requestId: reqId, path: reqPath, method: reqMethod });
     
     return createResponse(500, {
       error: 'Internal Server Error',
       message: process.env.NODE_ENV === 'development' ? error.message : undefined,
       requestId: event.requestContext?.requestId || 'unknown'
     });
-  } finally {
-    console.log('=== Lambda Request End ===');
   }
 };
 

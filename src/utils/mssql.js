@@ -10,8 +10,6 @@ import sql from 'mssql';
 const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION || 'us-west-2' });
 let connectionPool = null;
 let connectionPromise = null;
-let mssqlErrorLogCount = 0; // Track how many times we've logged MSSQL errors
-const MAX_MSSQL_ERROR_LOGS = 2; // Only log first 2 errors to reduce noise
 
 // Database names by vertical (from old CONSTANTS._s)
 const DATABASES_BY_VERTICAL = {
@@ -215,15 +213,6 @@ export async function connectToMssql() {
       return sql;
     } catch (error) {
       connectionPromise = null;
-      // In local dev, provide helpful error message but don't crash
-      if (process.env.NODE_ENV === 'development') {
-        if (mssqlErrorLogCount < MAX_MSSQL_ERROR_LOGS) {
-          console.error('⚠️  MSSQL connection error (local dev):', error.message);
-          mssqlErrorLogCount++;
-        }
-        // Return sql module anyway - callers can check connection status
-        return sql;
-      }
       console.error('MSSQL connection error:', error);
       throw error;
     }

@@ -5,6 +5,7 @@
 
 import { createResponse } from '../utils/response.js';
 import { authenticate, verticalCheck } from '../middleware/auth.js';
+import { userRegisteredForEvent } from '../middleware/registeredForEvent.js';
 import VEOService from '../services/VEOService.js';
 import eventService from '../services/EventService.js';
 
@@ -119,8 +120,8 @@ export const getConfigDataRoute = {
   handler: async (request) => {
     await authenticate(request);
     await verticalCheck(request);
-    // TODO: Implement userRegisteredForEvent middleware check
-    
+    await userRegisteredForEvent(request);
+
     const { eventGUID } = request.pathParameters || {};
     const vert = request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
     

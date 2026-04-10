@@ -10,19 +10,6 @@ import express from 'express';
 import cors from 'cors';
 import { handler } from './src/handler.js';
 
-// Handle Node.js 24 compatibility issues with tedious-connection-pool in local dev
-if (process.env.NODE_ENV === 'development') {
-  process.on('uncaughtException', (error) => {
-    // Silently suppress MSSQL/Tedious Node.js 24 compatibility errors
-    if (error.message && error.message.includes('createSecurePair')) {
-      // Silently ignore - don't log, don't crash
-      return;
-    }
-    // Re-throw other errors
-    throw error;
-  });
-}
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 

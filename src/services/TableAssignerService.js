@@ -224,10 +224,7 @@ class TableAssignerService {
       const db = await getDatabase(null, vert);
       const tableAssignerData = db.collection('tableAssignerData');
 
-      console.log(`[TableAssignerService] Querying for eventID: ${eventID}, vertical: ${vert}`);
-
       // Query with $or to handle both Number and String eventID formats
-      // First try without active filter to see if data exists
       const query = {
         $or: [
           { e: eventID },
@@ -235,19 +232,12 @@ class TableAssignerService {
         ]
       };
 
-      console.log(`[TableAssignerService] Query:`, JSON.stringify(query));
-
       let data = await tableAssignerData.find(query).toArray();
-
-      console.log(`[TableAssignerService] Found ${data.length} documents (without active filter)`);
 
       // If we got results, filter by active if the field exists
       if (data.length > 0) {
         data = data.filter(doc => !doc.hasOwnProperty('active') || doc.active === true);
-        console.log(`[TableAssignerService] After active filter: ${data.length} documents`);
       }
-
-      console.log(`[TableAssignerService] Found ${data.length} documents`);
 
       // Always return an array, even if empty
       return Array.isArray(data) ? data : [];

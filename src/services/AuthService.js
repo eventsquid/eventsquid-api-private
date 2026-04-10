@@ -17,12 +17,10 @@ class AuthService {
     try {
       // MUST use 'cm' database via mongodb/common secret - HARD FAIL if not available
       // NO FALLBACK to other databases or connection strings
-      console.log('[AuthService] Attempting to get session from cm database...');
       const db = await getDatabase('cm');
       const sessions = db.collection('cfsessions');
       const session = await sessions.findOne({ _id: token });
       if (session) {
-        console.log(`[AuthService] Session found in 'cm' database`);
         return session;
       }
       return null;
