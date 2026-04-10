@@ -84,10 +84,10 @@ All infrastructure is defined in `cloudformation/template.yaml`.
 | Memory | 1024 MB |
 | Timeout | 300 seconds |
 | Reserved concurrency | 150 |
-| VPC | Yes (two security groups: `sg-277a3b5e`, `sg-d087f8ac`) |
+| VPC | Yes — subnet `subnet-3a650c62` (us-west-2c); security groups `sg-277a3b5e`, `sg-d087f8ac` |
 | Region | us-west-2 |
 
-The Lambda runs inside a VPC to allow private access to MSSQL/Redis resources. It uses two Lambda aliases:
+The Lambda runs inside a VPC to allow private access to MSSQL/Redis resources and to route outbound internet traffic (Twilio, SendGrid) through a NAT Gateway with a fixed Elastic IP. It uses two Lambda aliases:
 - `:dev` → always `$LATEST` (development endpoint)
 - `:live` → published version (production endpoint)
 
@@ -128,6 +128,35 @@ The Lambda IAM role has `PutObject`, `GetObject`, `DeleteObject`, `GetObjectVers
 
 - Log group: `/aws/lambda/eventsquid-private-api`
 - Recommended retention: 14 days (not enforced in template by default)
+
+### VPC Networking
+
+The Lambda VPC configuration was updated to enable outbound internet access for third-party API calls (Twilio, SendGrid, TimezoneDB).
+
+**NAT Gateway**
+
+| Field | Value |
+|-------|-------|
+| Name | `eventsquid-nat-gateway` |
+| ID | `nat-079e65dddd1f49b60` |
+| Elastic IP | `52.42.35.237` (static — safe to allowlist at third-party APIs) |
+| Availability zone | us-west-2a (`subnet-3c625f4a`) |
+
+**Route tables**
+
+| Route table | ID | Default route | Used by |
+|-------------|-----|---------------|---------|
+| `rtb-lambda-private` | `rtb-05efe24d2917744a3` | `0.0.0.0/0 → eventsquid-nat-gateway` | Lambda (`subnet-3a650c62`, us-west-2c) |
+| `rtb-dca92ebb` | `rtb-dca92ebb` | Direct IGW | CF servers and other EC2 instances — unaffected |
+
+**Lambda subnet**
+
+The Lambda is configured to use only `subnet-3a650c62` (us-west-2c), which is associated with `rtb-lambda-private`. This gives Lambda:
+- Private access to MSSQL/Redis (via VPC-internal routing)
+- Outbound internet access via NAT Gateway for Twilio, SendGrid, TimezoneDB, and AuthNet calls
+- A fixed source IP (`52.42.35.237`) that can be allowlisted in external services
+
+> **Note:** The CloudFormation template `SubnetIds` parameter should be updated to `subnet-3a650c62` only if the stack is ever redeployed. The Lambda VPC config was updated directly in AWS.
 
 ### IAM Role
 
