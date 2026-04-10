@@ -11,9 +11,9 @@
  * Throws an error with a `statusCode` property so the handler returns the right HTTP status.
  */
 
-import { getEventDataByGUID } from '../functions/events.js';
 import { getRegisteredAttendeeByUserID } from '../functions/attendees.js';
 import { getAffiliateUsers } from '../functions/affiliate.js';
+import eventService from '../services/EventService.js';
 
 export async function userRegisteredForEvent(request) {
   const session = request.session;
@@ -37,7 +37,7 @@ export async function userRegisteredForEvent(request) {
   }
 
   // Resolve eventID and affiliateID from the GUID
-  const event = await getEventDataByGUID(eventGUID, { e: 1, a: 1 }, vert);
+  const event = await eventService.getEventDataByGUID(eventGUID, { e: 1, a: 1 }, vert);
 
   // Check if the user is a registered attendee
   const attendee = await getRegisteredAttendeeByUserID(

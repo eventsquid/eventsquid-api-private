@@ -170,6 +170,23 @@ aws cloudformation deploy \
 
 Pushes to the `main` branch trigger CodePipeline automatically (defined in `cloudformation/pipeline.yaml`). The `dev` stage always tracks `$LATEST`; the `v1` stage tracks a published Lambda version alias (`live`).
 
+### Pre-Deploy Import Check
+
+**Before every deploy, verify all imports resolve** by running Node's module loader in dry-run mode:
+
+```bash
+node --input-type=module <<'EOF'
+import './src/handler.js';
+EOF
+```
+
+This catches `SyntaxError: does not provide an export named '...'` and missing-module errors at the entry point before the package is uploaded to Lambda. A clean run produces no output. Any import error will be printed and exit non-zero.
+
+Common mistakes to watch for when writing new code:
+- Importing a **method on a class** as if it were a standalone export (e.g. `getEventDataByGUID` lives on `EventService`, not `functions/events.js`)
+- Importing a **named export from `mssql` directly** — `TYPES` and other mssql internals are re-exported via `src/utils/mssql.js`; always import from there
+- Adding a new file and forgetting to `export` the function at all
+
 ---
 
 ## Code Conventions
