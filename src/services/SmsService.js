@@ -91,7 +91,7 @@ class SmsService {
           const message = await client.messages.create({
             body: txt,
             to: String(toArray[i].to),
-            statusCallback: `${process.env.API_GATEWAY_PROTOCOL || 'https'}://${host}/sms/${twilioCfg.statusCallback}`,
+            statusCallback: `${process.env.API_GATEWAY_PROTOCOL || 'https'}://${host}/${process.env.API_GATEWAY_STAGE || 'v1'}/sms/${twilioCfg.statusCallback}`,
             messagingServiceSid: twilioCfg.messagingServiceSid
           });
 

@@ -3,7 +3,6 @@
  * Migrated from Mantle application
  */
 
-import axios from 'axios';
 import { createResponse } from '../utils/response.js';
 import { utcToEventZoneRoute, timezoneToUTCRoute, jurisdictionsRoute, postImagesRoute } from './root.js';
 import {
@@ -339,35 +338,6 @@ import {
   updateReportCategoryByEventRoute
 } from './reporting.js';
 
-// Temporary connectivity test route
-const connectivityTest = {
-  method: 'GET',
-  path: '/connectivity-test',
-  handler: async (request) => {
-    const start = Date.now();
-    try {
-      const response = await axios.get('https://api.twilio.com', { timeout: 10000 });
-      const responseTimeMs = Date.now() - start;
-      console.log(`[connectivity-test] status=${response.status} responseTime=${responseTimeMs}ms`);
-      return createResponse(200, {
-        success: true,
-        statusCode: response.status,
-        responseTimeMs
-      });
-    } catch (err) {
-      const responseTimeMs = Date.now() - start;
-      const statusCode = err.response?.status ?? null;
-      console.log(`[connectivity-test] status=${statusCode ?? 'none'} responseTime=${responseTimeMs}ms error=${err.message}`);
-      return createResponse(200, {
-        success: false,
-        statusCode,
-        responseTimeMs,
-        error: err.message
-      });
-    }
-  }
-};
-
 // Health check route
 const healthCheck = {
   method: 'GET',
@@ -385,7 +355,6 @@ const healthCheck = {
 // Export all routes
 export const routes = [
   healthCheck,
-  connectivityTest,
   // Root routes
   utcToEventZoneRoute,
   timezoneToUTCRoute,

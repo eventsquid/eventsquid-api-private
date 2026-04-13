@@ -57,7 +57,7 @@ function mergeTwilioConfig(secretObj) {
     ),
     statusCallback: envOr(
       process.env.TWILIO_STATUS_CALLBACK,
-      envOr(pick(s, ['TWILIO_STATUS_CALLBACK', 'statusCallback']), 'twilio-status')
+      envOr(pick(s, ['TWILIO_STATUS_CALLBACK', 'statusCallback']), 'log-twilio-status')
     ),
     /** Used for SendGrid webhook `_esk` when not stored on sendgrid secret */
     inboundApiKey: envOr(
