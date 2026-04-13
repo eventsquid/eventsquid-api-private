@@ -347,16 +347,21 @@ const connectivityTest = {
     const start = Date.now();
     try {
       const response = await axios.get('https://api.twilio.com', { timeout: 10000 });
+      const responseTimeMs = Date.now() - start;
+      console.log(`[connectivity-test] status=${response.status} responseTime=${responseTimeMs}ms`);
       return createResponse(200, {
         success: true,
         statusCode: response.status,
-        responseTimeMs: Date.now() - start
+        responseTimeMs
       });
     } catch (err) {
+      const responseTimeMs = Date.now() - start;
+      const statusCode = err.response?.status ?? null;
+      console.log(`[connectivity-test] status=${statusCode ?? 'none'} responseTime=${responseTimeMs}ms error=${err.message}`);
       return createResponse(200, {
         success: false,
-        statusCode: err.response?.status ?? null,
-        responseTimeMs: Date.now() - start,
+        statusCode,
+        responseTimeMs,
         error: err.message
       });
     }
