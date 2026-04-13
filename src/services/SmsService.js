@@ -3,6 +3,7 @@
  * Migrated from services/SmsService.js
  */
 
+import https from 'https';
 import { getDatabase } from '../utils/mongodb.js';
 import _ from 'lodash';
 import twilio from 'twilio';
@@ -54,7 +55,10 @@ class SmsService {
         );
       }
 
-      const client = twilio(twilioCfg.accountSid, twilioCfg.authToken);
+      const agent = new https.Agent({ keepAlive: false });
+      const client = twilio(twilioCfg.accountSid, twilioCfg.authToken, {
+        httpClient: new twilio.RequestClient({ agent })
+      });
 
       // SMS logs are stored in "cm" vertical
       const db = await getDatabase(null, 'cm');
