@@ -309,10 +309,55 @@ class EventService {
       const configVerticalsCollection = verticalsCollection.collection('config-verticals');
 
       // Get event from MongoDB
-      const event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
-      
+      let event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
+
       if (!event) {
-        throw new Error('Event not found');
+        const s3RootURL =
+          process.env.TOUCH_S3_ROOT_URL ||
+          process.env.S3_BASE_URL ||
+          'https://s3-us-west-2.amazonaws.com/eventsquid/';
+        const siteURL =
+          process.env.TOUCH_SITE_URL ||
+          process.env.SITE_BASE_URL ||
+          'https://www.eventsquid.com';
+
+        const rebuilt = await this._buildSyncedEventDocumentForMongo(
+          eventID,
+          vert,
+          s3RootURL,
+          siteURL
+        );
+
+        if (!rebuilt) {
+          throw new Error('Event not found');
+        }
+
+        let bsonBytes = null;
+        let bsonOk = true;
+        try {
+          const { serialize } = await import('bson');
+          bsonBytes = serialize(rebuilt).length;
+        } catch (bsonErr) {
+          bsonOk = false;
+          console.error(
+            '[getEventData] Mongo document missing; rebuilt from SQL but BSON serialize failed:',
+            bsonErr.message
+          );
+        }
+
+        console.log(
+          '[getEventData] Mongo document missing — rebuilt from SQL for verification only (not written to Mongo)',
+          JSON.stringify({
+            eventID: Number(eventID),
+            vert,
+            topLevelFieldCount: Object.keys(rebuilt).length,
+            bsonSerializeOk: bsonOk,
+            bsonBytes,
+            _id: rebuilt._id
+          })
+        );
+
+        event = rebuilt;
       }
 
       // Get S3 path from constants (we'll need to add this to env or config)
@@ -1516,6 +1561,94 @@ class EventService {
   }
 
   /**
+   * Build Mongo `events` document from MSSQL (same transform as touchEvent), without reading/writing Mongo.
+   * @returns {Promise<object|null>} null when the event does not exist in SQL
+   */
+  async _buildSyncedEventDocumentForMongo(eventID, vert, s3RootURL, siteURL) {
+    const dbName = getDatabaseName(vert);
+    const { dateAndTimeToDatetime } = await import('../functions/events.js');
+
+    let eventData = await this.getTouchEventQueries(eventID, vert, null, dbName, s3RootURL, siteURL);
+    if (!eventData) {
+      return null;
+    }
+
+    if (eventData.vlg && eventData.vlt) {
+      eventData.vlc = {
+        type: 'Point',
+        coordinates: [
+          eventData.vlg,
+          eventData.vlt
+        ]
+      };
+    }
+
+    eventData._id = {
+      s: vert,
+      e: eventData.e,
+      a: eventData.a,
+      eb: eventData.eb,
+      ee: eventData.ee
+    };
+
+    const cleanKeys = (data) => {
+      let newObj = {};
+      if (Array.isArray(data)) {
+        newObj = [];
+      }
+
+      for (const key in data) {
+        const value = data[key];
+        if (!(value === null || value.toString() === '')) {
+          if (value instanceof Date) {
+            const dateStr = value.toISOString();
+            newObj[key] = dateStr.split('T')[1] !== '00:00:00.000Z'
+              ? value
+              : dateStr.split('T')[0];
+          } else if (Array.isArray(value) || typeof value === 'object') {
+            newObj[key] = cleanKeys(value);
+          } else {
+            if (value === true) {
+              newObj[key] = 1;
+            } else if (value === false) {
+              newObj[key] = 0;
+            } else {
+              newObj[key] = value;
+            }
+          }
+        }
+      }
+      return newObj;
+    };
+
+    eventData = cleanKeys(eventData);
+
+    eventData.eph = eventData.eph ? eventData.eph.toString() : '';
+
+    if (!eventData.eq || !Array.isArray(eventData.eq) || eventData.eq.length === 0) {
+      eventData.eq = [];
+    }
+    if (!eventData.eqo || !Array.isArray(eventData.eqo) || eventData.eqo.length === 0) {
+      eventData.eqo = [];
+    }
+
+    if (eventData.ek && typeof eventData.ek === 'string') {
+      eventData.ek = eventData.ek.split(',').map(item => item.replace(/\|\^\^\|/g, ''));
+    } else if (!eventData.ek) {
+      eventData.ek = [];
+    }
+
+    if (eventData.est && eventData.eb) {
+      eventData.ebi = await dateAndTimeToDatetime(eventData.eb, eventData.est);
+    }
+    if (eventData.eet && eventData.ee) {
+      eventData.eei = await dateAndTimeToDatetime(eventData.ee, eventData.eet);
+    }
+
+    return eventData;
+  }
+
+  /**
    * Touch event (update last modified)
    * This is a complex method that syncs all event data from MSSQL to MongoDB
    * It performs a massive query and data transformation
@@ -1534,100 +1667,16 @@ class EventService {
         return { message: 'Missing data' };
       }
 
-      const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
       const eventsCollection = db.collection('events');
-      const { dateAndTimeToDatetime } = await import('../functions/events.js');
 
-      // Get comprehensive event data using getTouchEventQueries
-      let eventData = await this.getTouchEventQueries(eventID, vert, null, dbName, s3RootURL, siteURL);
+      const eventData = await this._buildSyncedEventDocumentForMongo(eventID, vert, s3RootURL, siteURL);
 
       if (!eventData) {
         return {
           status: 'fail',
           message: 'Event not found'
         };
-      }
-
-      // Geolocation data for mongo geospatial search
-      if (eventData.vlg && eventData.vlt) {
-        eventData.vlc = {
-          type: 'Point',
-          coordinates: [
-            eventData.vlg,
-            eventData.vlt
-          ]
-        };
-      }
-
-      // Mongo ID Object
-      eventData._id = {
-        s: vert,
-        e: eventData.e,
-        a: eventData.a,
-        eb: eventData.eb,
-        ee: eventData.ee
-      };
-
-      // Clean null/empty values and format data
-      const cleanKeys = (data) => {
-        let newObj = {};
-        if (Array.isArray(data)) {
-          newObj = [];
-        }
-
-        for (const key in data) {
-          const value = data[key];
-          if (!(value === null || value.toString() === '')) {
-            if (value instanceof Date) {
-              // Format date - remove empty timestamps
-              const dateStr = value.toISOString();
-              newObj[key] = dateStr.split('T')[1] !== '00:00:00.000Z'
-                ? value
-                : dateStr.split('T')[0];
-            } else if (Array.isArray(value) || typeof value === 'object') {
-              newObj[key] = cleanKeys(value);
-            } else {
-              // Convert boolean to 1/0
-              if (value === true) {
-                newObj[key] = 1;
-              } else if (value === false) {
-                newObj[key] = 0;
-              } else {
-                newObj[key] = value;
-              }
-            }
-          }
-        }
-        return newObj;
-      };
-
-      eventData = cleanKeys(eventData);
-
-      // Format additional fields
-      eventData.eph = eventData.eph ? eventData.eph.toString() : '';
-      
-      // Only set eq/eqo to empty if they weren't populated by getTouchEventQueries
-      if (!eventData.eq || !Array.isArray(eventData.eq) || eventData.eq.length === 0) {
-        eventData.eq = [];
-      }
-      if (!eventData.eqo || !Array.isArray(eventData.eqo) || eventData.eqo.length === 0) {
-        eventData.eqo = [];
-      }
-      
-      // Process keywords if they exist
-      if (eventData.ek && typeof eventData.ek === 'string') {
-        eventData.ek = eventData.ek.split(',').map(item => item.replace(/\|\^\^\|/g, ''));
-      } else if (!eventData.ek) {
-        eventData.ek = [];
-      }
-
-      // Event start / end time - combine date and time in JavaScript (matching old code)
-      if (eventData.est && eventData.eb) {
-        eventData.ebi = await dateAndTimeToDatetime(eventData.eb, eventData.est);
-      }
-      if (eventData.eet && eventData.ee) {
-        eventData.eei = await dateAndTimeToDatetime(eventData.ee, eventData.eet);
       }
 
       // Delete any existing record

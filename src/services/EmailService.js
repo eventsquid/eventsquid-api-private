@@ -244,9 +244,9 @@ class EmailService {
       const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
-      const request = new sql.Request();
-      request.input('affiliateID', sql.Int, Number(affiliateID));
-      const result = await request.query(`
+      const sqlRequest = new sql.Request();
+      sqlRequest.input('affiliateID', sql.Int, Number(affiliateID));
+      const result = await sqlRequest.query(`
         USE ${dbName};
         SELECT TOP 100
           m.mailID,

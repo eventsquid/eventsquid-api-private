@@ -27,6 +27,24 @@ export const findReportLayoutsByEventRoute = {
   }
 };
 
+// Report Builder: documented Attendee Info fields (for admin UI; includes registered-by columns)
+export const getReportBuilderAttendeeInfoExtraFieldsRoute = {
+  method: 'GET',
+  path: '/reporting/report-builder/attendee-info-extra-fields',
+  handler: async (request) => {
+    await authenticate(request);
+    try {
+      const result = reportingService.getReportBuilderAttendeeInfoExtraFields();
+      return createResponse(200, result);
+    } catch (error) {
+      return createResponse(500, {
+        status: 'fail',
+        message: error.message
+      });
+    }
+  }
+};
+
 // Get CEU Summary Report layouts by event GUID
 export const findCEUSummaryReportLayoutsByEventRoute = {
   method: 'GET',

@@ -12,6 +12,60 @@ import { utcToTimezone, timezoneToUTCDateObj } from '../functions/conversions.js
 import EventService from '../services/EventService.js';
 import { sendEmail } from './sendgrid.js';
 
+/** Human labels for registrant report SQL column keys (Report Builder + export). */
+export const REGISTRANT_REPORT_COLUMN_LABELS = {
+  c: 'Attendee ID',
+  'bo|f': 'Item ID',
+  ul: 'Last',
+  uf: 'First',
+  uc: 'Organization',
+  rt: 'Reg Date',
+  as: 'Item Start Date',
+  ast: 'Item Start Time',
+  ae: 'Item End Date',
+  aet: 'Item End Time',
+  'fm&bo&desc': 'Item',
+  'on&sn': 'Options',
+  sz: 'Size',
+  'fl&dt': 'Prompt',
+  q: 'Quantity',
+  pr: 'Price',
+  'q&pr': 'Item Total',
+  stl: 'Fee',
+  'q&pr&stl': 'Grand Total',
+  rbe: 'Registered by Email',
+  rbf: 'Registered by First Name',
+  rbl: 'Registered by Last Name'
+};
+
+/** Default column order for export and column picker. */
+export const REGISTRANT_REPORT_COLUMN_ORDER = [
+  'c', 'bo|f', 'ul', 'uf', 'uc', 'rt', 'as', 'ast', 'ae', 'aet',
+  'fm&bo&desc', 'on&sn', 'sz', 'fl&dt', 'q', 'pr', 'q&pr', 'stl', 'q&pr&stl',
+  'rbe', 'rbf', 'rbl'
+];
+
+const REGISTRANT_REPORT_COLUMN_SECTIONS = [
+  { section: 'Attendee Info', ids: ['c', 'ul', 'uf', 'uc', 'rt', 'rbe', 'rbf', 'rbl'] },
+  { section: 'Item Dates', ids: ['as', 'ast', 'ae', 'aet'] },
+  { section: 'Item Details', ids: ['bo|f', 'fm&bo&desc', 'on&sn', 'sz', 'fl&dt'] },
+  { section: 'Pricing', ids: ['q', 'pr', 'q&pr', 'stl', 'q&pr&stl'] }
+];
+
+/**
+ * Grouped registrant report columns for admin Report Builder UIs.
+ * Keys: `rbe`, `rbf`, `rbl` — pass through as `selectedCols` / template `rsc`.
+ */
+export function getRegistrantReportColumnGroups() {
+  return REGISTRANT_REPORT_COLUMN_SECTIONS.map(({ section, ids }) => ({
+    section,
+    columns: ids.map((id) => ({
+      id,
+      label: REGISTRANT_REPORT_COLUMN_LABELS[id] || id
+    }))
+  }));
+}
+
 /**
  * Get event details by GUID
  */
@@ -290,7 +344,9 @@ export async function findEventReportConfig(request) {
     }).toArray();
 
     if (!eventIDs || eventIDs.length === 0) {
-      return {};
+      return {
+        registrantReportColumnGroups: getRegistrantReportColumnGroups()
+      };
     }
 
     const sql = await getConnection(vert);
@@ -376,7 +432,9 @@ export async function findEventReportConfig(request) {
     ]).toArray();
 
     if (!eventConfig || eventConfig.length === 0) {
-      return {};
+      return {
+        registrantReportColumnGroups: getRegistrantReportColumnGroups()
+      };
     }
 
     const config = eventConfig[0];
@@ -486,6 +544,8 @@ export async function findEventReportConfig(request) {
 
     delete config.evfs;
 
+    config.registrantReportColumnGroups = getRegistrantReportColumnGroups();
+
     return config;
   } catch (error) {
     console.error('Error finding event report config:', error);
@@ -572,7 +632,9 @@ export async function getRegistrantFilters(eventID, vert) {
 
     returnObj.ops = _.orderBy(_opsRA, ['sn', 'on'], ['asc', 'asc']);
 
-    return _.pick(returnObj, ['cats', 'pfs', 'ops']);
+    returnObj.registrantReportColumnGroups = getRegistrantReportColumnGroups();
+
+    return _.pick(returnObj, ['cats', 'pfs', 'ops', 'registrantReportColumnGroups']);
   } catch (error) {
     console.error('Error getting registrant filters:', error);
     throw error;
@@ -622,6 +684,40 @@ async function generateDateRangeFilters(dateRangeStr, dateRangeRA, zoneName) {
   }
 
   return returnObj;
+}
+
+/**
+ * Build a map of registrar details by contestant ID.
+ * Supports third-party and admin registrations stored on attendee records.
+ */
+async function getRegistrarDetailsByContestantID(eventID, contestantIDs, vert) {
+  if (!Array.isArray(contestantIDs) || contestantIDs.length === 0) {
+    return {};
+  }
+
+  const db = await getDatabase(null, vert);
+  const attendeesColl = db.collection('attendees');
+  const attendeeDocs = await attendeesColl.find({
+    e: Number(eventID),
+    c: { $in: contestantIDs.map((id) => Number(id)) }
+  }, {
+    projection: { _id: 0, c: 1, rb: 1 }
+  }).toArray();
+
+  const registrarByContestantID = {};
+  for (let i = 0; i < attendeeDocs.length; i++) {
+    const doc = attendeeDocs[i] || {};
+    const rb = doc.rb || {};
+
+    // Be permissive with legacy key shapes so this works across data vintages.
+    registrarByContestantID[Number(doc.c)] = {
+      rbe: String(rb.ue || rb.email || '').trim(),
+      rbf: String(rb.uf || rb.firstName || rb.fn || '').trim(),
+      rbl: String(rb.ul || rb.lastName || rb.ln || '').trim()
+    };
+  }
+
+  return registrarByContestantID;
 }
 
 /**
@@ -681,7 +777,10 @@ export async function registrantReport(eventID, vert, body) {
       'on&sn': 'CASE WHEN ( RTRIM(LTRIM( ISNULL( [on], \'\' ) )) !=\'\' ) THEN sn + \': \' + [on] ELSE \'\'  END AS [on&sn]',
       'fl&dt': 'CASE WHEN ( RTRIM(LTRIM( ISNULL( fl, \'\' ) )) != \'\' ) THEN fl + \': \' + dt ELSE \'\' END AS [fl&dt]',
       'q&pr&stl': '( ISNULL( q, 0 ) * ISNULL( pr, 0 ) ) + ISNULL( stl, 0 ) AS [q&pr&stl]',
-      'q&pr': '( ISNULL( q, 0) * ISNULL( pr, 0) ) AS [q&pr]'
+      'q&pr': '( ISNULL( q, 0) * ISNULL( pr, 0) ) AS [q&pr]',
+      rbe: '\'\' AS rbe',
+      rbf: '\'\' AS rbf',
+      rbl: '\'\' AS rbl'
     };
 
     // If this has reg date ranges
@@ -801,7 +900,29 @@ export async function registrantReport(eventID, vert, body) {
     }
 
     // Filter out the removed records
-    return _.filter(regRA, function(o) { return !o._remove; });
+    const filteredRegRA = _.filter(regRA, function(o) { return !o._remove; });
+
+    // Backfill registrar/admin details from attendee records.
+    const uniqueContestantIDs = _.uniq(
+      filteredRegRA
+        .map((row) => Number(row.c))
+        .filter((contestantID) => Number.isFinite(contestantID) && contestantID > 0)
+    );
+    const registrarByContestantID = await getRegistrarDetailsByContestantID(
+      Number(eventID),
+      uniqueContestantIDs,
+      vert
+    );
+
+    for (let i = 0; i < filteredRegRA.length; i++) {
+      const row = filteredRegRA[i];
+      const registrar = registrarByContestantID[Number(row.c)] || {};
+      row.rbe = String(registrar.rbe || row.rbe || '');
+      row.rbf = String(registrar.rbf || row.rbf || '');
+      row.rbl = String(registrar.rbl || row.rbl || '');
+    }
+
+    return filteredRegRA;
   } catch (error) {
     console.error('Error generating registrant report:', error);
     throw error;
@@ -964,45 +1085,20 @@ export async function registrantReportExport(reportGUID, format, checkID, vert, 
       fakeFormScope
     );
 
-    const colsObj = {
-      'c': 'Attendee ID',
-      'bo|f': 'Item ID',
-      'ul': 'Last',
-      'uf': 'First',
-      'uc': 'Organization',
-      'rt': 'Reg Date',
-      'as': 'Item Start Date',
-      'ast': 'Item Start Time',
-      'ae': 'Item End Date',
-      'aet': 'Item End Time',
-      'fm&bo&desc': 'Item',
-      'on&sn': 'Options',
-      'sz': 'Size',
-      'fl&dt': 'Prompt',
-      'q': 'Quantity',
-      'pr': 'Price',
-      'q&pr': 'Item Total',
-      'stl': 'Fee',
-      'q&pr&stl': 'Grand Total'
-    };
-
     const selectRA = [];
-    const colOrderRA = [
-      'c', 'bo|f', 'ul', 'uf', 'uc', 'rt', 'as', 'ast', 'ae', 'aet',
-      'fm&bo&desc', 'on&sn', 'sz', 'fl&dt', 'q', 'pr', 'q&pr', 'stl', 'q&pr&stl'
-    ];
     const colsRA = reportDetail.reportDetails.rsc;
     const defaultObj = {};
 
     // Loop the columns in order of appearance
-    for (let i = 0; i < colOrderRA.length; i++) {
+    for (let i = 0; i < REGISTRANT_REPORT_COLUMN_ORDER.length; i++) {
       // If this column is among those selected for display
-      if (colsRA.indexOf(colOrderRA[i]) >= 0) {
-        const colName = colsObj[colOrderRA[i]];
+      if (colsRA.indexOf(REGISTRANT_REPORT_COLUMN_ORDER[i]) >= 0) {
+        const colKey = REGISTRANT_REPORT_COLUMN_ORDER[i];
+        const colName = REGISTRANT_REPORT_COLUMN_LABELS[colKey];
         // Create a SQL alias
-        selectRA.push(`[${colOrderRA[i]}] AS [${colName}]`);
+        selectRA.push(`[${colKey}] AS [${colName}]`);
         // Also add it to the default object
-        defaultObj[colOrderRA[i]] = '';
+        defaultObj[colKey] = '';
       }
     }
 
@@ -1064,13 +1160,13 @@ export async function registrantReportExport(reportGUID, format, checkID, vert, 
     importBreakingInfo.push(_.assign({}, defaultObj));
 
     // Report filters info
-    junkDataObj[String(colOrderRA[0])] = 'Report Filters';
+    junkDataObj[String(REGISTRANT_REPORT_COLUMN_ORDER[0])] = 'Report Filters';
     importBreakingInfo.push(_.assign({}, defaultObj, junkDataObj));
 
-    junkDataObj[String(colOrderRA[0])] = `Date Range: ${dateRangeFilter}`;
+    junkDataObj[String(REGISTRANT_REPORT_COLUMN_ORDER[0])] = `Date Range: ${dateRangeFilter}`;
     importBreakingInfo.push(_.assign({}, defaultObj, junkDataObj));
 
-    junkDataObj[String(colOrderRA[0])] = `Registration Items: ${regItemFilterList}`;
+    junkDataObj[String(REGISTRANT_REPORT_COLUMN_ORDER[0])] = `Registration Items: ${regItemFilterList}`;
     importBreakingInfo.push(_.assign({}, defaultObj, junkDataObj));
 
     // Inject the report filters info into the end of the spreadsheet

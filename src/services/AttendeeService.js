@@ -136,6 +136,16 @@ class AttendeeService {
         finalColumns.cmpy = 1;
       }
 
+      // Master account columns come from nested `ps` (same as Report Builder “Master Acct *”)
+      if (finalColumns.pe || finalColumns.pf || finalColumns.pl || finalColumns.pt) {
+        finalColumns.ps = 1;
+      }
+
+      // Registered-by (third-party / admin registrar) lives on `rb`; expose as rbe / rbf / rbl after pivot
+      if (finalColumns.rbe || finalColumns.rbf || finalColumns.rbl) {
+        finalColumns.rb = 1;
+      }
+
       // Get limit from filter if present
       let limit = limitParam;
       const filterCopy = filter ? { ...filter } : {};
@@ -550,6 +560,32 @@ class AttendeeService {
           }
 
           delete attendee.ps;
+        }
+
+        // Registrar / “registered by” (third-party or admin) — same source as registrant-template rbe/rbf/rbl
+        const shouldPivotRb =
+          pivot.indexOf('rb') >= 0 ||
+          Boolean(columns.rbe) ||
+          Boolean(columns.rbf) ||
+          Boolean(columns.rbl);
+        if (shouldPivotRb && attendee.rb) {
+          const raw = attendee.rb;
+          const rb = Array.isArray(raw) && raw.length > 0 ? raw[0] : raw;
+          if (rb && typeof rb === 'object') {
+            const email = rb.ue ?? rb.email;
+            const first = rb.uf ?? rb.firstName ?? rb.fn;
+            const last = rb.ul ?? rb.lastName ?? rb.ln;
+            if (email != null && String(email).trim() !== '') {
+              attendee.rbe = _.trim(String(email));
+            }
+            if (first != null && String(first).trim() !== '') {
+              attendee.rbf = _.trim(String(first));
+            }
+            if (last != null && String(last).trim() !== '') {
+              attendee.rbl = _.trim(String(last));
+            }
+          }
+          delete attendee.rb;
         }
 
         // Handle host info (hs) array

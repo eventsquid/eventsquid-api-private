@@ -9,6 +9,41 @@ import _ from 'lodash';
 
 class ReportingService {
   /**
+   * Report Builder (Mongo layout + /attendee/attendees-pivoted): extra Attendee Info columns
+   * not present in older admin bundles. Merge these into the Attendee Info checkbox list.
+   * Output columns match AttendeeService.findAndPivotAttendees after rb pivot.
+   */
+  getReportBuilderAttendeeInfoExtraFields() {
+    return {
+      section: 'Attendee Info',
+      fields: [
+        {
+          columnKey: 'rbe',
+          label: 'Registered by Email',
+          mongoProjection: 'rb',
+          pivotToken: 'rb'
+        },
+        {
+          columnKey: 'rbf',
+          label: 'Registered by First Name',
+          mongoProjection: 'rb',
+          pivotToken: 'rb'
+        },
+        {
+          columnKey: 'rbl',
+          label: 'Registered by Last Name',
+          mongoProjection: 'rb',
+          pivotToken: 'rb'
+        }
+      ],
+      integration: {
+        pivotedAttendeesPath: 'POST /attendee/attendees-pivoted',
+        hint: 'When any of these columns is selected, request body should include columns.rbe, .rbf, and/or .rbl (value 1), include rb in the Mongo projection (automatic if using AttendeeService.findAttendees), add "rb" to the pivot array (same idea as Master Acct Email/First/Last using pivot "ps"), then run findAndPivotAttendees.'
+      }
+    };
+  }
+
+  /**
    * Find report layouts by event
    */
   async findReportLayoutsByEvent(request) {

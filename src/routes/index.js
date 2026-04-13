@@ -335,7 +335,8 @@ import {
   deleteCEUSummaryReportLayoutRoute,
   deleteCEUDetailReportLayoutRoute,
   findReportCategoriesRoute,
-  updateReportCategoryByEventRoute
+  updateReportCategoryByEventRoute,
+  getReportBuilderAttendeeInfoExtraFieldsRoute
 } from './reporting.js';
 
 // Health check route
@@ -647,7 +648,8 @@ export const routes = [
   getDeclinedByRegItemIDRoute,
   unawardAttendeeRoute,
   getEventSessionsRoute,
-  // Reporting routes (11 routes)
+  // Reporting routes (12 routes)
+  getReportBuilderAttendeeInfoExtraFieldsRoute,
   findReportLayoutsByEventRoute,
   findCEUSummaryReportLayoutsByEventRoute,
   findCEUDetailReportLayoutsByEventRoute,
