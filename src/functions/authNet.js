@@ -733,9 +733,9 @@ export async function getPaymentForm(request) {
     const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const request = new sql.Request();
-    request.input('contestantID', sql.Int, Number(contestantID));
-    const result = await request.query(`
+    const sqlRequest = new sql.Request();
+    sqlRequest.input('contestantID', sql.Int, Number(contestantID));
+    const result = await sqlRequest.query(`
       USE ${dbName};
       SELECT c.multicheckout, e.event_title
       FROM eventContestant c
