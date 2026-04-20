@@ -9,8 +9,22 @@
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 import { getDatabase } from '../utils/mongodb.js';
 import { recordRefund } from './paymentTransactions/recordRefund.js';
+import { sendUnconfirmedPaymentAlerts } from './paymentTransactions.js';
+import _attendeeService from '../services/AttendeeService.js';
+import _eventService from '../services/EventService.js';
 import _ from 'lodash';
 import moment from 'moment-timezone';
+
+// Mirrors Mantle CONSTANTS._dm — per-vertical app domain for email links
+const DOMAINS_BY_VERTICAL = {
+  cn: 'https://www.connectmeetings.events',
+  es: 'https://www.eventsquid.com',
+  fd: 'https://www.rcnation.com',
+  ft: 'https://www.fitsquid.com',
+  ir: 'https://inreachce.events',
+  kt: 'https://app.mykindercamps.com',
+  ln: 'https://www.launchsquid.com'
+};
 
 // Import authorizenet SDK (will need to be installed)
 // NOTE: This is a dynamic import that will fail if package is not installed
@@ -33,6 +47,83 @@ async function loadAuthorizeNet() {
 // Load on module initialization
 let authNetLoaded = false;
 loadAuthorizeNet().then(loaded => { authNetLoaded = loaded; });
+
+/**
+ * Sync the attendee's transaction list and total paid from MSSQL into MongoDB.
+ * Mirrors Mantle functions/paymentTransactions/updateTransactionsMongo.js
+ */
+async function updateTransactionsMongo(attendeeID, vert) {
+  const sql = await getConnection(vert);
+  const dbName = getDatabaseName(vert);
+
+  const totalPaidRequest = new sql.Request();
+  totalPaidRequest.input('attendeeID', TYPES.Int, Number(attendeeID));
+  const totalPaidResult = await totalPaidRequest.query(`
+    USE ${dbName};
+    DECLARE @regTotalPaid DECIMAL(10,2);
+    SET @regTotalPaid = ISNULL((
+      SELECT SUM(ISNULL(amount, 0))
+      FROM contestant_transactions
+      WHERE contestant_id = @attendeeID
+    ), 0);
+    SELECT @regTotalPaid AS regTotalPaid;
+  `);
+
+  const transactionsRequest = new sql.Request();
+  transactionsRequest.input('attendeeID', TYPES.Int, Number(attendeeID));
+  const transactionsResult = await transactionsRequest.query(`
+    USE ${dbName};
+    SELECT
+      amount       AS [am],
+      processDate  AS [pd],
+      processDate  AS [pdi],
+      processID    AS [pi],
+      processToken AS [ptk],
+      payMethod    AS pm
+    FROM contestant_transactions
+    WHERE contestant_id = @attendeeID;
+  `);
+
+  const totalPaid = Number(totalPaidResult.recordset[0]?.regTotalPaid || 0);
+  const transactions = transactionsResult.recordset || [];
+
+  const db = await getDatabase(null, vert);
+  await db.collection('attendees').updateOne(
+    { c: Number(attendeeID), sg: { $exists: false } },
+    {
+      $currentDate: { lu: { $type: 'date' } },
+      $set: { tr: transactions, tp: totalPaid }
+    }
+  );
+
+  return { totalPaid, transactionCount: transactions.length };
+}
+
+/**
+ * Call dbo.node_updateTransaction then sync MongoDB.
+ * Mirrors Mantle functions/paymentTransactions/updateTransaction.js
+ */
+async function updateTransaction(attendeeID, params, vert) {
+  const sql = await getConnection(vert);
+  const dbName = getDatabaseName(vert);
+
+  const sqlRequest = new sql.Request();
+  sqlRequest.input('failed',       TYPES.Bit,      params.failed ? 1 : 0);
+  sqlRequest.input('attendeeID',   TYPES.Int,      Number(attendeeID));
+  sqlRequest.input('processDate',  TYPES.DateTime, params.pdi);
+  sqlRequest.input('processID',    TYPES.VarChar,  _.truncate(_.trim(params.pi),       { length: 150, omission: '' }));
+  sqlRequest.input('processToken', TYPES.VarChar,  _.truncate(_.trim(params.ptk),      { length: 150, omission: '' }));
+  sqlRequest.input('pending',      TYPES.Bit,      Number(params.pending));
+  sqlRequest.input('payMethod',    TYPES.VarChar,  _.truncate(_.trim(params.py || ''), { length: 50,  omission: '' }));
+  sqlRequest.input('processIDNew', TYPES.VarChar,  _.truncate(_.trim(params.piNew || ''), { length: 150, omission: '' }));
+
+  await sqlRequest.query(`
+    USE ${dbName};
+    EXEC dbo.node_updateTransaction @failed, @attendeeID, @processDate, @processID, @processToken, @pending, @payMethod, @processIDNew
+  `);
+
+  await updateTransactionsMongo(attendeeID, vert);
+}
 
 /**
  * Get credentials by affiliate ID
@@ -200,9 +291,69 @@ export async function getTransactionDetails(request) {
                 response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' && 
                 response.transaction) {
               
-              // TODO: Implement transaction status handling and updates
-              // This would involve calling updateTransaction, sendUnconfirmedPaymentAlerts, etc.
-              // For now, just return the response
+              // Branch on transaction status — mirrors Mantle getTransactionDetails.js
+              const status = response.transaction.transactionStatus?.toLowerCase() || '';
+              const attendeeID = Number(response.transaction.order?.invoiceNumber?.split('-')[0]);
+
+              if (
+                ['capturedpendingsettlement', 'settledsuccessfully'].includes(status) &&
+                !request.body?.forceUnconfirmed &&
+                !request.body?.refund
+              ) {
+                // Captured / settled — write to MSSQL and sync MongoDB
+                await updateTransaction(attendeeID, {
+                  pi:      _.trim(transactionID),
+                  ptk:     _.trim(response.transaction.order.invoiceNumber),
+                  pdi:     new Date(response.transaction.submitTimeUTC),
+                  pending: 0,
+                  failed:  false
+                }, vert);
+
+              } else if (
+                ['declined', 'expired', 'generalerror', 'voided', 'failedreview'].includes(status) &&
+                !request.body?.forceUnconfirmed &&
+                !request.body?.refund
+              ) {
+                // Failed / declined — record failure with reason
+                await updateTransaction(attendeeID, {
+                  py:      `authNet (${response.transaction.authAmount} failed)`,
+                  pi:      _.trim(transactionID),
+                  ptk:     _.trim(response.transaction.order.invoiceNumber),
+                  pdi:     new Date(response.transaction.submitTimeUTC),
+                  pending: 0,
+                  piNew:   `${transactionID} ${response.transaction.responseReasonDescription}`,
+                  failed:  true
+                }, vert);
+
+              } else if (
+                (request.body?.payingnow || request.body?.forceUnconfirmed) &&
+                response.transaction.order
+              ) {
+                // Unconfirmed (pay-now event) — alert registrant and host
+                const attendeeObj = await _attendeeService.findAttendeeObj(0, attendeeID, 0, vert);
+                const eventObj = await _eventService.getEventData({
+                  headers: { vert },
+                  pathParameters: { eventID: Number(attendeeObj.e) }
+                });
+
+                await sendUnconfirmedPaymentAlerts({
+                  body: {
+                    dataObj: {
+                      eventname:        _.trim(attendeeObj.et),
+                      processor:        'AuthNet',
+                      eventcontactname: _.trim(eventObj.en),
+                      hostEmail:        _.trim(eventObj.em),
+                      attendeeID:       attendeeID,
+                      attendeeFirst:    _.trim(attendeeObj.uf),
+                      attendeeLast:     _.trim(attendeeObj.ul),
+                      attendeeEmail:    _.trim(attendeeObj.ue),
+                      amount:           Number(response.transaction.authAmount),
+                      affDashboard:     `${DOMAINS_BY_VERTICAL[vert] || 'https://www.eventsquid.com'}/aff-dashboard.cfm?affiliate_id=${attendeeObj.a}`
+                    }
+                  }
+                });
+              }
+
               resolve(response);
             } else {
               resolve({
