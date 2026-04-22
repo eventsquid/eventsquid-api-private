@@ -1435,68 +1435,218 @@ class EventService {
    * This method queries all relevant tables to build a complete event document
    */
   async getTouchEventQueries(eventID, vert, connection, dbName, s3RootURL, siteURL) {
-    // Main event data query - start with core fields we know exist
-    // Additional fields can be added as needed
     const sql = await getConnection(vert);
     const request1 = new sql.Request();
     request1.input('eventID', sql.Int, Number(eventID));
     const result1 = await request1.query(`
       USE ${dbName};
-      SELECT TOP 1
-          -- Basic event identifiers
+      SELECT
+          a._guid AS ag,
+          a.affiliate_name AS an,
+          a.customAffiliateID AS cai,
+          a.logoS3 AS al3,
           e._guid AS eg,
-          e.Event_id AS e,
+          e.accessCode AS eac,
+          e.addOnReg AS eao,
+          e.addOnRegExpires AS eax,
+          e.address_req AS rqa,
+          e.adultReg AS etp,
           e.affiliate_id AS a,
-          -- Event dates and times
-          e.Event_begins AS eb,
-          e.Event_ends AS ee,
-          e.startTime AS est,
+          e.affiliate_notes AS ano,
+          e.ama_district AS amd,
+          e.ama_sanction AS ams,
+          e.archive AS av,
+          e.deleted AS dp,
+          e.balesLive AS egl,
+          e.billingComplete AS ebc,
+          e.bio_req AS rqb,
+          e.birthdate_req AS rqd,
+          e.boothReg AS ebr,
+          e.booths_req AS rqu,
+          e.boothTitle AS ebt,
+          e.bringing_req AS rqr,
+          e.bringingLimit AS ebl,
+          e.bringingNotes AS ebg,
+          e.calSum AS ecl,
+          e.checkOutNotes AS eco,
+          e.company_req AS rqc,
+          e.confirmLabel1 AS em1,
+          e.confirmLabel2 AS em2,
+          e.confirmLabel3 AS em3,
+          e.confirmLink1 AS eu1,
+          e.confirmLink2 AS eu2,
+          e.confirmLink3 AS eu3,
+          e.ContestantReg AS cr,
+          e.conversionRate AS ecv,
+          e.customHost AS ech,
+          e.departure_req AS rqe,
+          e.disclaimer AS edr,
+          e.docNotes AS edn,
+          e.docNotesVendor AS env,
+          e.docsNeeded AS edd,
+          e.docsNeededVendor AS evd,
           e.endTime AS eet,
-          -- Event information
-          e.Event_title AS et,
-          e.Event_description AS de,
+          e.entryLimit AS emc,
+          e.entryLimitSpec AS emt,
+          e.entryLimitVendor AS emv,
+          e.equipRecordCompleteRequired AS rqq,
+          e.Event_active AS ea,
+          e.Event_altemail AS ema,
+          e.Event_begins AS eb,
           e.Event_contact AS en,
+          e.Event_count AS evv,
+          dbo.udf_StripHTML( REPLACE( CAST( e.Event_description AS VARCHAR(MAX) ), CHAR(3), '' ) ) AS de,
+          REPLACE( REPLACE( REPLACE( CAST( e.Event_description AS VARCHAR(MAX) ), '"', '\"' ), '&', '\&' ), CHAR(3), '' ) AS dh,
+          e.Event_deviations AS edv,
           e.Event_email AS em,
+          e.Event_emailFrom AS eef,
+          e.Event_ends AS ee,
+          e.Event_id AS e,
+          e.Event_indoor AS [in],
+          e.Event_parking AS epk,
+          e.Event_parking_link AS epu,
           e.Event_phone AS eph,
-          -- Event logo S3 URL
+          e.Event_results_link AS erl,
+          e.Event_room AS erm,
+          e.Event_title AS et,
+          e.Event_type_id AS t,
+          e.Event_website AS ew,
+          e.EventFeeDue AS efd,
+          e.EventFeePaid AS efp,
+          e.EventFeePaidDate AS epd,
+          e.EventFeeTotalPaid AS ept,
+          e.EventFlyerS3 AS ef3,
           CASE WHEN (ISNULL(NULLIF(e.EventlogoS3, ''), '') = '')
-            THEN a.logo
-            ELSE
-              CASE WHEN (LEFT(ISNULL(NULLIF(e.EventlogoS3, ''), ''), 5) = 'https')
-                THEN e.EventlogoS3
+              THEN (SELECT logo FROM b_affiliates WHERE affiliate_id = e.affiliate_id)
               ELSE
-                '${s3RootURL || ''}/' + e.EventlogoS3
-              END
+                  CASE WHEN ( LEFT( ISNULL( NULLIF(e.EventlogoS3, ''), '' ), 5 ) = 'https' )
+                      THEN e.EventlogoS3
+                  ELSE
+                      '${s3RootURL}/' + e.EventlogoS3
+                  END
           END AS el3,
-          -- Venue information
+          e.firstPublished AS fpb,
+          e.fullguest AS ege,
+          e.gender_req AS rqj,
+          e.GuestCustomPrompt AS gp1,
+          e.GuestCustomPrompt2 AS gp2,
+          e.GuestCustomPrompt3 AS gp3,
+          e.GuestCustomPrompt4 AS gp4,
+          e.GuestCustomPrompt5 AS gp5,
+          e.guestLimit AS emg,
+          e.hotel_req AS rqh,
+          e.isPrivateSeries AS eip,
+          e.isSeries AS eis,
+          e.jobslive AS ejl,
+          REPLACE( e.keywords, ',', '|^^|,|^^|' ) AS ek,
+          e.minorReg AS emr,
+          e.mobile_req AS rqm,
+          CASE
+              WHEN ( ISNULL( NULLIF(e.newEventBannerS3, ''), '') = '' )
+                  THEN
+                      CASE WHEN ( ISNULL(NULLIF(e.newEventBanner, ''), '') = '')
+                          THEN NULL
+                      ELSE
+                          'http://${siteURL}/eventBanners/' + e.newEventBanner
+                      END
+              ELSE
+                  CASE WHEN (LEFT( ISNULL( NULLIF(e.newEventBannerS3, ''), ''), 5 ) = 'https')
+                      THEN e.newEventBannerS3
+                  ELSE
+                      '${s3RootURL}/' + e.newEventBannerS3
+                  END
+          END AS eb3,
+          CASE
+              WHEN ( LEFT( ISNULL( e.regBackgroundS3, '' ), 5 ) = 'https' )
+                  THEN e.regBackgroundS3
+              ELSE
+                  '${s3RootURL}/' + e.regBackgroundS3
+          END AS rb3,
+          e.payMethodEvent AS cpd,
+          e.payMethodEventVendor AS vpd,
+          e.payMethodMail AS cpm,
+          e.payMethodMailVendor AS vpm,
+          e.payMethodOnline AS cpo,
+          e.payMethodOnlineVendor AS vpo,
+          e.payRequired AS epr,
+          e.payRequiredVendor AS vpr,
+          e.phone_req AS rqn,
+          e.position_req AS rqo,
+          e.private AS pvt,
+          e.RegistrationEnd AS re,
+          e.RegistrationEndDate AS ere,
+          e.RegistrationStart AS rs,
+          e.RegistrationStartDate AS ers,
+          e.regNotes AS ern,
+          e.roomTypeList AS rtl,
+          e.schedulesLive AS ekl,
+          e.scoreslive AS esl,
+          e.sellTickets AS etr,
+          e.series_Contestant_cost AS scc,
+          e.series_id AS sr,
+          e.series_notes AS esn,
+          e.series_team_cost AS stc,
+          e.seriesPayment AS spm,
+          e.seriesPaymentDue AS spd,
+          e.seriesRevShare AS sef,
+          e.startTime AS est,
+          e.surcharge AS su,
+          e.surchargeFlat AS suf,
+          e.surchargeflatVendor AS svf,
+          e.surchargeSpec AS sp,
+          e.surchargeSpecFlat AS spf,
+          e.surchargeVendor AS sv,
+          e.team_req AS rqt,
+          e.TeamLink AS tu,
+          e.timeZone_id AS tz,
+          e.totalAttending AS eta,
+          e.travelNotes AS etn,
+          e.user_id AS u,
+          e.Vendor_instructions AS vi,
+          e.VendorReg AS rqv,
           e.venue_id AS vn,
-          vu.venue_name AS vm,
-          vu.venue_address AS va,
+          e.volunteer_end AS eve,
+          e.volunteer_start AS evs,
+          e.volunteerNotes AS evn,
+          e.voting AS vt,
+          ISNULL( e.isWebsitePublished, 0 ) AS epb,
+          CASE
+              WHEN ( RTRIM(LTRIM( ISNULL( e.taxID, '' ) )) = '' )
+                  THEN NULL
+              ELSE
+                  RTRIM(LTRIM( e.taxID ))
+          END AS tx,
+          et.team_id AS ti,
+          ISNULL(etz.zoneName, 'UTC') AS tzn,
+          t.Event_type AS ep,
+          t.Event_type_category AS epc,
+          t.Event_type_subcat AS eps,
           vu.venue_city AS vc,
-          vu.venue_region AS vr,
+          vu.venue_country AS vcy,
           vu.venue_lat AS vlt,
           vu.venue_long AS vlg,
-          -- Timezone
-          e.timeZone_id AS tz,
-          ISNULL(tz.zoneName, 'UTC') AS tzn,
-          -- Check-in app settings (from b_events)
+          vu.venue_name AS vm,
+          vu.venue_region AS vr,
+          vu.venue_address AS va,
+          vu.venue_directions AS vdi,
+          c.currencyVar AS cu,
+          getDate() AS [lu],
           e.autoAdvance AS aa,
           e.autoAdvanceRevert AS aar,
           e.multiDayCheckIn AS mdc,
-          -- Contact scan app settings (from b_events)
           e.scanAppActive AS saa,
           e.scanAppCode AS sac,
-          -- CEU settings (from b_events)
           e.ceuAcronym AS ceua,
           e.ceuDisplayOnReg AS ceud,
           e.ceuValueLabel AS ceuv,
-          e.ceuDisplayCounterOnReg AS ceuc,
-          -- Timestamps
-          getDate() AS lu
-      FROM b_Events AS e
-          LEFT JOIN b_venues AS vu ON vu.venue_id = e.venue_id
-          LEFT JOIN b_timezones AS tz ON tz.timeZoneID = e.timeZone_id
-          JOIN b_affiliates AS a ON a.affiliate_id = e.affiliate_id
+          e.ceuDisplayCounterOnReg AS ceuc
+      FROM [b_Events] AS e
+          LEFT JOIN [b_Event_types] AS t ON e.Event_type_id = t.Event_type_id
+          LEFT JOIN [b_venues] AS vu ON vu.venue_id = e.venue_id
+          LEFT JOIN [Event_team] AS et ON et.affiliate_id = e.affiliate_id AND et.Event_id = e.Event_id
+          LEFT JOIN [b_timeZones] AS etz ON etz.timeZoneID = e.timeZone_id
+          JOIN [b_affiliates] AS a ON e.affiliate_id = a.affiliate_id
+          JOIN [b_currency] AS c ON ISNULL( e.Event_currency, 1 ) = c.currencyID
       WHERE e.Event_id = @eventID
     `);
 
@@ -1506,36 +1656,22 @@ class EventService {
 
     let eventData = result1.recordset[0];
 
-    // Get affiliate name
-    const request2 = new sql.Request();
-    request2.input('affiliateID', sql.Int, Number(eventData.a));
-    const result2 = await request2.query(`
-      USE ${dbName};
-      SELECT TOP 1 affiliate_name AS an
-      FROM b_affiliates
-      WHERE affiliate_id = @affiliateID
-    `);
-
-    if (result2.recordset.length) {
-      eventData.an = result2.recordset[0].an;
-    }
-
     // Get authority data
-    const request3 = new sql.Request();
-    request3.input('eventID', sql.Int, Number(eventID));
-    const result3 = await request3.query(`
+    const request2 = new sql.Request();
+    request2.input('eventID', sql.Int, Number(eventID));
+    const result2 = await request2.query(`
       USE ${dbName};
       SELECT ea.authority_id AS [at]
       FROM EventAuthority ea
       WHERE ea.Event_id = @eventID
     `);
 
-    eventData.eat = result3.recordset.map(authority => authority.at);
+    eventData.eat = result2.recordset.map(authority => authority.at);
 
     // Get profile data
-    const request4 = new sql.Request();
-    request4.input('eventID', sql.Int, Number(eventID));
-    const result4 = await request4.query(`
+    const request3 = new sql.Request();
+    request3.input('eventID', sql.Int, Number(eventID));
+    const result3 = await request3.query(`
       USE ${dbName};
       SELECT
           bundle_id AS p,
@@ -1548,12 +1684,12 @@ class EventService {
       ORDER BY RTRIM(LTRIM(bundle_name))
     `);
 
-    eventData.pfs = result4.recordset;
+    eventData.pfs = result3.recordset;
 
     // Get meal data
-    const request5 = new sql.Request();
-    request5.input('eventID', sql.Int, Number(eventID));
-    const result5 = await request5.query(`
+    const request4 = new sql.Request();
+    request4.input('eventID', sql.Int, Number(eventID));
+    const result4 = await request4.query(`
       USE ${dbName};
       SELECT
           m.meal_id AS m,
@@ -1574,7 +1710,7 @@ class EventService {
       ORDER BY RTRIM(LTRIM(m.meal_name))
     `);
 
-    eventData.evml = result5.recordset;
+    eventData.evml = result4.recordset;
 
     return eventData;
   }
@@ -1692,6 +1828,20 @@ class EventService {
       }
       if (eventData.eet && eventData.ee) {
         eventData.eei = await dateAndTimeToDatetime(eventData.ee, eventData.eet);
+      }
+
+      // Registration start / end time (Mantle touchEvent lines 2270-2283)
+      if (!eventData.rs || _.trim(eventData.rs) === "") {
+        eventData.rs = "12:00 AM";
+      }
+      if (!eventData.re || _.trim(eventData.re) === "") {
+        eventData.re = "12:00 AM";
+      }
+      if (eventData.rs && eventData.ers) {
+        eventData.rsi = await dateAndTimeToDatetime(eventData.ers, eventData.rs);
+      }
+      if (eventData.re && eventData.ere) {
+        eventData.rei = await dateAndTimeToDatetime(eventData.ere, eventData.re);
       }
 
       const eventFilter = { '_id.s': vert, '_id.e': Number(eventID) };
