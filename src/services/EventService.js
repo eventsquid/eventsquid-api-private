@@ -70,12 +70,214 @@ class EventService {
       return docs;
     }
 
-    // For the event config in the new group tool
+    // for the event config in the new group tool
     if (resultset === "grouptool-event") {
-      // This is complex restructuring logic - simplified version
-      // Full implementation would restructure fees-by-cat and questions-with-options
-      // For now, return docs as-is (full implementation can be added later)
-      return docs;
+
+      let
+        i = 0,
+        j = 0,
+        k = 0,
+        l = 0,
+        m = 0,
+        n = 0,
+        feeCatObj = {},
+        feeCatRA = [],
+        thisFee = {},
+        thisFeeCat = "",
+        thisFeeCatName = "",
+        thisOpt = "",
+        thisQ = {},
+        thisQObj = {},
+        questionRA = [],
+        questionObj = {};
+
+      // loop the results (there should be only one, but just in case)
+      for ( i=0; i<docs.length; i++ ) {
+
+        feeCatObj = {};
+        feeCatRA = [];
+        thisFee = {};
+        thisFeeCat = "";
+        thisFeeCatName = "";
+        thisOpt = "",
+        thisQ = {},
+        thisQObj = {},
+        questionRA = [];
+        questionObj = {};
+
+        // if we have fees
+        if ( docs[i].evfs ) {
+
+          // create a fees by category array on this doc
+          docs[i]["fees-by-cat"] = [];
+
+          // loop the fees
+          for ( j=0; j<docs[i].evfs.length; j++ ) {
+
+            thisFee = docs[i].evfs[j];
+            thisFeeCatName = thisFee.fgn || thisFee.fc;
+
+            if ( !thisFeeCatName ) {
+              thisFeeCatName = thisFee.fc;
+            }
+
+            // if we don't yet have this fee category recorded
+            if ( !feeCatObj[ String( thisFeeCatName ) ] ) {
+
+              // add it
+              feeCatObj[ String( thisFeeCatName ) ] = [];
+              feeCatRA.push( String( thisFeeCatName ) );
+            }
+
+            // add this fee to the fee category
+            feeCatObj[ String( thisFeeCatName ) ].push( thisFee );
+
+          }
+          // end loop fees
+
+          // alpha sort the array of fee categories
+          feeCatRA.sort( function( a, b ) {
+
+            if ( a.toLowerCase() < b.toLowerCase() ) {
+              return -1;
+            }
+            if ( a.toLowerCase() > b.toLowerCase() ) {
+              return 1;
+            }
+
+            return 0;
+          } );
+
+          // loop the fee categories
+          for ( k=0; k<feeCatRA.length; k++ ) {
+
+            thisFeeCat = String( feeCatRA[k] );
+
+            // sort the fees for this category
+            feeCatObj[ thisFeeCat ].sort( function( a, b ) {
+
+              if ( a.fm.toLowerCase() < b.fm.toLowerCase() ) {
+                return -1;
+              }
+              if ( a.fm.toLowerCase() > b.fm.toLowerCase() ) {
+                return 1;
+              }
+
+              return 0;
+            } );
+
+            // add it to the fees by category array
+            docs[i]["fees-by-cat"].push( {
+              "category": String( thisFeeCat ),
+              "fees": feeCatObj[ thisFeeCat ]
+            } );
+
+          }
+
+          delete docs[i].evfs;
+
+        }
+        // end if we have fees
+
+        // if we have questions
+        if ( docs[i].eq ) {
+
+          // create a questions with options array on this doc
+          docs[i]["questions-with-options"] = [];
+
+          // loop the questions
+          for ( l=0; l<docs[i].eq.length; l++ ) {
+
+            thisQ = docs[i].eq[l];
+
+            // if this question should have options
+            if ( thisQ.fo && thisQ.fo === 1 ) {
+
+              // add it to the question object
+              questionObj[ "_" + String( thisQ.fi ) ] = thisQ;
+              questionObj[ "_" + String( thisQ.fi ) ].op = [];
+
+              questionRA.push( {
+                "fi": Number( thisQ.fi ),
+                "fl": String( thisQ.fl )
+              } );
+            }
+          }
+          // end loop questions
+
+          // alpha sort the array of questions
+          questionRA.sort( function( a, b ) {
+
+            if ( a.fl.toLowerCase() < b.fl.toLowerCase() ) {
+              return -1;
+            }
+            if ( a.fl.toLowerCase() > b.fl.toLowerCase() ) {
+              return 1;
+            }
+
+            return 0;
+          } );
+
+          // if we have event question options
+          if ( docs[i].eqo ) {
+
+            // loop the question options
+            for ( m=0; m<docs[i].eqo.length; m++ ) {
+
+              thisOpt = docs[i].eqo[m];
+
+              // if this option has a matching question
+              if ( thisOpt && questionObj[ "_" + String( thisOpt.fid ) ] ) {
+                // add it to the question objects options array
+                questionObj[ "_" + String( thisOpt.fid ) ].op.push( {
+                  "ol": String( thisOpt.ol ),
+                  "ov": String( thisOpt.ov ),
+                  "id": Number( thisOpt.id )
+                } );
+              }
+            }
+            // end loop the question options
+          }
+          // end if we have event question options
+
+          // loop the questions array
+          for ( n=0; n<questionRA.length; n++ ) {
+
+            thisQObj = questionObj[ "_" + String( questionRA[n].fi ) ];
+
+            // if we have any options
+            if ( thisQObj.op.length > 0 ) {
+
+              // sort the options for this question
+              thisQObj.op.sort( function( a, b ) {
+
+                if ( a.ol.toLowerCase() < b.ol.toLowerCase() ) {
+                  return -1;
+                }
+                if ( a.ol.toLowerCase() > b.ol.toLowerCase() ) {
+                  return 1;
+                }
+
+                return 0;
+              } );
+
+              // and add the question to the return array
+              docs[i]["questions-with-options"].push( {
+                "fl": String( thisQObj.fl ),
+                "fi": Number( thisQObj.fi ),
+                "op": thisQObj.op
+              } );
+            }
+          }
+          // end loop the questions array
+        }
+        // end if we have questions
+
+        delete docs[i].eq;
+        delete docs[i].eqo;
+
+      }
+
     }
 
     return docs;
