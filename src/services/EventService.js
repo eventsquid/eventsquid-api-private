@@ -221,6 +221,36 @@ class EventService {
     }
   }
 
+  async getAdditionalContacts(eventGUID, vert) {
+    try {
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const request = new sql.Request();
+      request.input('guid', sql.VarChar, eventGUID);
+      const result = await request.query(`
+        USE ${dbName};
+        SELECT
+            cd_name,
+            cd_email,
+            cd_phone
+        FROM eventCD
+        WHERE event_id = (
+            SELECT event_id FROM b_events WHERE _guid = @guid
+        )
+      `);
+
+      return result.recordset.map(contact => ({
+        name: contact.cd_name,
+        email: contact.cd_email,
+        phone: contact.cd_phone
+      }));
+    } catch (error) {
+      console.error('Error getting additional contacts:', error);
+      throw error;
+    }
+  }
+
   /**
    * Get event data by GUID
    * Helper method to get event data with specific columns
