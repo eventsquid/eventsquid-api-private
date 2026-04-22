@@ -70,6 +70,110 @@ class AttendeeService {
     };
   }
 
+  async prepAttendeeFilter(filterObj) {
+    let
+      regex = "",
+      numeric = 0,
+      sc = 0,
+      onlyRegComplete = true;
+
+    for (var key in filterObj) {
+      if (filterObj.hasOwnProperty(key)) {
+
+        if (["c", "e", "p"].indexOf(key) >= 0 && filterObj[key] === 0) {
+          delete filterObj[key];
+
+        } else if (typeof filterObj[key] === "string" && filterObj[key] === "") {
+          delete filterObj[key];
+
+        } else if (key === "contestant-with-guests") {
+          if (Number(filterObj[key]) > 0) {
+            filterObj["$or"] = [
+              { "u": Number(filterObj[key]) },
+              { "hs.u": Number(filterObj[key]) }
+            ];
+          }
+          delete filterObj["contestant-with-guests"];
+
+        } else if (key === "profiles") {
+          if (filterObj[key].length > 0) {
+            filterObj["p"] = { "$in": [].concat(filterObj[key]) };
+          }
+          delete filterObj["profiles"];
+
+        } else if (key === "items") {
+          if (filterObj[key].length > 0) {
+            filterObj["fees.f"] = { "$in": [].concat(filterObj[key]) };
+          }
+          delete filterObj["items"];
+
+        } else if (key === "subclasses") {
+          if (filterObj[key].length > 0) {
+            filterObj["$or"] = [];
+            for (sc = 0; sc < filterObj[key].length; sc++) {
+              filterObj["$or"].push(
+                { "$and": [{ "fees.f": Number(filterObj[key][sc][0]) }, { "fees.op.o": Number(filterObj[key][sc][1]) }] }
+              );
+            }
+          }
+          delete filterObj["subclasses"];
+
+        } else if (key === "fieldoptions") {
+          if (filterObj[key].length > 0) {
+            filterObj["ce.o"] = { "$in": [].concat(filterObj[key]) };
+          }
+          delete filterObj["fieldoptions"];
+
+        } else if (key === "fs") {
+          if (Number(filterObj[key]) === 1) {
+            filterObj["fs"] = 1;
+          } else {
+            filterObj["fs"] = { "$ne": 1 };
+          }
+
+        } else if (typeof filterObj[key] === "string") {
+          regex = new RegExp(filterObj[key].replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&'), "i");
+          numeric = Number(filterObj[key]);
+          filterObj[key] = regex;
+
+          if (key === "keyword") {
+            filterObj["$or"] = [
+              { "pn": regex },
+              { "uc": regex },
+              { "uf": regex },
+              { "ul": regex }
+            ];
+            delete filterObj["keyword"];
+          }
+
+          if (key === "dash") {
+            onlyRegComplete = false;
+            filterObj["$or"] = [
+              { "ue": regex },
+              { "uc": regex },
+              { "uf": regex },
+              { "ul": regex },
+              { "gu.gf": regex },
+              { "gu.gl": regex },
+              { "rb.uf": regex },
+              { "rb.ul": regex }
+            ];
+            if (numeric) {
+              filterObj["$or"].push({ "c": Number(numeric) });
+            }
+            delete filterObj["dash"];
+          }
+        }
+      }
+    }
+
+    if (onlyRegComplete) {
+      filterObj["rc"] = 1;
+    }
+
+    return filterObj;
+  }
+
   /**
    * Find attendees with filters
    */
@@ -140,82 +244,8 @@ class AttendeeService {
         delete filterCopy.limit;
       }
 
-      // Build MongoDB filter - handle special cases but preserve filter structure
-      // IMPORTANT: Match old codebase behavior exactly
-      const mongoFilter = {};
-      const hasIdG = filterCopy && filterCopy.hasOwnProperty('_id.g') && filterCopy['_id.g'] === 0;
-      
-      // OLD CODE BEHAVIOR: Default to rc=1 (complete registrations only) unless explicitly set to 0
-      // Check if rc is explicitly set to 0 in the filter
-      const rcExplicitlyZero = filterCopy && filterCopy.hasOwnProperty('rc') && filterCopy.rc === 0;
-      
-      // Only process filter if it exists and has keys
-      if (filterCopy && typeof filterCopy === 'object') {
-        for (const key in filterCopy) {
-          const value = filterCopy[key];
-          
-          // Skip empty strings (they shouldn't be used in queries)
-          if (value === '' || value === null || value === undefined) {
-            continue;
-          }
-          
-          // Handle event ID (e) - support both Number and String formats for compatibility
-          if (key === 'e') {
-            const numValue = Number(value);
-            mongoFilter[key] = {
-              $in: [numValue, String(numValue)]
-            };
-          }
-          // Handle _id.g: 0 - should match where _id.g is 0 OR doesn't exist
-          else if (key === '_id.g' && value === 0) {
-            // Don't add it here - we'll handle it with $or at the end
-            continue;
-          }
-          // Handle p: 0 - in the old codebase, p: 0 means "don't filter on profile" (ignore p field)
-          // So we skip adding it to the filter entirely
-          else if (key === 'p' && value === 0) {
-            // Skip p: 0 - it means don't filter on profile
-            continue;
-          }
-          // Handle rc (regcomplete) - OLD CODE BEHAVIOR: Default to rc=1 (complete only) unless explicitly set to 0
-          // If rc is not in filter, default to rc=1 (show only complete registrations)
-          // If rc is 0, show both rc=0 and rc=1 (show all registrations)
-          // If rc is 1, show only rc=1 (show only complete registrations)
-          else if (key === 'rc') {
-            if (value === 0) {
-              // rc=0 means "show all" - don't filter on rc (include both complete and incomplete)
-              // Don't add rc to filter
-            } else {
-              // Default to rc=1 (complete only) if rc is 1 or not explicitly 0
-              mongoFilter[key] = 1;
-            }
-          }
-          // Copy all other fields as-is (MongoDB handles nested fields like '_id.g' correctly)
-          else {
-            mongoFilter[key] = value;
-          }
-        }
-      }
-      
-      // OLD CODE BEHAVIOR: Default to rc=1 (complete registrations only) unless explicitly set to 0
-      // If rc was not explicitly set to 0, add rc=1 filter
-      if (!rcExplicitlyZero && !mongoFilter.hasOwnProperty('rc')) {
-        mongoFilter.rc = 1;
-      }
-      
-      // If _id.g: 0 was in the filter, use $or to match 0 or missing
-      // Note: p: 0 means "don't filter on profile" so it's already been skipped above
-      if (hasIdG) {
-        const baseFilter = { ...mongoFilter };
-        mongoFilter.$or = [
-          { ...baseFilter, '_id.g': 0 },
-          { ...baseFilter, '_id.g': { $exists: false } }
-        ];
-        // Remove base filter keys since they're now in $or
-        Object.keys(baseFilter).forEach(k => {
-          if (k !== '$or') delete mongoFilter[k];
-        });
-      }
+      // Build MongoDB filter
+      const mongoFilter = await this.prepAttendeeFilter(filterCopy);
 
       // Find attendees
       let query = attendeesCollection.find(mongoFilter || {}, { projection: finalColumns });
