@@ -301,7 +301,70 @@ Endpoint: `DELETE /vantiv-worldpay/refund/:contestantID/:affiliateID/:transactio
 
 ---
 
-## 8. Implementation Gap Summary
+## 8. Pre-Cutover Verification — payment transaction finalization
+
+> **Status: ✅ IMPLEMENTED**
+>
+> Both `getTransactionDetails` post-response write-back (§8.1) and `updateTransactionsMongo` sync (§8.2) are now fully ported from Mantle (commit 536e23f). These verification steps confirm the implementation works end-to-end before AuthNet cutover.
+
+---
+
+### Implementation Status
+
+| Component | File | Lines | Implementation | Status |
+|-----------|------|-------|-----------------|--------|
+| getTransactionDetails branching | src/functions/authNet.js | 252–377 | Three branches on transactionStatus: captured/settled, failed/declined, unconfirmed | ✅ Complete |
+| updateTransaction MSSQL call | src/functions/authNet.js | 106–126 | Calls `dbo.node_updateTransaction` with all required parameters; then calls updateTransactionsMongo | ✅ Complete |
+| updateTransactionsMongo sync | src/functions/authNet.js | 55–100 | Queries MSSQL for transaction sum and list; updates MongoDB `attendees.tr` and `attendees.tp` | ✅ Complete |
+| sendUnconfirmedPaymentAlerts | src/functions/paymentTransactions.js | 61–175 | Sends two emails (attendee + event host) via SendGrid; called from getTransactionDetails unconfirmed branch | ✅ Complete |
+
+---
+
+### 8.1 `getTransactionDetails` — post-response write-back verification
+
+Verify that `GetTransactionDetailsResponse` branches correctly and writes to MSSQL + MongoDB.
+
+**Three branches on `transactionStatus`:**
+
+| Branch | Condition | Flow |
+|--------|-----------|------|
+| Captured / settled | `transactionStatus` ∈ {`capturedpendingsettlement`, `settledsuccessfully`} AND NOT `forceUnconfirmed` AND NOT `refund` | Calls `updateTransaction()` → MSSQL `dbo.node_updateTransaction` → MongoDB sync |
+| Failed / declined | `transactionStatus` ∈ {`declined`, `expired`, `generalerror`, `voided`, `failedreview`} AND NOT `forceUnconfirmed` AND NOT `refund` | Calls `updateTransaction()` with `failed=true` → MSSQL → MongoDB (failed transactions not counted in `tp`) |
+| Unconfirmed | (`payingnow=true` OR `forceUnconfirmed=true`) AND `response.transaction.order` exists | Calls `sendUnconfirmedPaymentAlerts()` → two SendGrid emails; NO database writes |
+
+**Verification steps:**
+
+| # | Step | Expected |
+|---|------|----------|
+| 8.1.1 | Create charge with sandbox card via `POST /authnet/pay` (c=12345, amount=$50); call `GET /authnet/transactionDetails/:affiliateID/:transactionID` | MSSQL `contestant_transactions`: new row with `amount=50`, `processID={transactionID}`, `pending=0`, `failed=0`; MongoDB `attendees`: doc with `c: 12345` has `tp >= 50`, `tr` contains transaction |
+| 8.1.2 | Create charge with declining test card; call `GET /authnet/transactionDetails/...` with `forceUnconfirmed=false` | MSSQL: new row with `failed=1`, `processIDNew` contains decline reason; MongoDB: `tp` unchanged (failed not counted) |
+| 8.1.3 | Create charge with `forceUnconfirmed=true` or `payingnow=true`; call `GET /authnet/transactionDetails/.../...?forceUnconfirmed=true` | Two SendGrid emails sent: (1) to attendee with payment guidance, (2) to event host with reconciliation instructions; MSSQL/MongoDB NOT updated |
+| 8.1.4 | Create multiple charges for same attendee (e.g. 54321); check MongoDB after second charge | `attendees` doc: `tp = sum of both charge amounts`, `tr` is array of 2 transactions |
+
+---
+
+### 8.2 `updateTransactionsMongo` — MongoDB sync verification
+
+Verify that MSSQL transaction data is correctly synced to MongoDB after each MSSQL write.
+
+**Process:**
+
+1. Query MSSQL: `SELECT SUM(amount) FROM contestant_transactions WHERE contestant_id = @attendeeID`
+2. Query MSSQL: `SELECT amount AS [am], processDate AS [pd], processID AS [pi], processToken AS [ptk], payMethod AS pm FROM contestant_transactions WHERE contestant_id = @attendeeID`
+3. Update MongoDB: `{ c: attendeeID, sg: { $exists: false } }` → `{ $set: { tr: [rows], tp: totalPaid }, $currentDate: { lu: { $type: "date" } } }`
+
+**Verification steps:**
+
+| # | Step | Expected |
+|---|------|----------|
+| 8.2.1 | After test 8.1.1 settles, inspect MongoDB `attendees` for attendeeID 12345 | `tp = 50` (or more if prior transactions); `tr` array has ≥1 entry with `am: 50`, `pd: {date}`, `pi: {transactionID}`, `ptk: {invoiceNumber}`, `pm: "authNet"`; `lu` is current timestamp |
+| 8.2.2 | Create second charge for same attendee 12345 ($75); check MongoDB again | `tr` now has 2 entries; `tp = 125` (50 + 75) |
+| 8.2.3 | Verify test 8.1.2 (declined charge) does NOT update MongoDB | For declined transaction attendee: `tp` and `tr` unchanged from before charge attempt |
+| 8.2.4 | Inline cross-check: Run MSSQL `SELECT SUM(amount) FROM contestant_transactions WHERE contestant_id = 12345` | Result equals MongoDB `attendees.tp` for that attendee exactly |
+
+---
+
+
 
 | Gateway | Charge | Refund | Void | Notes |
 |---------|--------|--------|------|-------|
