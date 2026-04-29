@@ -64,8 +64,10 @@ async function getMssqlCredentials() {
     if (!credentials.username || !credentials.password || !credentials.host) {
       throw new Error('MSSQL_CONNECTION_STRING missing required fields: Server, User Id, Password');
     }
-    
-    console.log('Using MSSQL_CONNECTION_STRING from environment variable');
+
+    const host = credentials.host;
+    const db = credentials.database || 'eventsquid';
+    console.log(`\n🔗 MSSQL: Using local env MSSQL_CONNECTION_STRING → ${host}:${credentials.port || 1433} / ${db}\n`);
     return {
       username: credentials.username,
       password: credentials.password,
@@ -78,13 +80,16 @@ async function getMssqlCredentials() {
   // When deployed, always use Secrets Manager (skip env vars)
   // Alternative: Use individual environment variables (local dev only)
   if (!isDeployed() && process.env.MSSQL_HOST && process.env.MSSQL_USERNAME && process.env.MSSQL_PASSWORD) {
-    console.log('Using MSSQL credentials from individual environment variables');
+    const host = process.env.MSSQL_HOST;
+    const port = parseInt(process.env.MSSQL_PORT || '1433');
+    const db = process.env.MSSQL_DATABASE || 'eventsquid';
+    console.log(`\n🔗 MSSQL: Using local env vars → ${host}:${port} / ${db}\n`);
     return {
       username: process.env.MSSQL_USERNAME,
       password: process.env.MSSQL_PASSWORD,
       host: process.env.MSSQL_HOST,
-      port: parseInt(process.env.MSSQL_PORT || '1433'),
-      database: process.env.MSSQL_DATABASE || 'eventsquid'
+      port: port,
+      database: db
     };
   }
 

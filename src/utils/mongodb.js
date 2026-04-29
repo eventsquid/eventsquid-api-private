@@ -28,6 +28,20 @@ export function getMongoClient(key) {
 }
 
 /**
+ * Extract database name from MongoDB connection string
+ * Handles patterns like: mongodb+srv://user:pass@cluster/dbname or mongodb://host:port/dbname
+ */
+function extractMongoDbName(connStr) {
+  try {
+    // Match database name after the last / but before ? (query params)
+    const match = connStr.match(/\/([^/?]+)(?:\?|$)/);
+    return match ? match[1] : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * Get MongoDB connection string from Secrets Manager or environment variable
  * @param {string} dbName - Database name (e.g., 'cm' for common database)
  */
@@ -37,13 +51,15 @@ async function getMongoConnectionString(dbName = null) {
     // For local development, allow direct connection string override
     // For common database (cm), check for separate connection string
     if (dbName === 'cm' && process.env.MONGO_COMMON_CONNECTION_STRING) {
-      console.log('Using MONGO_COMMON_CONNECTION_STRING from environment variable for cm database');
+      const dbNameFromStr = extractMongoDbName(process.env.MONGO_COMMON_CONNECTION_STRING);
+      console.log(`\n📚 MongoDB: Using local env MONGO_COMMON_CONNECTION_STRING → ${dbNameFromStr}\n`);
       return process.env.MONGO_COMMON_CONNECTION_STRING;
     }
-    
+
     // For local development, allow direct connection string override
     if (process.env.MONGO_CONNECTION_STRING) {
-      console.log('Using MONGO_CONNECTION_STRING from environment variable');
+      const dbNameFromStr = extractMongoDbName(process.env.MONGO_CONNECTION_STRING);
+      console.log(`\n📚 MongoDB: Using local env MONGO_CONNECTION_STRING → ${dbNameFromStr}\n`);
       return process.env.MONGO_CONNECTION_STRING;
     }
   }
