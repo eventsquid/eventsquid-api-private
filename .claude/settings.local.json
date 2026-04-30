@@ -4,7 +4,9 @@
       "Bash(node -e \"const p = JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json'\\)\\); console.log\\('mssql:', p.dependencies.mssql\\); console.log\\('node version:', process.version\\);\")",
       "Bash(node -e \"const d=JSON.parse\\(require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\)\\); console.log\\('mssql installed:', d.version\\); console.log\\('tedious dep:', d.dependencies && d.dependencies.tedious\\);\")",
       "Bash(node -e \"const p = JSON.parse\\(require\\('fs'\\).readFileSync\\('node_modules/mssql/package.json', 'utf8'\\)\\); console.log\\('mssql installed:', p.version\\); console.log\\('tedious dep:', p.dependencies && p.dependencies.tedious\\);\")",
-      "Bash(node -e \"const p = JSON.parse\\(require\\('fs'\\).readFileSync\\('node_modules/tedious/package.json', 'utf8'\\)\\); console.log\\('tedious installed:', p.version\\);\")"
+      "Bash(node -e \"const p = JSON.parse\\(require\\('fs'\\).readFileSync\\('node_modules/tedious/package.json', 'utf8'\\)\\); console.log\\('tedious installed:', p.version\\);\")",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }

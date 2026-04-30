@@ -137,6 +137,53 @@ app.all('*', async (req, res) => {
   }
 });
 
+/**
+ * Extract the host portion of a MongoDB connection string.
+ * Strips protocol, credentials, path, and query — returns just the hostname(s).
+ */
+function getMongoHost(connectionString) {
+  if (!connectionString) return null;
+  const withoutProtocol = connectionString.replace(/^[a-z+]+:\/\//i, '');
+  const afterAuth = withoutProtocol.includes('@')
+    ? withoutProtocol.split('@').slice(1).join('@')
+    : withoutProtocol;
+  return afterAuth.split('/')[0].split('?')[0];
+}
+
+/**
+ * Refuse to start the local server if any DB host looks like prod.
+ * "Dev" is identified by a "-dev" substring in the host name.
+ */
+function verifyDevEnvironment() {
+  const hosts = [
+    { label: 'MSSQL', value: process.env.MSSQL_HOST || '' },
+    { label: 'MongoDB', value: getMongoHost(process.env.MONGO_CONNECTION_STRING) || '' },
+    { label: 'MongoDB (cm)', value: getMongoHost(process.env.MONGO_COMMON_CONNECTION_STRING) || '' },
+  ];
+
+  console.log('');
+  console.log('🔎 Database hosts:');
+  for (const h of hosts) {
+    console.log(`   ${h.label.padEnd(13)} ${h.value || '(not set)'}`);
+  }
+
+  const prodHosts = hosts.filter(h => h.value && !h.value.toLowerCase().includes('-dev'));
+  if (prodHosts.length > 0) {
+    console.error('');
+    console.error('🛑 PROD DATABASE DETECTED — refusing to start local server.');
+    console.error('   These hosts do not contain "-dev":');
+    for (const h of prodHosts) {
+      console.error(`     - ${h.label}: ${h.value}`);
+    }
+    console.error('');
+    console.error('   Update your .env to point at -dev hosts before starting.');
+    console.error('');
+    process.exit(1);
+  }
+}
+
+verifyDevEnvironment();
+
 // Start server
 app.listen(PORT, () => {
   console.log('');
