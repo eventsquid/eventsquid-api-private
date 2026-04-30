@@ -1972,18 +1972,118 @@ class CreditsService {
   }
 
   /**
-   * Run cron scheduled runs
+   * Run all due cron-scheduled grants across one or more verticals.
+   * Called by the cron endpoint. `verts` is a comma-separated string, e.g. "es,cn".
+   * For each due grant: runs the grant, then advances ceuGrants.startDate by the runType interval.
    */
   async runCronScheduledRuns(verts) {
-    try {
-      // TODO: Implement cron job logic to run scheduled grants
-      // This is typically called by a scheduled Lambda function
-      console.log('runCronScheduledRuns called - cron implementation pending');
-      return [];
-    } catch (error) {
-      console.error('Error running cron scheduled runs:', error);
-      throw error;
+    if (typeof verts !== 'string') return;
+
+    const vertsList = verts.split(',').map(v => v.trim()).filter(Boolean);
+    if (!vertsList.length) return [];
+
+    for (const vert of vertsList) {
+      const scheduledRuns = await this.getCronScheduledRuns(vert);
+      if (!scheduledRuns || !scheduledRuns.length) continue;
+
+      for (const run of scheduledRuns) {
+        const form = {
+          packageID: run.packageID,
+          adminID:   run.admin_user_id,
+          startDate: run.startDate
+        };
+        await this.runGrant(run.event_id, run.grantID, form, vert);
+      }
+
+      // Advance startDate for each grant by its runType interval
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+      let queryString = `USE ${dbName};`;
+      scheduledRuns.forEach((run, i) => {
+        queryString += `
+          UPDATE ceuGrants
+          SET startDate = CASE
+            WHEN runType = 'daily'   THEN DATEADD(day,   1, startDate)
+            WHEN runType = 'weekly'  THEN DATEADD(week,  1, startDate)
+            WHEN runType = 'monthly' THEN DATEADD(month, 1, startDate)
+            ELSE startDate
+          END
+          WHERE grantID = @grantID${i};
+        `;
+      });
+
+      const request = new sql.Request();
+      scheduledRuns.forEach((run, i) => {
+        request.input(`grantID${i}`, TYPES.Int, Number(run.grantID));
+      });
+      await request.query(queryString);
     }
+  }
+
+  /**
+   * Execute a grant run: logs the run, inserts declined rows, inserts awarded rows.
+   * In testMode only the admin user is targeted.
+   */
+  async runGrant(eventID, grantID, form, vert) {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    // Log the run first
+    const logRequest = new sql.Request();
+    logRequest.input('grantID',       TYPES.Int,      Number(grantID));
+    logRequest.input('admin_user_id', TYPES.Int,      Number(form.adminID));
+    logRequest.input('runDate',       TYPES.DateTime, new Date(form.startDate));
+    const logResult = await logRequest.query(`
+      USE ${dbName};
+      INSERT INTO ceuGrantLog (grantID, admin_user_id, runDate)
+      OUTPUT INSERTED.logID
+      VALUES (@grantID, @admin_user_id, @runDate);
+    `);
+    const logID = logResult.recordset[0].logID;
+
+    const filter = form.testMode ? { adminID: form.adminID } : {};
+    const [attendeesToAward, attendeesToDecline] = await Promise.all([
+      this.getAttendeesToAward(form.packageID, vert, filter),
+      this.getAttendeesToDecline(form.packageID, vert, filter)
+    ]);
+
+    // Record declined attendees
+    for (const attendee of attendeesToDecline) {
+      const req = new sql.Request();
+      req.input('contestant_id', TYPES.Int,   Number(attendee.contestant_id));
+      req.input('event_id',      TYPES.Int,   Number(eventID));
+      req.input('eventFeeID',    TYPES.Int,   Number(attendee.eventFeeID));
+      req.input('ceuValue',      TYPES.Float, Number(attendee.totalAwarded));
+      req.input('grantLogID',    TYPES.Int,   Number(logID));
+      req.input('categoryID',    TYPES.Int,   Number(attendee.categoryID));
+      await req.query(`
+        USE ${dbName};
+        INSERT INTO ceuDeclined (contestant_id, event_id, eventFeeID, ceuValue, grantLogID, categoryID)
+        VALUES (@contestant_id, @event_id, @eventFeeID, @ceuValue, @grantLogID, @categoryID);
+      `);
+    }
+
+    // Record awarded attendees
+    for (const attendee of attendeesToAward) {
+      const req = new sql.Request();
+      req.input('contestant_id', TYPES.Int,   Number(attendee.contestant_id));
+      req.input('event_id',      TYPES.Int,   Number(eventID));
+      req.input('eventFeeID',    TYPES.Int,   Number(attendee.eventFeeID));
+      req.input('ceuValue',      TYPES.Float, Number(attendee.totalAwarded));
+      req.input('grantLogID',    TYPES.Int,   Number(logID));
+      req.input('categoryID',    TYPES.Int,   Number(attendee.categoryID));
+      await req.query(`
+        USE ${dbName};
+        INSERT INTO ceuAwarded (contestant_id, event_id, eventFeeID, ceuValue, grantLogID, categoryID)
+        VALUES (@contestant_id, @event_id, @eventFeeID, @ceuValue, @grantLogID, @categoryID);
+      `);
+    }
+
+    return {
+      success: true,
+      message: 'Run Complete!',
+      awarded: attendeesToAward
+    };
   }
 
   /**
@@ -2109,10 +2209,9 @@ class CreditsService {
         grantID: result.recordset[0]?.grantID
       };
 
-      // If runType is 'once' and testMode is set, run the grant immediately
-      if (body.runType && body.runType === 'once' && ('testMode' in body)) {
-        // TODO: Implement runGrant method
-        console.log('runGrant called - needs implementation');
+      // If runType is 'once', run the grant immediately (testMode controls whether to target only the admin user)
+      if (body.runType && body.runType === 'once') {
+        await this.runGrant(eventID, grantResult.grantID, body, vert);
       }
 
       return grantResult;

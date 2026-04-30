@@ -3,15 +3,12 @@
  * Migrated from services/SmsService.js
  */
 
+import https from 'https';
 import { getDatabase } from '../utils/mongodb.js';
 import _ from 'lodash';
 import twilio from 'twilio';
 import { generateVerifyCode } from '../functions/verification.js';
-
-// Initialize Twilio client
-const accountSid = process.env.TWILIO_ACCT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const client = accountSid && authToken ? twilio(accountSid, authToken) : null;
+import { getTwilioConfig } from '../utils/twilioConfig.js';
 
 class SmsService {
   /**
@@ -51,9 +48,17 @@ class SmsService {
    */
   async sendMessage(request) {
     try {
-      if (!client) {
-        throw new Error('Twilio client not initialized. Check TWILIO_ACCT_SID and TWILIO_AUTH_TOKEN environment variables.');
+      const twilioCfg = await getTwilioConfig();
+      if (!twilioCfg.accountSid || !twilioCfg.authToken) {
+        throw new Error(
+          'Twilio not configured. Set TWILIO_ACCT_SID and TWILIO_AUTH_TOKEN (or twilio/api-credentials in Secrets Manager).'
+        );
       }
+
+      const agent = new https.Agent({ keepAlive: false });
+      const client = twilio(twilioCfg.accountSid, twilioCfg.authToken, {
+        httpClient: new twilio.RequestClient({ agent })
+      });
 
       // SMS logs are stored in "cm" vertical
       const db = await getDatabase(null, 'cm');
@@ -64,10 +69,22 @@ class SmsService {
       const toArray = Array.isArray(form.to) ? form.to : [];
 
       // Get host from request headers or environment
-      const host = request.headers?.['host'] || 
-                   request.headers?.['Host'] || 
-                   process.env.API_GATEWAY_HOST || 
+      const host = request.headers?.['host'] ||
+                   request.headers?.['Host'] ||
+                   process.env.API_GATEWAY_HOST ||
                    '';
+
+      // Twilio rejects non-public StatusCallback URLs (localhost/127.0.0.1).
+      // Allow SMS_STATUS_CALLBACK_BASE_URL (e.g. an ngrok URL) to override; otherwise
+      // omit statusCallback entirely when running locally.
+      const callbackOverride = _.trim(process.env.SMS_STATUS_CALLBACK_BASE_URL || '');
+      const hostIsLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host);
+      let statusCallbackUrl = '';
+      if (callbackOverride) {
+        statusCallbackUrl = `${callbackOverride.replace(/\/$/, '')}/${process.env.API_GATEWAY_STAGE || 'v1'}/sms/${twilioCfg.statusCallback}`;
+      } else if (!hostIsLocal && host) {
+        statusCallbackUrl = `${process.env.API_GATEWAY_PROTOCOL || 'https'}://${host}/${process.env.API_GATEWAY_STAGE || 'v1'}/sms/${twilioCfg.statusCallback}`;
+      }
 
       // Loop the recipients
       for (let i = 0; i < toArray.length; i++) {
@@ -83,12 +100,15 @@ class SmsService {
         }
 
         try {
-          const message = await client.messages.create({
+          const messageParams = {
             body: txt,
             to: String(toArray[i].to),
-            statusCallback: `${process.env.API_GATEWAY_PROTOCOL || 'https'}://${host}/sms/${process.env.TWILIO_STATUS_CALLBACK || 'twilio-status'}`,
-            messagingServiceSid: process.env.TWILIO_MSG_SERVICE_SID
-          });
+            messagingServiceSid: twilioCfg.messagingServiceSid
+          };
+          if (statusCallbackUrl) {
+            messageParams.statusCallback = statusCallbackUrl;
+          }
+          const message = await client.messages.create(messageParams);
 
           const thisMsgID = 'ES:' + _.trim(message.sid);
 

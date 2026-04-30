@@ -9,12 +9,10 @@ import { routes } from './routes/index.js';
 import { publishErrorToSNS } from './utils/sns.js';
 
 export const handler = async (event) => {
-  // Log incoming request
-  console.log('=== Lambda Request Start ===');
-  console.log('Event:', JSON.stringify(event, null, 2));
-  console.log('Request ID:', event.requestContext?.requestId || 'unknown');
-  console.log('HTTP Method:', event.requestContext?.http?.method || event.httpMethod);
-  console.log('Path:', event.requestContext?.http?.path || event.path || event.rawPath);
+  const reqMethod = event.requestContext?.http?.method || event.httpMethod;
+  const reqPath = event.requestContext?.http?.path || event.path || event.rawPath;
+  const reqId = event.requestContext?.requestId || 'unknown';
+  console.log(`[${reqId}] ${reqMethod} ${reqPath}`);
 
   try {
     // Extract HTTP method and path
@@ -63,14 +61,6 @@ export const handler = async (event) => {
           body = rawBody;
         }
       }
-      // Handle double-encoded JSON: parsed body can still be a string (e.g. JSON string value)
-      if (typeof body === 'string' && body.trim().startsWith('{')) {
-        try {
-          body = JSON.parse(body);
-        } catch (e3) {
-          // leave body as string
-        }
-      }
       // Handle body as array of bytes (API Gateway or client may send JSON as array of char codes)
       if (Array.isArray(body) && body.length > 0) {
         try {
@@ -84,32 +74,37 @@ export const handler = async (event) => {
           // leave body as array
         }
       }
-      // Fallback: application/x-www-form-urlencoded (e.g. date=...&zone=... or base64=...&type=jpg&...)
-      if (typeof body === 'string' && body.includes('=') && (body.includes('&') || body.includes('='))) {
-        try {
-          const parsed = {};
-          for (const pair of body.split('&')) {
-            const eq = pair.indexOf('=');
-            if (eq !== -1) {
-              const k = decodeURIComponent(pair.slice(0, eq).replace(/\+/g, ' '));
-              const v = decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '));
-              parsed[k] = v;
-            }
-          }
-          if (Object.keys(parsed).length > 0) {
-            body = parsed;
-          }
-        } catch (e5) {
-          // leave body as string
-        }
-      }
-      // Fallback: body is a string that looks like JSON (starts with " or {) — try parse again (e.g. BOM or whitespace)
+      // JSON as string (BOM, whitespace): MUST run before form-urlencoded — JSON with base64 contains "="
+      // and would be mis-parsed as application/x-www-form-urlencoded if we split on "&" / first "=".
       if (typeof body === 'string') {
         const trimmed = body.trim().replace(/^\uFEFF/, '');
         if (trimmed.startsWith('{') || trimmed.startsWith('[') || (trimmed.startsWith('"') && trimmed.length > 1)) {
           try {
             body = JSON.parse(trimmed);
           } catch (e6) {
+            // leave body as string
+          }
+        }
+      }
+      // Fallback: application/x-www-form-urlencoded (e.g. date=...&zone=... or base64=...&type=jpg&...)
+      if (typeof body === 'string' && body.includes('=') && (body.includes('&') || body.includes('='))) {
+        const t = body.trim().replace(/^\uFEFF/, '');
+        const looksLikeJson = t.startsWith('{') || t.startsWith('[');
+        if (!looksLikeJson) {
+          try {
+            const parsed = {};
+            for (const pair of body.split('&')) {
+              const eq = pair.indexOf('=');
+              if (eq !== -1) {
+                const k = decodeURIComponent(pair.slice(0, eq).replace(/\+/g, ' '));
+                const v = decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '));
+                parsed[k] = v;
+              }
+            }
+            if (Object.keys(parsed).length > 0) {
+              body = parsed;
+            }
+          } catch (e5) {
             // leave body as string
           }
         }
@@ -163,9 +158,7 @@ export const handler = async (event) => {
     request.pathParameters = { ...request.pathParameters, ...extractedParams };
 
     // Execute route handler
-    console.log('Executing route:', route.path, 'with method:', route.method);
     const result = await route.handler(request);
-    console.log('Route handler completed, status:', result?.statusCode || 200);
 
     // If handler returns a response object, ensure it has CORS headers
     if (result && result.statusCode) {
@@ -188,33 +181,18 @@ export const handler = async (event) => {
 
   } catch (error) {
     // Enhanced error logging
-    console.error('=== Lambda Error ===');
-    console.error('Error Type:', error.constructor.name);
-    console.error('Error Message:', error.message);
-    console.error('Error Stack:', error.stack);
-    console.error('Request Path:', event.requestContext?.http?.path || event.path || event.rawPath);
-    console.error('Request Method:', event.requestContext?.http?.method || event.httpMethod);
-    console.error('Request ID:', event.requestContext?.requestId || 'unknown');
-    if (error.cause) {
-      console.error('Error Cause:', error.cause);
-    }
-    console.error('Full Error Object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    console.error('=== End Error ===');
-    
+    console.error(`[${reqId}] ${reqMethod} ${reqPath} — ${error.constructor.name}: ${error.message}`);
+    console.error(error.stack);
+    if (error.cause) console.error('Caused by:', error.cause);
+
     // Publish error to SNS if configured
-    await publishErrorToSNS(error, {
-      requestId: event.requestContext?.requestId || 'unknown',
-      path: event.requestContext?.http?.path || event.path || event.rawPath,
-      method: event.requestContext?.http?.method || event.httpMethod
-    });
+    await publishErrorToSNS(error, { requestId: reqId, path: reqPath, method: reqMethod });
     
     return createResponse(500, {
       error: 'Internal Server Error',
       message: process.env.NODE_ENV === 'development' ? error.message : undefined,
       requestId: event.requestContext?.requestId || 'unknown'
     });
-  } finally {
-    console.log('=== Lambda Request End ===');
   }
 };
 

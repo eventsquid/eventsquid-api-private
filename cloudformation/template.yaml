@@ -45,6 +45,9 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:mongodb/*'
                   - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:primary-mssql/*'
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:timezonedb/*'
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sendgrid/*'
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:twilio/*'
         - PolicyName: CloudWatchLogs
           PolicyDocument:
             Version: '2012-10-17'
@@ -98,7 +101,7 @@ Resources:
               })
             };
           };
-      Timeout: 60
+      Timeout: 300
       MemorySize: 1024  # Increased for production: supports VPC, multiple DB connections, and large codebase
       Environment:
         Variables:
@@ -109,7 +112,7 @@ Resources:
         SecurityGroupIds:
           - sg-277a3b5e  # Use existing security group from working Lambda
           - sg-d087f8ac   # Use existing security group from working Lambda
-      ReservedConcurrentExecutions: 10
+      ReservedConcurrentExecutions: 150  # Sized for registration spikes of 600-1000 concurrent users on large event opens
 
   # Lambda alias dev -> $LATEST (develop branch). Alias "live" is created/updated by pipeline on main.
   LambdaAliasDev:

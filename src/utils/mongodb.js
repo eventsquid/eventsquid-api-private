@@ -10,12 +10,14 @@ const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION 
 let mongoClient = null;
 let mongoClients = {}; // Cache for multiple vertical connections
 let connectionPromise = null;
+let cmConnectionString = null;   // cached cm secret — fetched once per container
+let cmConnectionPromise = null;  // deduplicates concurrent cm connection attempts
 
 /**
  * Check if running in AWS Lambda (deployed) vs local development
  * @returns {boolean} True if deployed in AWS Lambda
  */
-function isDeployed() {
+export function isDeployed() {
   // AWS Lambda sets AWS_LAMBDA_FUNCTION_NAME automatically
   return !!process.env.AWS_LAMBDA_FUNCTION_NAME;
 }
@@ -23,6 +25,58 @@ function isDeployed() {
 // Export mongoClients for services that need to check multiple databases
 export function getMongoClient(key) {
   return mongoClients[key];
+}
+
+/**
+ * Extract database name from MongoDB connection string
+ * Handles patterns like: mongodb+srv://user:pass@cluster/dbname or mongodb://host:port/dbname
+ */
+function extractMongoDbName(connStr) {
+  try {
+    // Match database name after the last / but before ? (query params)
+    const match = connStr.match(/\/([^/?]+)(?:\?|$)/);
+    return match ? match[1] : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Whether this Lambda container is serving the dev stage.
+ * The dev API Gateway stage tracks $LATEST; the v1 stage tracks the `live` alias
+ * (a numeric published version). AWS_LAMBDA_FUNCTION_VERSION is the per-container
+ * signal that distinguishes them. Locally this is unset, so isDev is false and
+ * the prod-shaped keys are used (local dev never reaches the secret-fetch paths).
+ */
+export function isDevStage() {
+  return process.env.AWS_LAMBDA_FUNCTION_VERSION === '$LATEST';
+}
+
+/**
+ * Pick the right MongoDB connection string from a parsed secret payload.
+ * On the dev stage, requires `devConnectionString` and hard-fails if it is
+ * missing — never silently falls back to the prod connection string.
+ * @param {Object} secret - Parsed Secrets Manager JSON
+ * @param {string} [fallbackDbName='eventsquid'] - DB name to embed when constructing from parts
+ * @returns {string} MongoDB connection string
+ */
+function pickMongoConnectionString(secret, fallbackDbName = 'eventsquid') {
+  if (isDevStage()) {
+    if (!secret.devConnectionString) {
+      throw new Error(
+        'MongoDB secret missing "devConnectionString" — refusing to fall back to prod. ' +
+        'Add a devConnectionString key to the secret for the dev stage.'
+      );
+    }
+    return secret.devConnectionString;
+  }
+
+  if (secret.connectionString) return secret.connectionString;
+  if (secret.uri) return secret.uri;
+  if (secret.mongodb_uri) return secret.mongodb_uri;
+
+  const { host, port, database, username, password } = secret;
+  return `mongodb://${username}:${password}@${host}:${port || 27017}/${database || fallbackDbName}?authSource=admin`;
 }
 
 /**
@@ -35,13 +89,15 @@ async function getMongoConnectionString(dbName = null) {
     // For local development, allow direct connection string override
     // For common database (cm), check for separate connection string
     if (dbName === 'cm' && process.env.MONGO_COMMON_CONNECTION_STRING) {
-      console.log('Using MONGO_COMMON_CONNECTION_STRING from environment variable for cm database');
+      const dbNameFromStr = extractMongoDbName(process.env.MONGO_COMMON_CONNECTION_STRING);
+      console.log(`\n📚 MongoDB: Using local env MONGO_COMMON_CONNECTION_STRING → ${dbNameFromStr}\n`);
       return process.env.MONGO_COMMON_CONNECTION_STRING;
     }
-    
+
     // For local development, allow direct connection string override
     if (process.env.MONGO_CONNECTION_STRING) {
-      console.log('Using MONGO_CONNECTION_STRING from environment variable');
+      const dbNameFromStr = extractMongoDbName(process.env.MONGO_CONNECTION_STRING);
+      console.log(`\n📚 MongoDB: Using local env MONGO_CONNECTION_STRING → ${dbNameFromStr}\n`);
       return process.env.MONGO_CONNECTION_STRING;
     }
   }
@@ -66,26 +122,21 @@ async function getMongoConnectionString(dbName = null) {
     
     // The secret may be a JSON object or a plain string (connection string)
     let secretValue = response.SecretString;
-    
+
     // Try to parse as JSON first
     try {
       const secret = JSON.parse(secretValue);
-      
-      // MongoDB secrets are key/value pairs with connectionString as the key
-      if (secret.connectionString) {
-        return secret.connectionString;
-      } else if (secret.uri) {
-        return secret.uri;
-      } else if (secret.mongodb_uri) {
-        return secret.mongodb_uri;
-      } else {
-        // Construct from individual components
-        const { host, port, database, username, password } = secret;
-        return `mongodb://${username}:${password}@${host}:${port || 27017}/${database}?authSource=admin`;
-      }
+      return pickMongoConnectionString(secret);
     } catch (parseError) {
       // If parsing fails, assume the secret is the connection string directly
       // This handles cases where the secret is stored as: mongodb+srv://...
+      // Plain-string secrets can't carry a separate dev value — refuse on dev stage.
+      if (isDevStage()) {
+        throw new Error(
+          'MongoDB secret is a plain connection string — cannot resolve a dev variant. ' +
+          'Convert the secret to JSON with connectionString and devConnectionString keys.'
+        );
+      }
       return secretValue;
     }
   } catch (error) {
@@ -274,26 +325,22 @@ export async function connectToMongoByVertical(vert) {
     
     // The secret may be a JSON object or a plain string (connection string)
     let secretValue = response.SecretString;
-    
+
     // Try to parse as JSON first
     let connectionString;
     try {
       const secret = JSON.parse(secretValue);
-      
-      // MongoDB secrets are key/value pairs with connectionString as the key
-      if (secret.connectionString) {
-        connectionString = secret.connectionString;
-      } else if (secret.uri) {
-        connectionString = secret.uri;
-      } else if (secret.mongodb_uri) {
-        connectionString = secret.mongodb_uri;
-      } else {
-        const { host, port, database, username, password } = secret;
-        connectionString = `mongodb://${username}:${password}@${host}:${port || 27017}/${database}?authSource=admin`;
-      }
+      connectionString = pickMongoConnectionString(secret);
     } catch (parseError) {
       // If parsing fails, assume the secret is the connection string directly
       // This handles cases where the secret is stored as: mongodb+srv://...
+      // Plain-string secrets can't carry a separate dev value — refuse on dev stage.
+      if (isDevStage()) {
+        throw new Error(
+          `MongoDB secret ${secretName} is a plain connection string — cannot resolve a dev variant. ` +
+          'Convert the secret to JSON with connectionString and devConnectionString keys.'
+        );
+      }
       connectionString = secretValue;
     }
 
@@ -363,10 +410,7 @@ export async function getDatabase(dbName = null, vert = null) {
   // Check if dbName is 'cm' OR if vert is 'cm' (some services pass it as vertical)
   const isCommonDb = dbName === 'cm' || vert === 'cm';
   
-  console.log(`[getDatabase] Called with dbName=${dbName}, vert=${vert}, isCommonDb=${isCommonDb}, isDeployed=${isDeployed()}`);
-  
   if (isCommonDb) {
-    console.log(`[getDatabase] Processing 'cm' database request...`);
     // When deployed, always use Secrets Manager (skip env vars)
     // For local development, use common connection string if available
     if (!isDeployed() && process.env.MONGO_COMMON_CONNECTION_STRING) {
@@ -413,155 +457,95 @@ export async function getDatabase(dbName = null, vert = null) {
         throw new Error(`Cannot access ${dbNameToUse} database with provided connection string. Error: ${cmError.message}`);
       }
     } else {
-      // When deployed, we MUST use mongodb/common secret for 'cm' database - no fallback allowed
+      // When deployed, use Secrets Manager — but cache both the connection string and
+      // the MongoClient so we only pay the Secrets Manager + TCP handshake cost once
+      // per Lambda container (same pattern as twilioConfig.js / sendgridConfig.js).
       if (isDeployed()) {
-        // MUST use mongodb/common secret for 'cm' database access
-        console.log('Attempting to connect to MongoDB common database using Secrets Manager (mongodb/common)');
-        // Declare cmSecretName outside try block so it's accessible in catch block
-        const cmSecretName = process.env.MONGO_CM_SECRET_NAME || 'mongodb/common';
-        try {
-          // First try a cm-specific secret (mongodb/common)
-          console.log(`Attempting to retrieve 'cm' database secret: ${cmSecretName}`);
-          const command = new GetSecretValueCommand({ SecretId: cmSecretName });
-          console.log(`Sending GetSecretValueCommand for 'cm' secret: ${cmSecretName}`);
-          
-          // Add timeout wrapper for Secrets Manager call (15 seconds)
-          const secretPromise = secretsClient.send(command);
-          const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => {
-              reject(new Error(`Secrets Manager API call timeout after 15s for secret: ${cmSecretName}`));
-            }, 15000);
-          });
-          
-          const response = await Promise.race([secretPromise, timeoutPromise]);
-          console.log(`Successfully retrieved 'cm' secret: ${cmSecretName}`);
-          let secretValue = response.SecretString;
-          
-          // Log raw secret value (sanitized) for debugging
-          const sanitizedSecret = typeof secretValue === 'string' 
-            ? secretValue.replace(/:[^:@]+@/, ':****@') 
-            : JSON.stringify(secretValue).replace(/:[^:@]+@/, ':****@');
-          console.log(`[getDatabase] Raw secret value (sanitized, length: ${secretValue.length}): ${sanitizedSecret.substring(0, 200)}...`);
-          
-          let connectionString;
+        // Return cached client if healthy
+        if (mongoClients['cm']) {
           try {
-            const secret = JSON.parse(secretValue);
-            console.log(`[getDatabase] Secret parsed as JSON. Keys: ${Object.keys(secret).join(', ')}`);
-            // MongoDB secrets are key/value pairs with connectionString as the key
-            if (secret.connectionString) {
-              connectionString = secret.connectionString;
-              console.log(`[getDatabase] Using connectionString from secret (length: ${connectionString.length})`);
-            } else if (secret.uri) {
-              connectionString = secret.uri;
-              console.log(`[getDatabase] Using uri from secret (length: ${connectionString.length})`);
-            } else if (secret.mongodb_uri) {
-              connectionString = secret.mongodb_uri;
-              console.log(`[getDatabase] Using mongodb_uri from secret (length: ${connectionString.length})`);
-            } else {
-              const { host, port, database, username, password } = secret;
-              connectionString = `mongodb://${username}:${password}@${host}:${port || 27017}/${database || 'cm'}?authSource=admin`;
-              console.log(`[getDatabase] Constructed connection string from secret components (host: ${host}, database: ${database || 'cm'})`);
-            }
-          } catch (parseError) {
-            // If parsing fails, assume the secret is the connection string directly
-            connectionString = secretValue;
-            console.log(`[getDatabase] Secret is not JSON, using as direct connection string (length: ${connectionString.length})`);
-          }
-          
-          console.log(`[getDatabase] Connection string for 'cm' database retrieved from ${cmSecretName}`);
-          // Extract database name from connection string for logging and use
-          // For mongodb+srv://, the database is after the last / and before ?
-          const dbMatch = connectionString.match(/\/([^\/\?]+)(\?|$)/);
-          const dbNameFromConnection = dbMatch ? dbMatch[1] : 'unknown';
-          console.log(`[getDatabase] Database name in connection string: ${dbNameFromConnection}`);
-          
-          // Log full connection string (sanitized) for comparison with local
-          const sanitizedConnection = connectionString.replace(/:[^:@]+@/, ':****@');
-          console.log(`[getDatabase] Full connection string (sanitized): ${sanitizedConnection}`);
-          
-          // Extract and log key parts for debugging
-          const authSourceMatch = connectionString.match(/authSource=([^&]+)/);
-          const authSource = authSourceMatch ? authSourceMatch[1] : 'not specified';
-          console.log(`[getDatabase] Connection string authSource: ${authSource}`);
-          
-          // Extract username - works for both mongodb:// and mongodb+srv://
-          const userMatch = connectionString.match(/mongodb(\+srv)?:\/\/([^:]+):/);
-          const username = userMatch ? userMatch[2] : 'not found';
-          console.log(`[getDatabase] Connection string username: ${username}`);
-          
-          // Determine which database to use - prefer the one from connection string
-          const dbNameToUse = dbNameFromConnection !== 'unknown' && dbNameFromConnection !== '' 
-            ? dbNameFromConnection 
-            : 'cm';
-          console.log(`[getDatabase] Will use database: ${dbNameToUse}`);
-          
-          // Match working Lambda pattern EXACTLY: create new client each time, no caching
-          // The working Lambda creates a fresh client for each request: new MongoClient(mongoConnectionString)
-          // Then connects: await mongoClient.connect()
-          // Add connection options with longer timeouts for VPC connections
-          const connectionOptions = {
-            serverSelectionTimeoutMS: 30000, // 30 seconds for VPC connections
-            connectTimeoutMS: 30000,
-            socketTimeoutMS: 30000,
-          };
-          
-          console.log('[getDatabase] Creating new MongoDB client for common database (matching working Lambda - no cache)...');
-          const commonClient = new MongoClient(connectionString, connectionOptions);
-          
-          console.log('[getDatabase] Connecting to MongoDB (explicit connect like working Lambda)...');
-          const connectStartTime = Date.now();
-          try {
-            await commonClient.connect();
-            const connectDuration = Date.now() - connectStartTime;
-            console.log(`[getDatabase] Successfully connected to MongoDB (took ${connectDuration}ms)`);
-          } catch (connectError) {
-            const connectDuration = Date.now() - connectStartTime;
-            console.error(`[getDatabase] Connection failed after ${connectDuration}ms:`, connectError.message);
-            console.error(`[getDatabase] Connection string host: ${connectionString.match(/@([^/]+)/)?.[1] || 'unknown'}`);
-            throw connectError;
-          }
-          
-          // Get database handle
-          console.log(`[getDatabase] Accessing database ${dbNameToUse} from common connection...`);
-          const cmDb = commonClient.db(dbNameToUse);
-          console.log(`[getDatabase] Returning database handle (database name: ${cmDb.databaseName})`);
-          
-          // Store client reference so we can close it later if needed
-          // But don't cache it for reuse - match working Lambda pattern
-          // Note: We're not closing here because the caller might need to use it
-          // The working Lambda closes after use, but we'll let the connection pool handle it
-          
-          return cmDb;
-        } catch (cmError) {
-          console.error(`Failed to connect to 'cm' database using Secrets Manager (${cmSecretName}):`, cmError.message);
-          // Clear any cached client on error
-          if (mongoClients['cm']) {
-            console.log('[getDatabase] Clearing cached client due to error...');
-            try {
-              await mongoClients['cm'].close();
-            } catch (closeError) {
-              // Ignore close errors
-            }
+            await mongoClients['cm'].db().admin().ping();
+            const dbMatch = (cmConnectionString || '').match(/\/([^/?]+)(\?|$)/);
+            const dbNameToUse = dbMatch?.[1] || 'cm';
+            return mongoClients['cm'].db(dbNameToUse);
+          } catch {
+            // Connection lost — clear and reconnect below
             delete mongoClients['cm'];
           }
-          if (cmError.name === 'ResourceNotFoundException') {
-            console.error(`Secret ${cmSecretName} not found. Cannot access 'cm' database without this secret.`);
-          } else if (cmError.stack) {
-            console.error(`Error stack: ${cmError.stack.split('\n').slice(0, 3).join('\n')}`);
+        }
+
+        // Deduplicate concurrent connection attempts (e.g. cold-start burst)
+        if (cmConnectionPromise) {
+          return cmConnectionPromise;
+        }
+
+        cmConnectionPromise = (async () => {
+          const cmSecretName = process.env.MONGO_CM_SECRET_NAME || 'mongodb/common';
+          try {
+            // Only fetch the secret if we don't have it cached already
+            if (!cmConnectionString) {
+              console.log(`Fetching cm MongoDB secret: ${cmSecretName}`);
+              const command = new GetSecretValueCommand({ SecretId: cmSecretName });
+              const secretPromise = secretsClient.send(command);
+              const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error(`Secrets Manager timeout for ${cmSecretName}`)), 15000)
+              );
+              const response = await Promise.race([secretPromise, timeoutPromise]);
+
+              let secretValue = response.SecretString;
+              try {
+                const secret = JSON.parse(secretValue);
+                cmConnectionString = pickMongoConnectionString(secret, 'cm');
+              } catch (parseError) {
+                // pickMongoConnectionString throws on dev stage when devConnectionString is missing
+                if (parseError.message?.includes('devConnectionString')) throw parseError;
+                // Otherwise the secret is a plain connection string — refuse on dev stage
+                if (isDevStage()) {
+                  throw new Error(
+                    `MongoDB secret ${cmSecretName} is a plain connection string — cannot resolve a dev variant. ` +
+                    'Convert the secret to JSON with connectionString and devConnectionString keys.'
+                  );
+                }
+                cmConnectionString = secretValue;
+              }
+            }
+
+            const dbMatch = cmConnectionString.match(/\/([^/?]+)(\?|$)/);
+            const dbNameToUse = dbMatch?.[1] || 'cm';
+
+            const client = new MongoClient(cmConnectionString, {
+              serverSelectionTimeoutMS: 30000,
+              connectTimeoutMS: 30000,
+              socketTimeoutMS: 30000,
+            });
+            await client.connect();
+            mongoClients['cm'] = client;
+            console.log('Connected to MongoDB cm database');
+            return client.db(dbNameToUse);
+          } catch (cmError) {
+            // Evict the cached connection string on auth/not-found errors so a
+            // redeploy with a fixed secret will recover on the next request.
+            if (cmError.name === 'ResourceNotFoundException' || cmError.name === 'AccessDeniedException') {
+              cmConnectionString = null;
+            }
+            delete mongoClients['cm'];
+            if (cmError.name === 'ResourceNotFoundException') {
+              throw new Error(`MongoDB secret ${cmSecretName} not found in Secrets Manager.`);
+            }
+            if (cmError.name === 'AccessDeniedException') {
+              throw new Error(`Access denied to MongoDB secret ${cmSecretName}. Check Lambda IAM role.`);
+            }
+            throw new Error(`Cannot access 'cm' database: ${cmError.message}`);
+          } finally {
+            cmConnectionPromise = null;
           }
-          // When deployed, we MUST use mongodb/common for 'cm' database - don't fall back to eventsquid
-          throw new Error(`Cannot access 'cm' database: ${cmSecretName} secret failed. Error: ${cmError.message}`);
-        }
+        })();
+
+        return cmConnectionPromise;
       } else {
-        // When deployed, we MUST have mongodb/common secret for 'cm' database - HARD FAIL
-        if (isDeployed()) {
-          console.error('MONGO_COMMON_CONNECTION_STRING not set (deployed). Cannot access "cm" database without mongodb/common secret.');
-          throw new Error('Cannot access "cm" database: mongodb/common secret is required when deployed');
-        } else {
-          // Local dev: HARD FAIL if no MONGO_COMMON_CONNECTION_STRING
-          console.error('MONGO_COMMON_CONNECTION_STRING not set (local). Cannot access "cm" database without this environment variable.');
-          throw new Error('Cannot access "cm" database: MONGO_COMMON_CONNECTION_STRING environment variable is required for local development');
-        }
+        // Local dev without MONGO_COMMON_CONNECTION_STRING — hard fail
+        console.error('MONGO_COMMON_CONNECTION_STRING not set. Cannot access "cm" database in local dev.');
+        throw new Error('Cannot access "cm" database: set MONGO_COMMON_CONNECTION_STRING for local development');
       }
     }
     // If we get here and isCommonDb is true, something went wrong - we should have returned or thrown above

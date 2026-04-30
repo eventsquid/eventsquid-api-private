@@ -4,7 +4,12 @@
  * This is a placeholder - the full service is 2900+ lines and needs to be migrated incrementally
  */
 
-import { getDatabase } from '../utils/mongodb.js';
+import { getDatabase, isDeployed } from '../utils/mongodb.js';
+import { getTimeZoneDbApiKey } from '../utils/timezonedbApiKey.js';
+import {
+  withEventMongoLock,
+  replaceEventDocumentInEventsCollection
+} from '../utils/eventTouchMongo.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 // Note: getConnection now returns sql module, use new sql.Request() for queries
 import _ from 'lodash';
@@ -58,121 +63,221 @@ class EventService {
   }
 
   /**
-   * Prepare event results - post-processes results for specific resultsets.
-   * Matches Mantle prepEventResults: builds fees-by-cat from evfs, questions-with-options from eq/eqo,
-   * then removes evfs, eq, eqo from each doc.
+   * Prepare event results - post-processes results for specific resultsets
    */
   async prepEventResults(resultset, docs) {
     if (!docs || !Array.isArray(docs)) {
       return docs;
     }
 
-    if (resultset === 'grouptool-event') {
-      for (let i = 0; i < docs.length; i++) {
-        const doc = docs[i];
-        const feeCatObj = {};
-        const feeCatRA = [];
+    // for the event config in the new group tool
+    if (resultset === "grouptool-event") {
 
-        if (doc.evfs && Array.isArray(doc.evfs)) {
-          doc['fees-by-cat'] = [];
+      let
+        i = 0,
+        j = 0,
+        k = 0,
+        l = 0,
+        m = 0,
+        n = 0,
+        feeCatObj = {},
+        feeCatRA = [],
+        thisFee = {},
+        thisFeeCat = "",
+        thisFeeCatName = "",
+        thisOpt = "",
+        thisQ = {},
+        thisQObj = {},
+        questionRA = [],
+        questionObj = {};
 
-          for (let j = 0; j < doc.evfs.length; j++) {
-            const thisFee = doc.evfs[j];
-            let thisFeeCatName = thisFee.fgn || thisFee.fc;
-            if (!thisFeeCatName) {
+      // loop the results (there should be only one, but just in case)
+      for ( i=0; i<docs.length; i++ ) {
+
+        feeCatObj = {};
+        feeCatRA = [];
+        thisFee = {};
+        thisFeeCat = "";
+        thisFeeCatName = "";
+        thisOpt = "",
+        thisQ = {},
+        thisQObj = {},
+        questionRA = [];
+        questionObj = {};
+
+        // if we have fees
+        if ( docs[i].evfs ) {
+
+          // create a fees by category array on this doc
+          docs[i]["fees-by-cat"] = [];
+
+          // loop the fees
+          for ( j=0; j<docs[i].evfs.length; j++ ) {
+
+            thisFee = docs[i].evfs[j];
+            thisFeeCatName = thisFee.fgn || thisFee.fc;
+
+            if ( !thisFeeCatName ) {
               thisFeeCatName = thisFee.fc;
             }
-            const key = String(thisFeeCatName);
-            if (!feeCatObj[key]) {
-              feeCatObj[key] = [];
-              feeCatRA.push(key);
+
+            // if we don't yet have this fee category recorded
+            if ( !feeCatObj[ String( thisFeeCatName ) ] ) {
+
+              // add it
+              feeCatObj[ String( thisFeeCatName ) ] = [];
+              feeCatRA.push( String( thisFeeCatName ) );
             }
-            feeCatObj[key].push(thisFee);
+
+            // add this fee to the fee category
+            feeCatObj[ String( thisFeeCatName ) ].push( thisFee );
+
           }
+          // end loop fees
 
-          feeCatRA.sort((a, b) => {
-            const la = (a || '').toLowerCase();
-            const lb = (b || '').toLowerCase();
-            if (la < lb) return -1;
-            if (la > lb) return 1;
+          // alpha sort the array of fee categories
+          feeCatRA.sort( function( a, b ) {
+
+            if ( a.toLowerCase() < b.toLowerCase() ) {
+              return -1;
+            }
+            if ( a.toLowerCase() > b.toLowerCase() ) {
+              return 1;
+            }
+
             return 0;
-          });
+          } );
 
-          for (let k = 0; k < feeCatRA.length; k++) {
-            const thisFeeCat = String(feeCatRA[k]);
-            feeCatObj[thisFeeCat].sort((a, b) => {
-              const am = (a.fm || '').toLowerCase();
-              const bm = (b.fm || '').toLowerCase();
-              if (am < bm) return -1;
-              if (am > bm) return 1;
+          // loop the fee categories
+          for ( k=0; k<feeCatRA.length; k++ ) {
+
+            thisFeeCat = String( feeCatRA[k] );
+
+            // sort the fees for this category
+            feeCatObj[ thisFeeCat ].sort( function( a, b ) {
+
+              if ( a.fm.toLowerCase() < b.fm.toLowerCase() ) {
+                return -1;
+              }
+              if ( a.fm.toLowerCase() > b.fm.toLowerCase() ) {
+                return 1;
+              }
+
               return 0;
-            });
-            doc['fees-by-cat'].push({
-              category: thisFeeCat,
-              fees: feeCatObj[thisFeeCat]
-            });
+            } );
+
+            // add it to the fees by category array
+            docs[i]["fees-by-cat"].push( {
+              "category": String( thisFeeCat ),
+              "fees": feeCatObj[ thisFeeCat ]
+            } );
+
           }
 
-          delete doc.evfs;
+          delete docs[i].evfs;
+
         }
+        // end if we have fees
 
-        if (doc.eq && Array.isArray(doc.eq)) {
-          doc['questions-with-options'] = [];
-          const questionObj = {};
-          const questionRA = [];
+        // if we have questions
+        if ( docs[i].eq ) {
 
-          for (let l = 0; l < doc.eq.length; l++) {
-            const thisQ = doc.eq[l];
-            if (thisQ && thisQ.fo === 1) {
-              const fiKey = '_' + String(thisQ.fi);
-              questionObj[fiKey] = { ...thisQ, op: [] };
-              questionRA.push({ fi: Number(thisQ.fi), fl: String(thisQ.fl || '') });
+          // create a questions with options array on this doc
+          docs[i]["questions-with-options"] = [];
+
+          // loop the questions
+          for ( l=0; l<docs[i].eq.length; l++ ) {
+
+            thisQ = docs[i].eq[l];
+
+            // if this question should have options
+            if ( thisQ.fo && thisQ.fo === 1 ) {
+
+              // add it to the question object
+              questionObj[ "_" + String( thisQ.fi ) ] = thisQ;
+              questionObj[ "_" + String( thisQ.fi ) ].op = [];
+
+              questionRA.push( {
+                "fi": Number( thisQ.fi ),
+                "fl": String( thisQ.fl )
+              } );
             }
           }
+          // end loop questions
 
-          questionRA.sort((a, b) => {
-            const al = (a.fl || '').toLowerCase();
-            const bl = (b.fl || '').toLowerCase();
-            if (al < bl) return -1;
-            if (al > bl) return 1;
+          // alpha sort the array of questions
+          questionRA.sort( function( a, b ) {
+
+            if ( a.fl.toLowerCase() < b.fl.toLowerCase() ) {
+              return -1;
+            }
+            if ( a.fl.toLowerCase() > b.fl.toLowerCase() ) {
+              return 1;
+            }
+
             return 0;
-          });
+          } );
 
-          if (doc.eqo && Array.isArray(doc.eqo)) {
-            for (let m = 0; m < doc.eqo.length; m++) {
-              const thisOpt = doc.eqo[m];
-              if (thisOpt && questionObj['_' + String(thisOpt.fid)]) {
-                questionObj['_' + String(thisOpt.fid)].op.push({
-                  ol: String(thisOpt.ol || ''),
-                  ov: String(thisOpt.ov || ''),
-                  id: Number(thisOpt.id)
-                });
+          // if we have event question options
+          if ( docs[i].eqo ) {
+
+            // loop the question options
+            for ( m=0; m<docs[i].eqo.length; m++ ) {
+
+              thisOpt = docs[i].eqo[m];
+
+              // if this option has a matching question
+              if ( thisOpt && questionObj[ "_" + String( thisOpt.fid ) ] ) {
+                // add it to the question objects options array
+                questionObj[ "_" + String( thisOpt.fid ) ].op.push( {
+                  "ol": String( thisOpt.ol ),
+                  "ov": String( thisOpt.ov ),
+                  "id": Number( thisOpt.id )
+                } );
               }
             }
+            // end loop the question options
           }
+          // end if we have event question options
 
-          for (let n = 0; n < questionRA.length; n++) {
-            const thisQObj = questionObj['_' + String(questionRA[n].fi)];
-            if (thisQObj && thisQObj.op && thisQObj.op.length > 0) {
-              thisQObj.op.sort((a, b) => {
-                const ao = (a.ol || '').toLowerCase();
-                const bo = (b.ol || '').toLowerCase();
-                if (ao < bo) return -1;
-                if (ao > bo) return 1;
+          // loop the questions array
+          for ( n=0; n<questionRA.length; n++ ) {
+
+            thisQObj = questionObj[ "_" + String( questionRA[n].fi ) ];
+
+            // if we have any options
+            if ( thisQObj.op.length > 0 ) {
+
+              // sort the options for this question
+              thisQObj.op.sort( function( a, b ) {
+
+                if ( a.ol.toLowerCase() < b.ol.toLowerCase() ) {
+                  return -1;
+                }
+                if ( a.ol.toLowerCase() > b.ol.toLowerCase() ) {
+                  return 1;
+                }
+
                 return 0;
-              });
-              doc['questions-with-options'].push({
-                fl: String(thisQObj.fl || ''),
-                fi: Number(thisQObj.fi),
-                op: thisQObj.op
-              });
+              } );
+
+              // and add the question to the return array
+              docs[i]["questions-with-options"].push( {
+                "fl": String( thisQObj.fl ),
+                "fi": Number( thisQObj.fi ),
+                "op": thisQObj.op
+              } );
             }
           }
-
-          delete doc.eq;
-          delete doc.eqo;
+          // end loop the questions array
         }
+        // end if we have questions
+
+        delete docs[i].eq;
+        delete docs[i].eqo;
+
       }
+
     }
 
     return docs;
@@ -300,18 +405,50 @@ class EventService {
         }
       });
 
-      // Update the event record in MongoDB
-      const result = await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { eq: prompts, eqo: options }
-        }
+      // Update the event record in MongoDB (serialized with touchEvent)
+      const result = await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { eq: prompts, eqo: options }
+          }
+        )
       );
 
       return result;
     } catch (error) {
       console.error('Error updating custom prompts:', error);
+      throw error;
+    }
+  }
+
+  async getAdditionalContacts(eventGUID, vert) {
+    try {
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const request = new sql.Request();
+      request.input('guid', sql.VarChar, eventGUID);
+      const result = await request.query(`
+        USE ${dbName};
+        SELECT
+            cd_name,
+            cd_email,
+            cd_phone
+        FROM eventCD
+        WHERE event_id = (
+            SELECT event_id FROM b_events WHERE _guid = @guid
+        )
+      `);
+
+      return result.recordset.map(contact => ({
+        name: contact.cd_name,
+        email: contact.cd_email,
+        phone: contact.cd_phone
+      }));
+    } catch (error) {
+      console.error('Error getting additional contacts:', error);
       throw error;
     }
   }
@@ -436,9 +573,7 @@ class EventService {
         }
       }
 
-      // Match production shape: transform evfs/eq/eqo into fees-by-cat and questions-with-options
-      const [transformed] = await this.prepEventResults('grouptool-event', [event]);
-      return transformed;
+      return event;
     } catch (error) {
       console.error('Error getting event data:', error);
       throw error;
@@ -586,13 +721,26 @@ class EventService {
 
       const startDateUnix = startDate.unix();
 
-      // Get timezone config from TimeZoneDB API
-      if (!process.env.TIMEZONEDB_API_KEY) {
-        throw new Error('TIMEZONEDB_API_KEY environment variable is required');
+      const timeZoneDbApiKey = await getTimeZoneDbApiKey();
+      if (!timeZoneDbApiKey) {
+        if (!isDeployed()) {
+          console.warn(
+            'TimeZoneDB API key not set; skipping TimeZoneDB call and SQL timezone update (local only). Set TIMEZONEDB_API_KEY in .env or configure the timezonedb/api-key secret in AWS.'
+          );
+          return {
+            success: false,
+            skipped: true,
+            message:
+              'TimeZoneDB API key not configured locally. Set TIMEZONEDB_API_KEY in .env to test this path.'
+          };
+        }
+        throw new Error(
+          'TimeZoneDB API key is missing (Secrets Manager or TIMEZONEDB_API_KEY)'
+        );
       }
 
       const tzConfigs = await axios.request({
-        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${process.env.TIMEZONEDB_API_KEY}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
+        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${timeZoneDbApiKey}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
         method: 'get'
       }).then(response => {
         response.data.dst = Number(response.data.dst);
@@ -675,13 +823,26 @@ class EventService {
 
       const startDateUnix = startDate.unix();
 
-      // Get timezone config from TimeZoneDB API
-      if (!process.env.TIMEZONEDB_API_KEY) {
-        throw new Error('TIMEZONEDB_API_KEY environment variable is required');
+      const timeZoneDbApiKey = await getTimeZoneDbApiKey();
+      if (!timeZoneDbApiKey) {
+        if (!isDeployed()) {
+          console.warn(
+            'TimeZoneDB API key not set; skipping TimeZoneDB call and SQL timezone update (local only). Set TIMEZONEDB_API_KEY in .env or configure the timezonedb/api-key secret in AWS.'
+          );
+          return {
+            success: false,
+            skipped: true,
+            message:
+              'TimeZoneDB API key not configured locally. Set TIMEZONEDB_API_KEY in .env to test this path.'
+          };
+        }
+        throw new Error(
+          'TimeZoneDB API key is missing (Secrets Manager or TIMEZONEDB_API_KEY)'
+        );
       }
 
       const tzConfigs = await axios.request({
-        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${process.env.TIMEZONEDB_API_KEY}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
+        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${timeZoneDbApiKey}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
         method: 'get'
       }).then(response => {
         response.data.dst = Number(response.data.dst);
@@ -940,13 +1101,14 @@ class EventService {
         getSpeakers[i] = _.omitBy(getSpeakers[i], _.isNull);
       }
 
-      // Update the event record
-      await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { spk: getSpeakers }
-        }
+      await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { spk: getSpeakers }
+          }
+        )
       );
 
       return { success: true, speakerCount: getSpeakers.length };
@@ -1119,13 +1281,14 @@ class EventService {
         getItems[i] = _.omitBy(getItems[i], _.isNull);
       }
 
-      // Update the event record in MongoDB
-      const result = await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { evfs: getItems }
-        }
+      const result = await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { evfs: getItems }
+          }
+        )
       );
 
       return result;
@@ -1283,9 +1446,8 @@ class EventService {
       const updateObj = {};
       updateObj[String(key)] = updateTS;
 
-      await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        { $set: updateObj }
+      await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne({ e: Number(eventID) }, { $set: updateObj })
       );
 
       return { success: true };
@@ -1475,14 +1637,12 @@ class EventService {
    * This method queries all relevant tables to build a complete event document
    */
   async getTouchEventQueries(eventID, vert, connection, dbName, s3RootURL, siteURL) {
-    // Main event data query - start with core fields we know exist
-    // Additional fields can be added as needed
     const sql = await getConnection(vert);
     const request1 = new sql.Request();
     request1.input('eventID', sql.Int, Number(eventID));
     const result1 = await request1.query(`
       USE ${dbName};
-      SELECT TOP 1
+      SELECT
           a._guid AS ag,
           a.affiliate_name AS an,
           a.customAffiliateID AS cai,
@@ -1537,8 +1697,8 @@ class EventService {
           e.Event_begins AS eb,
           e.Event_contact AS en,
           e.Event_count AS evv,
-          dbo.udf_StripHTML(REPLACE(CAST(e.Event_description AS VARCHAR(MAX)), CHAR(3), '')) AS de,
-          REPLACE(REPLACE(REPLACE(CAST(e.Event_description AS VARCHAR(MAX)), '"', '\"'), '&', '\\&'), CHAR(3), '') AS dh,
+          dbo.udf_StripHTML( REPLACE( CAST( e.Event_description AS VARCHAR(MAX) ), CHAR(3), '' ) ) AS de,
+          REPLACE( REPLACE( REPLACE( CAST( e.Event_description AS VARCHAR(MAX) ), '"', '\"' ), '&', '\&' ), CHAR(3), '' ) AS dh,
           e.Event_deviations AS edv,
           e.Event_email AS em,
           e.Event_emailFrom AS eef,
@@ -1559,11 +1719,13 @@ class EventService {
           e.EventFeeTotalPaid AS ept,
           e.EventFlyerS3 AS ef3,
           CASE WHEN (ISNULL(NULLIF(e.EventlogoS3, ''), '') = '')
-            THEN (SELECT logo FROM b_affiliates WHERE affiliate_id = e.affiliate_id)
-            ELSE CASE WHEN (LEFT(ISNULL(NULLIF(e.EventlogoS3, ''), ''), 5) = 'https')
-              THEN e.EventlogoS3
-              ELSE '${(s3RootURL || '').replace(/'/g, "''")}/' + e.EventlogoS3
-            END
+              THEN (SELECT logo FROM b_affiliates WHERE affiliate_id = e.affiliate_id)
+              ELSE
+                  CASE WHEN ( LEFT( ISNULL( NULLIF(e.EventlogoS3, ''), '' ), 5 ) = 'https' )
+                      THEN e.EventlogoS3
+                  ELSE
+                      '${s3RootURL}/' + e.EventlogoS3
+                  END
           END AS el3,
           e.firstPublished AS fpb,
           e.fullguest AS ege,
@@ -1578,20 +1740,29 @@ class EventService {
           e.isPrivateSeries AS eip,
           e.isSeries AS eis,
           e.jobslive AS ejl,
-          REPLACE(e.keywords, ',', '|^^|,|^^|') AS ek,
+          REPLACE( e.keywords, ',', '|^^|,|^^|' ) AS ek,
           e.minorReg AS emr,
           e.mobile_req AS rqm,
-          CASE WHEN (ISNULL(NULLIF(e.newEventBannerS3, ''), '') = '')
-            THEN CASE WHEN (ISNULL(NULLIF(e.newEventBanner, ''), '') = '') THEN NULL
-              ELSE 'http://${(siteURL || '').replace(/'/g, "''")}/eventBanners/' + e.newEventBanner END
-            ELSE CASE WHEN (LEFT(ISNULL(NULLIF(e.newEventBannerS3, ''), ''), 5) = 'https')
-              THEN e.newEventBannerS3
-              ELSE '${(s3RootURL || '').replace(/'/g, "''")}/' + e.newEventBannerS3
-            END
+          CASE
+              WHEN ( ISNULL( NULLIF(e.newEventBannerS3, ''), '') = '' )
+                  THEN
+                      CASE WHEN ( ISNULL(NULLIF(e.newEventBanner, ''), '') = '')
+                          THEN NULL
+                      ELSE
+                          'http://${siteURL}/eventBanners/' + e.newEventBanner
+                      END
+              ELSE
+                  CASE WHEN (LEFT( ISNULL( NULLIF(e.newEventBannerS3, ''), ''), 5 ) = 'https')
+                      THEN e.newEventBannerS3
+                  ELSE
+                      '${s3RootURL}/' + e.newEventBannerS3
+                  END
           END AS eb3,
-          CASE WHEN (LEFT(ISNULL(e.regBackgroundS3, ''), 5) = 'https')
-            THEN e.regBackgroundS3
-            ELSE '${(s3RootURL || '').replace(/'/g, "''")}/' + e.regBackgroundS3
+          CASE
+              WHEN ( LEFT( ISNULL( e.regBackgroundS3, '' ), 5 ) = 'https' )
+                  THEN e.regBackgroundS3
+              ELSE
+                  '${s3RootURL}/' + e.regBackgroundS3
           END AS rb3,
           e.payMethodEvent AS cpd,
           e.payMethodEventVendor AS vpd,
@@ -1640,8 +1811,13 @@ class EventService {
           e.volunteer_start AS evs,
           e.volunteerNotes AS evn,
           e.voting AS vt,
-          ISNULL(e.isWebsitePublished, 0) AS epb,
-          CASE WHEN (RTRIM(LTRIM(ISNULL(e.taxID, ''))) = '') THEN NULL ELSE RTRIM(LTRIM(e.taxID)) END AS tx,
+          ISNULL( e.isWebsitePublished, 0 ) AS epb,
+          CASE
+              WHEN ( RTRIM(LTRIM( ISNULL( e.taxID, '' ) )) = '' )
+                  THEN NULL
+              ELSE
+                  RTRIM(LTRIM( e.taxID ))
+          END AS tx,
           et.team_id AS ti,
           ISNULL(etz.zoneName, 'UTC') AS tzn,
           t.Event_type AS ep,
@@ -1656,7 +1832,7 @@ class EventService {
           vu.venue_address AS va,
           vu.venue_directions AS vdi,
           c.currencyVar AS cu,
-          getDate() AS lu,
+          getDate() AS [lu],
           e.autoAdvance AS aa,
           e.autoAdvanceRevert AS aar,
           e.multiDayCheckIn AS mdc,
@@ -1666,13 +1842,13 @@ class EventService {
           e.ceuDisplayOnReg AS ceud,
           e.ceuValueLabel AS ceuv,
           e.ceuDisplayCounterOnReg AS ceuc
-      FROM b_Events AS e
-          LEFT JOIN b_Event_types AS t ON e.Event_type_id = t.Event_type_id
-          LEFT JOIN b_venues AS vu ON vu.venue_id = e.venue_id
-          LEFT JOIN Event_team AS et ON et.affiliate_id = e.affiliate_id AND et.Event_id = e.Event_id
-          LEFT JOIN b_timeZones AS etz ON etz.timeZoneID = e.timeZone_id
-          JOIN b_affiliates AS a ON a.affiliate_id = e.affiliate_id
-          JOIN b_currency AS c ON ISNULL(e.Event_currency, 1) = c.currencyID
+      FROM [b_Events] AS e
+          LEFT JOIN [b_Event_types] AS t ON e.Event_type_id = t.Event_type_id
+          LEFT JOIN [b_venues] AS vu ON vu.venue_id = e.venue_id
+          LEFT JOIN [Event_team] AS et ON et.affiliate_id = e.affiliate_id AND et.Event_id = e.Event_id
+          LEFT JOIN [b_timeZones] AS etz ON etz.timeZoneID = e.timeZone_id
+          JOIN [b_affiliates] AS a ON e.affiliate_id = a.affiliate_id
+          JOIN [b_currency] AS c ON ISNULL( e.Event_currency, 1 ) = c.currencyID
       WHERE e.Event_id = @eventID
     `);
 
@@ -1683,21 +1859,21 @@ class EventService {
     let eventData = result1.recordset[0];
 
     // Get authority data
-    const request3 = new sql.Request();
-    request3.input('eventID', sql.Int, Number(eventID));
-    const result3 = await request3.query(`
+    const request2 = new sql.Request();
+    request2.input('eventID', sql.Int, Number(eventID));
+    const result2 = await request2.query(`
       USE ${dbName};
       SELECT ea.authority_id AS [at]
       FROM EventAuthority ea
       WHERE ea.Event_id = @eventID
     `);
 
-    eventData.eat = result3.recordset.map(authority => authority.at);
+    eventData.eat = result2.recordset.map(authority => authority.at);
 
     // Get profile data
-    const request4 = new sql.Request();
-    request4.input('eventID', sql.Int, Number(eventID));
-    const result4 = await request4.query(`
+    const request3 = new sql.Request();
+    request3.input('eventID', sql.Int, Number(eventID));
+    const result3 = await request3.query(`
       USE ${dbName};
       SELECT
           bundle_id AS p,
@@ -1710,12 +1886,12 @@ class EventService {
       ORDER BY RTRIM(LTRIM(bundle_name))
     `);
 
-    eventData.pfs = result4.recordset;
+    eventData.pfs = result3.recordset;
 
     // Get meal data
-    const request5 = new sql.Request();
-    request5.input('eventID', sql.Int, Number(eventID));
-    const result5 = await request5.query(`
+    const request4 = new sql.Request();
+    request4.input('eventID', sql.Int, Number(eventID));
+    const result4 = await request4.query(`
       USE ${dbName};
       SELECT
           m.meal_id AS m,
@@ -1736,7 +1912,7 @@ class EventService {
       ORDER BY RTRIM(LTRIM(m.meal_name))
     `);
 
-    eventData.evml = result5.recordset;
+    eventData.evml = result4.recordset;
 
     return eventData;
   }
@@ -1848,22 +2024,6 @@ class EventService {
         eventData.ek = [];
       }
 
-      // Registration time defaults (match Mantle)
-      if (!eventData.rs || String(eventData.rs).trim() === '') {
-        eventData.rs = '12:00 AM';
-      }
-      if (!eventData.re || String(eventData.re).trim() === '') {
-        eventData.re = '12:00 AM';
-      }
-
-      // Registration start/end datetimes (match Mantle)
-      if (eventData.rs && eventData.ers) {
-        eventData.rsi = await dateAndTimeToDatetime(eventData.ers, eventData.rs);
-      }
-      if (eventData.re && eventData.ere) {
-        eventData.rei = await dateAndTimeToDatetime(eventData.ere, eventData.re);
-      }
-
       // Event start / end time - combine date and time in JavaScript (matching old code)
       if (eventData.est && eventData.eb) {
         eventData.ebi = await dateAndTimeToDatetime(eventData.eb, eventData.est);
@@ -1872,26 +2032,31 @@ class EventService {
         eventData.eei = await dateAndTimeToDatetime(eventData.ee, eventData.eet);
       }
 
-      const filter = { '_id.s': vert, '_id.e': Number(eventID) };
-
-      // Keep a backup so we can restore if insert fails (avoids leaving the event missing in Mongo).
-      const existingDoc = await eventsCollection.findOne(filter);
-
-      await eventsCollection.deleteOne(filter);
-
-      try {
-        await eventsCollection.insertOne(eventData);
-      } catch (insertError) {
-        if (existingDoc) {
-          try {
-            await eventsCollection.insertOne(existingDoc);
-            console.error('Error touching event: insert failed; restored previous event document.', insertError);
-          } catch (restoreError) {
-            console.error('Error touching event: insert failed and restore failed.', { insertError, restoreError });
-          }
-        }
-        throw insertError;
+      // Registration start / end time (Mantle touchEvent lines 2270-2283)
+      if (!eventData.rs || _.trim(eventData.rs) === "") {
+        eventData.rs = "12:00 AM";
       }
+      if (!eventData.re || _.trim(eventData.re) === "") {
+        eventData.re = "12:00 AM";
+      }
+      if (eventData.rs && eventData.ers) {
+        eventData.rsi = await dateAndTimeToDatetime(eventData.ers, eventData.rs);
+      }
+      if (eventData.re && eventData.ere) {
+        eventData.rei = await dateAndTimeToDatetime(eventData.ere, eventData.re);
+      }
+
+      const eventFilter = { '_id.s': vert, '_id.e': Number(eventID) };
+      const mongoClient = db.client;
+
+      await withEventMongoLock(db, vert, eventID, async () =>
+        replaceEventDocumentInEventsCollection(
+          mongoClient,
+          eventsCollection,
+          eventFilter,
+          eventData
+        )
+      );
 
       return {
         status: 'success',
@@ -1899,7 +2064,11 @@ class EventService {
         eventData: eventData
       };
     } catch (error) {
-      console.error('Error touching event:', error);
+      console.error(
+        `[touchEvent] failed vert=${request.headers?.vert || request.vert || '?'} eventID=${request.pathParameters?.eventID}:`,
+        error.message,
+        error.stack
+      );
       throw error;
     }
   }
@@ -1959,23 +2128,23 @@ class EventService {
             AND getDate() >= dateadd(d,1,activityEnd)
       `);
 
-      // Update MongoDB event record
-      const event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
-      
-      if (event && event.evfs) {
-        // Update fees in the evfs array
-        const updatedFees = event.evfs.map(evf => {
-          if (updateIDs.includes(evf.f)) {
-            return { ...evf, fa: 0 }; // Set active to 0
-          }
-          return evf;
-        });
+      await withEventMongoLock(db, vert, eventID, async () => {
+        const event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
 
-        await eventsCollection.updateOne(
-          { '_id.e': Number(eventID) },
-          { $set: { evfs: updatedFees } }
-        );
-      }
+        if (event && event.evfs) {
+          const updatedFees = event.evfs.map(evf => {
+            if (updateIDs.includes(evf.f)) {
+              return { ...evf, fa: 0 };
+            }
+            return evf;
+          });
+
+          await eventsCollection.updateOne(
+            { '_id.e': Number(eventID) },
+            { $set: { evfs: updatedFees } }
+          );
+        }
+      });
 
       return { message: 'success', updateCount: updateIDs.length };
     } catch (error) {

@@ -121,6 +121,19 @@ function normalizePostImageBody(request) {
   let body = request.body;
   const qp = request.queryStringParameters || {};
 
+  // API Gateway / proxy may leave JSON as a string; base64 payloads contain "=" so handler must parse first,
+  // but keep this as a fallback for any code path that still passes a JSON string.
+  if (typeof body === 'string') {
+    const t = body.trim().replace(/^\uFEFF/, '');
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try {
+        body = JSON.parse(t);
+      } catch (_) {
+        /* continue to data:image / empty */
+      }
+    }
+  }
+
   if (body && typeof body === 'object' && !Array.isArray(body)) {
     const keys = Object.keys(body);
     if (keys.length === 1 && typeof body[keys[0]] === 'string') {
@@ -170,7 +183,6 @@ export const postImagesRoute = {
         if (!body.type) missing.push('type');
         if (!body.fileName) missing.push('fileName');
         if (!body._guid) missing.push('_guid');
-        console.log('[postImages] 400: Missing required fields:', missing.join(', '), 'bodyKeys:', body ? Object.keys(body) : [], 'bodyType:', typeof request.body);
         return errorResponse(
           'Missing required fields: base64, type, fileName, _guid. Send Content-Type: application/json with those properties, or POST a raw data:image/png;base64,... body with query params ?fileName=org-logo&_guid=YOUR-GUID&type=png',
           400
@@ -185,7 +197,6 @@ export const postImagesRoute = {
 
       const fileType = fileTypes[body.type];
       if (!fileType) {
-        console.log('[postImages] 400: Invalid file type:', body.type);
         return errorResponse('Invalid file type. Must be jpg or png', 400);
       }
 
@@ -205,6 +216,7 @@ export const postImagesRoute = {
       // Update database based on file type
       const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
       const { getDatabase } = await import('../utils/mongodb.js');
+      const { withEventMongoLock } = await import('../utils/eventTouchMongo.js');
       const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
@@ -225,11 +237,15 @@ export const postImagesRoute = {
         const results = result.recordset;
 
         if (results.length) {
+          const affiliateId = Number(results[0].affiliate_id);
           const eventsColl = db.collection('events');
-          await eventsColl.updateMany(
-            { '_id.a': Number(results[0].affiliate_id) },
-            { $set: { al3: logoURL } }
-          );
+          const eventIds = await eventsColl.distinct('e', { '_id.a': affiliateId });
+          eventIds.sort((a, b) => a - b);
+          for (const eid of eventIds) {
+            await withEventMongoLock(db, vert, eid, async () => {
+              await eventsColl.updateOne({ e: eid }, { $set: { al3: logoURL } });
+            });
+          }
         }
       } else if (body.fileName === 'speaker-photo') {
         // Update speaker record
@@ -263,7 +279,6 @@ export const postImagesRoute = {
           WHERE user_id = @userID
         `);
       } else {
-        console.log('[postImages] 400: Invalid fileName:', body.fileName);
         return errorResponse('Invalid fileName. Must be org-logo, speaker-photo, or avatars', 400);
       }
 

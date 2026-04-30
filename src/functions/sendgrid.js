@@ -10,6 +10,7 @@ import moment from 'moment-timezone';
 import axios from 'axios';
 import sgMail from '@sendgrid/mail';
 import { generateVerifyCode } from './verification.js';
+import { getSendGridConfig } from '../utils/sendgridConfig.js';
 
 /**
  * Log email (SendGrid webhook)
@@ -20,7 +21,7 @@ export async function logEmail(form) {
     const db = await getDatabase(null, 'cm');
     const mailLogs = db.collection('mail-logs');
 
-    const inboundAPIKey = process.env.TWILIO_INBOUND_API_KEY || process.env.SENDGRID_INBOUND_API_KEY;
+    const { inboundApiKey: inboundAPIKey } = await getSendGridConfig();
 
     // Filter the array down to those that include the eventsquid API key (_esk),
     // AND the eventsquid tracking indicator (_est - without this we won't track the email).
@@ -178,8 +179,8 @@ export async function logEmail(form) {
  */
 export async function validateEmail(form) {
   try {
-    const sgEmailValKey = process.env.SG_EMAIL_VAL_KEY;
-    
+    const { emailValidationKey: sgEmailValKey } = await getSendGridConfig();
+
     if (!sgEmailValKey) {
       // OLD CODE BEHAVIOR: In local dev, return mock validation result when API key is missing
       console.warn('SG_EMAIL_VAL_KEY not set, returning mock validation result for local dev');
@@ -299,15 +300,10 @@ export async function getUserPhone(request) {
  */
 export async function sendEmail(form) {
   try {
-    const sgKey = process.env.SG_API_KEY;
+    const { apiKey: sgKey, sender: sgSenderResolved } = await getSendGridConfig();
     if (!sgKey) {
       // OLD CODE BEHAVIOR: In local dev, log and return true when API key is missing (mock sending)
-      console.warn('SG_API_KEY not set, mocking email send for local dev');
-      console.log('Would send email:', {
-        to: form.to,
-        subject: form.subject,
-        from: form.fromName || process.env.SENDGRID_SENDER || 'noreply@eventsquid.com'
-      });
+      console.warn('SendGrid API key not set, mocking email send for local dev');
       return true;
     }
 
@@ -325,7 +321,7 @@ export async function sendEmail(form) {
       throw new Error('No subject specified for email');
     }
 
-    const sgSender = process.env.SENDGRID_SENDER || 'noreply@eventsquid.com';
+    const sgSender = sgSenderResolved || 'noreply@eventsquid.com';
     let from = sgSender;
     
     if ('fromName' in form) {
@@ -344,28 +340,9 @@ export async function sendEmail(form) {
       ...(form.reply_to && { replyTo: form.reply_to })
     };
 
-    console.log('Attempting to send email via SendGrid:', {
-      to: form.to,
-      subject: form.subject,
-      from: from,
-      hasHtml: !!form.html,
-      hasText: !!form.text
-    });
-
     const result = await sgMail.send(payload);
-    
-    console.log('SendGrid API response:', {
-      statusCode: result[0]?.statusCode,
-      headers: result[0]?.headers,
-      body: result[0]?.body
-    });
 
     if (result[0]?.statusCode >= 200 && result[0]?.statusCode < 300) {
-      console.log('Email sent successfully via SendGrid:', {
-        to: form.to,
-        subject: form.subject,
-        statusCode: result[0]?.statusCode
-      });
       return true;
     } else {
       console.warn('SendGrid returned non-success status:', result[0]?.statusCode);
@@ -422,7 +399,7 @@ export async function sendVerificationCode(form) {
 export async function getEmailDetailFromAPI(msgID, vert) {
   try {
     const sendgridAPIURL = `https://api.sendgrid.com/v3/messages/${msgID}`;
-    const sgEmailActivityKey = process.env.SG_EMAIL_ACTIVITY_KEY;
+    const { emailActivityKey: sgEmailActivityKey } = await getSendGridConfig();
 
     if (!sgEmailActivityKey) {
       throw new Error('SG_EMAIL_ACTIVITY_KEY environment variable is required');
@@ -449,8 +426,8 @@ export async function getEmailDetailFromAPI(msgID, vert) {
  */
 export async function getEmailListFromAPI(form, vert) {
   try {
-    const inboundAPIKey = process.env.TWILIO_INBOUND_API_KEY || process.env.SENDGRID_INBOUND_API_KEY;
-    const sgEmailActivityKey = process.env.SG_EMAIL_ACTIVITY_KEY;
+    const { inboundApiKey: inboundAPIKey, emailActivityKey: sgEmailActivityKey } =
+      await getSendGridConfig();
 
     if (!sgEmailActivityKey) {
       throw new Error('SG_EMAIL_ACTIVITY_KEY environment variable is required');

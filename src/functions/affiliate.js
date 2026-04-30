@@ -218,8 +218,6 @@ export async function getGateways(affiliateID, vert) {
     if (missingRA.length > 0) {
       // TODO: Implement gateway-specific MongoDB sync functions
       // For now, just return the SQL gateways
-      // In the future, we would call updateStripeConfigMongo, updateAuthNetConfigMongo, etc.
-      console.log('Missing gateways in MongoDB, sync needed:', missingRA);
     }
 
     return mongoObj.gatewaysRA.length > 0 ? mongoObj.gatewaysRA : sqlObj.gatewaysRA;
@@ -486,5 +484,32 @@ export async function deleteGateway(affiliateID, gatewayID, vert) {
     console.error('Error deleting gateway:', error);
     throw error;
   }
+}
+
+/**
+ * Get all users associated with an affiliate (admins/contacts).
+ * Used to determine whether a user has affiliate-level access to an event.
+ */
+export async function getAffiliateUsers(affiliateID, vert) {
+  const sql = await getConnection(vert);
+  const dbName = getDatabaseName(vert);
+
+  const request = new sql.Request();
+  request.input('affiliateID', TYPES.Int, Number(affiliateID));
+  const result = await request.query(`
+    USE ${dbName};
+    SELECT
+      u.user_id,
+      u.user_firstname,
+      u.user_lastname,
+      u.user_email,
+      u.user_phone,
+      u.user_mobile,
+      ua.*
+    FROM b_users u
+    INNER JOIN user_affiliate ua ON ua.user_id = u.user_id
+    WHERE ua.affiliate_id = @affiliateID
+  `);
+  return result.recordset;
 }
 

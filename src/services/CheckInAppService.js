@@ -4,6 +4,7 @@
  */
 
 import { getDatabase } from '../utils/mongodb.js';
+import { withEventMongoLock } from '../utils/eventTouchMongo.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 import _eventService from './EventService.js';
 
@@ -174,15 +175,16 @@ class CheckInAppService {
         WHERE ${condition} = @conditionValue
       `);
 
-      // If updating event_fees, sync to MongoDB
       if (table === 'event_fees') {
         const db = await getDatabase(null, vert);
         const eventsCollection = db.collection('events');
         const evfsField = `evfs.$.${column}`;
 
-        await eventsCollection.updateOne(
-          { '_id.e': eventID, 'evfs.f': Number(body.eventFeeID) },
-          { $set: { [evfsField]: Boolean(updatedValue) } }
+        await withEventMongoLock(db, vert, eventID, async () =>
+          eventsCollection.updateOne(
+            { '_id.e': eventID, 'evfs.f': Number(body.eventFeeID) },
+            { $set: { [evfsField]: Boolean(updatedValue) } }
+          )
         );
       }
 

@@ -18,54 +18,17 @@ export async function authenticate(request) {
   let session = null;
 
   // Parse the token and validate session
+  // Session _id format in MongoDB is: cfid_cftoken (simple concatenation)
   if (headers.cftoken && headers.cfid) {
-    // Session _id format in MongoDB is: affiliate_id_token_part
-    // Handle two formats:
-    // 1. With prefix: cfid="prefix-affiliate_id", cftoken="prefix-token_part"
-    // 2. Without prefix: cfid="affiliate_id", cftoken="token_part"
-    
-    let affiliateID;
-    let tokenPart;
-    
-    // Extract affiliate_id from cfid
-    if (headers.cfid.includes('-')) {
-      // Format: prefix-affiliate_id
-      const cfidParts = headers.cfid.split('-');
-      affiliateID = cfidParts[cfidParts.length - 1];
-    } else {
-      // Format: affiliate_id (no prefix)
-      affiliateID = headers.cfid;
-    }
-    
-    // Extract token part from cftoken
-    if (headers.cftoken.includes('-')) {
-      // Check if it has a prefix (first part matches cfid prefix pattern)
-      // If cftoken starts with a long prefix, extract after first dash
-      // Otherwise, use the full cftoken as token_part
-      const cftokenParts = headers.cftoken.split('-');
-      // If cfid had a prefix, cftoken likely does too - extract after first dash
-      // If cfid had no prefix, use full cftoken
-      if (headers.cfid.includes('-')) {
-        tokenPart = cftokenParts.slice(1).join('-');
-      } else {
-        // No prefix in cfid, so use full cftoken as token_part
-        tokenPart = headers.cftoken;
-      }
-    } else {
-      // No dashes in cftoken, use as-is
-      tokenPart = headers.cftoken;
-    }
-    
-    // Construct token as: affiliate_id_token_part
-    token = `${affiliateID}_${tokenPart}`;
-    
+    token = `${headers.cfid}_${headers.cftoken}`;
+
     // Grab session data using cftoken and cfid
     session = await _authService.getSession(token);
-    
+
     if (!session) {
       throw new Error('Invalid Session');
     }
-    
+
     // Set session on request object
     request.session = session;
     request.token = token;
@@ -105,47 +68,13 @@ export async function checkSession(request) {
   let session = null;
 
   // Parse the token and validate session
+  // Session _id format in MongoDB is: cfid_cftoken (simple concatenation)
   if (headers.cftoken && headers.cfid) {
-    // Session _id format in MongoDB is: affiliate_id_token_part
-    // Handle two formats:
-    // 1. With prefix: cfid="prefix-affiliate_id", cftoken="prefix-token_part"
-    // 2. Without prefix: cfid="affiliate_id", cftoken="token_part"
-    
-    let affiliateID;
-    let tokenPart;
-    
-    // Extract affiliate_id from cfid
-    if (headers.cfid.includes('-')) {
-      // Format: prefix-affiliate_id
-      const cfidParts = headers.cfid.split('-');
-      affiliateID = cfidParts[cfidParts.length - 1];
-    } else {
-      // Format: affiliate_id (no prefix)
-      affiliateID = headers.cfid;
-    }
-    
-    // Extract token part from cftoken
-    if (headers.cftoken.includes('-')) {
-      const cftokenParts = headers.cftoken.split('-');
-      // If cfid had a prefix, cftoken likely does too - extract after first dash
-      // If cfid had no prefix, use full cftoken
-      if (headers.cfid.includes('-')) {
-        tokenPart = cftokenParts.slice(1).join('-');
-      } else {
-        // No prefix in cfid, so use full cftoken as token_part
-        tokenPart = headers.cftoken;
-      }
-    } else {
-      // No dashes in cftoken, use as-is
-      tokenPart = headers.cftoken;
-    }
-    
-    // Construct token as: affiliate_id_token_part
-    token = `${affiliateID}_${tokenPart}`;
-    
+    token = `${headers.cfid}_${headers.cftoken}`;
+
     // Grab session data using cftoken and cfid
     session = await _authService.getSession(token);
-    
+
     // Set the request session (empty object if no session)
     request.session = session || {};
     request.token = token;

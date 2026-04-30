@@ -51,98 +51,6 @@ class AttendeeService {
   }
 
   /**
-   * Prepare attendee filter for MongoDB (matches Mantle prepAttendeeFilter).
-   * Mutates filterObj in place: transforms contestant-with-guests, profiles, items,
-   * subclasses, fieldoptions, fs, keyword, dash, string→regex, and adds rc=1 unless dash.
-   */
-  async prepAttendeeFilter(filterObj) {
-    if (!filterObj || typeof filterObj !== 'object') {
-      return {};
-    }
-    let onlyRegComplete = true;
-    if (filterObj.hasOwnProperty('rc') && filterObj.rc === 0) {
-      onlyRegComplete = false;
-      delete filterObj.rc;
-    }
-    const keys = Object.keys(filterObj);
-    for (const key of keys) {
-      const value = filterObj[key];
-      if (value === undefined) continue;
-
-      if (['c', 'e', 'p'].indexOf(key) >= 0 && value === 0) {
-        delete filterObj[key];
-      } else if (typeof value === 'string' && value === '') {
-        delete filterObj[key];
-      } else if (key === 'contestant-with-guests') {
-        if (Number(value) > 0) {
-          filterObj.$or = [
-            { u: Number(value) },
-            { 'hs.u': Number(value) }
-          ];
-        }
-        delete filterObj['contestant-with-guests'];
-      } else if (key === 'profiles') {
-        if (Array.isArray(value) && value.length > 0) {
-          filterObj.p = { $in: [].concat(value) };
-        }
-        delete filterObj.profiles;
-      } else if (key === 'items') {
-        if (Array.isArray(value) && value.length > 0) {
-          filterObj['fees.f'] = { $in: [].concat(value) };
-        }
-        delete filterObj.items;
-      } else if (key === 'subclasses') {
-        if (Array.isArray(value) && value.length > 0) {
-          filterObj.$or = value.map((pair) =>
-            ({ $and: [{ 'fees.f': Number(pair[0]) }, { 'fees.op.o': Number(pair[1]) }] })
-          );
-        }
-        delete filterObj.subclasses;
-      } else if (key === 'fieldoptions') {
-        if (Array.isArray(value) && value.length > 0) {
-          filterObj['ce.o'] = { $in: [].concat(value) };
-        }
-        delete filterObj.fieldoptions;
-      } else if (key === 'fs') {
-        filterObj.fs = Number(value) === 1 ? 1 : { $ne: 1 };
-      } else if (typeof value === 'string') {
-        const escaped = value.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
-        const regex = new RegExp(escaped, 'i');
-        const numeric = Number(value);
-        if (key === 'keyword') {
-          filterObj.$or = [
-            { pn: regex },
-            { uc: regex },
-            { uf: regex },
-            { ul: regex }
-          ];
-          delete filterObj.keyword;
-        } else if (key === 'dash') {
-          onlyRegComplete = false;
-          filterObj.$or = [
-            { ue: regex },
-            { uc: regex },
-            { uf: regex },
-            { ul: regex },
-            { 'gu.gf': regex },
-            { 'gu.gl': regex },
-            { 'rb.uf': regex },
-            { 'rb.ul': regex }
-          ];
-          if (numeric) filterObj.$or.push({ c: Number(numeric) });
-          delete filterObj.dash;
-        } else {
-          filterObj[key] = regex;
-        }
-      }
-    }
-    if (onlyRegComplete) {
-      filterObj.rc = 1;
-    }
-    return filterObj;
-  }
-
-  /**
    * Column sets for different resultsets
    */
   getColumnSets() {
@@ -162,6 +70,110 @@ class AttendeeService {
     };
   }
 
+  async prepAttendeeFilter(filterObj) {
+    let
+      regex = "",
+      numeric = 0,
+      sc = 0,
+      onlyRegComplete = true;
+
+    for (var key in filterObj) {
+      if (filterObj.hasOwnProperty(key)) {
+
+        if (["c", "e", "p"].indexOf(key) >= 0 && filterObj[key] === 0) {
+          delete filterObj[key];
+
+        } else if (typeof filterObj[key] === "string" && filterObj[key] === "") {
+          delete filterObj[key];
+
+        } else if (key === "contestant-with-guests") {
+          if (Number(filterObj[key]) > 0) {
+            filterObj["$or"] = [
+              { "u": Number(filterObj[key]) },
+              { "hs.u": Number(filterObj[key]) }
+            ];
+          }
+          delete filterObj["contestant-with-guests"];
+
+        } else if (key === "profiles") {
+          if (filterObj[key].length > 0) {
+            filterObj["p"] = { "$in": [].concat(filterObj[key]) };
+          }
+          delete filterObj["profiles"];
+
+        } else if (key === "items") {
+          if (filterObj[key].length > 0) {
+            filterObj["fees.f"] = { "$in": [].concat(filterObj[key]) };
+          }
+          delete filterObj["items"];
+
+        } else if (key === "subclasses") {
+          if (filterObj[key].length > 0) {
+            filterObj["$or"] = [];
+            for (sc = 0; sc < filterObj[key].length; sc++) {
+              filterObj["$or"].push(
+                { "$and": [{ "fees.f": Number(filterObj[key][sc][0]) }, { "fees.op.o": Number(filterObj[key][sc][1]) }] }
+              );
+            }
+          }
+          delete filterObj["subclasses"];
+
+        } else if (key === "fieldoptions") {
+          if (filterObj[key].length > 0) {
+            filterObj["ce.o"] = { "$in": [].concat(filterObj[key]) };
+          }
+          delete filterObj["fieldoptions"];
+
+        } else if (key === "fs") {
+          if (Number(filterObj[key]) === 1) {
+            filterObj["fs"] = 1;
+          } else {
+            filterObj["fs"] = { "$ne": 1 };
+          }
+
+        } else if (typeof filterObj[key] === "string") {
+          regex = new RegExp(filterObj[key].replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&'), "i");
+          numeric = Number(filterObj[key]);
+          filterObj[key] = regex;
+
+          if (key === "keyword") {
+            filterObj["$or"] = [
+              { "pn": regex },
+              { "uc": regex },
+              { "uf": regex },
+              { "ul": regex }
+            ];
+            delete filterObj["keyword"];
+          }
+
+          if (key === "dash") {
+            onlyRegComplete = false;
+            filterObj["$or"] = [
+              { "ue": regex },
+              { "uc": regex },
+              { "uf": regex },
+              { "ul": regex },
+              { "gu.gf": regex },
+              { "gu.gl": regex },
+              { "rb.uf": regex },
+              { "rb.ul": regex }
+            ];
+            if (numeric) {
+              filterObj["$or"].push({ "c": Number(numeric) });
+            }
+            delete filterObj["dash"];
+          }
+        }
+      }
+    }
+
+    if (onlyRegComplete) {
+      filterObj["rc"] = 1;
+    }
+
+    return filterObj;
+  }
+
   /**
    * Find attendees with filters
    */
@@ -172,24 +184,17 @@ class AttendeeService {
       if (Array.isArray(body) && body.length > 0) {
         body = body[0];
       }
-      if (!body || typeof body !== 'object') {
-        body = {};
-      }
-      // Default resultset and filter when empty (e.g. GET /attendee/es with no query, or POST with empty body)
-      const { filter, resultset, columns, limit: limitParam } = {
-        resultset: 'grouptool',
-        filter: {},
-        ...body
-      };
+      
+      const { filter, resultset, columns, limit: limitParam } = body || {};
       // Check request.vert (set by requireVertical), pathParameters, then headers
       const vert = request.vert || request.pathParameters?.vert || request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
       
-      console.log(`[AttendeeService] findAttendees called with body:`, JSON.stringify(body));
-      console.log(`[AttendeeService] filter:`, JSON.stringify(filter));
-      console.log(`[AttendeeService] resultset:`, resultset);
-      
       if (!vert) {
         throw new Error('Vertical is required');
+      }
+
+      if (!resultset) {
+        throw new Error('Resultset is required in request body');
       }
 
       const db = await getDatabase(null, vert);
@@ -231,50 +236,16 @@ class AttendeeService {
         finalColumns.cmpy = 1;
       }
 
-      // Get limit from filter if present (before prep)
+      // Get limit from filter if present
       let limit = limitParam;
-      const filterCopy = filter && typeof filter === 'object'
-        ? JSON.parse(JSON.stringify(filter))
-        : {};
+      const filterCopy = filter ? { ...filter } : {};
       if (filterCopy && filterCopy.hasOwnProperty('limit')) {
         limit = filterCopy.limit;
         delete filterCopy.limit;
       }
 
-      // Match Mantle: run prepAttendeeFilter on the payload filter (transforms contestant-with-guests,
-      // profiles, items, subclasses, fieldoptions, fs, keyword, dash, string→regex, adds rc=1)
-      let mongoFilter = await this.prepAttendeeFilter(filterCopy);
-
-      // API compatibility: event ID (e) match both number and string in MongoDB
-      if (mongoFilter.hasOwnProperty('e') && mongoFilter.e != null) {
-        const numVal = Number(mongoFilter.e);
-        mongoFilter.e = { $in: [numVal, String(numVal)] };
-      }
-
-      // API compatibility: _id.g: 0 match either 0 or missing field (Mantle passes _id.g: 0 directly)
-      if (mongoFilter.hasOwnProperty('_id.g') && mongoFilter['_id.g'] === 0) {
-        const baseFilter = { ...mongoFilter };
-        delete baseFilter['_id.g'];
-        mongoFilter = {
-          $or: [
-            { ...baseFilter, '_id.g': 0 },
-            { ...baseFilter, '_id.g': { $exists: false } }
-          ]
-        };
-      }
-
-      console.log(`[AttendeeService] ===== FILTER DEBUG =====`);
-      console.log(`[AttendeeService] Original filter:`, JSON.stringify(filter, null, 2));
-      console.log(`[AttendeeService] Processed mongoFilter:`, JSON.stringify(mongoFilter, null, 2));
-      console.log(`[AttendeeService] rc in original filter:`, filter?.rc);
-      console.log(`[AttendeeService] rc in mongoFilter:`, mongoFilter.rc || (mongoFilter.$or && mongoFilter.$or[0] && mongoFilter.$or[0].rc) || 'not set');
-      console.log(`[AttendeeService] p in original filter:`, filter?.p);
-      console.log(`[AttendeeService] _id.g in original filter:`, filter?.['_id.g'] || filter?.['_id']?.g);
-      console.log(`[AttendeeService] Query limit:`, limit);
-      console.log(`[AttendeeService] Using vertical:`, vert);
-      console.log(`[AttendeeService] Database name:`, db.databaseName);
-      console.log(`[AttendeeService] Collection name: attendees`);
-      console.log(`[AttendeeService] Sort:`, JSON.stringify(columnSet.sort));
+      // Build MongoDB filter
+      const mongoFilter = await this.prepAttendeeFilter(filterCopy);
 
       // Find attendees
       let query = attendeesCollection.find(mongoFilter || {}, { projection: finalColumns });
@@ -286,69 +257,6 @@ class AttendeeService {
       const attendees = await query
         .sort(columnSet.sort)
         .toArray();
-
-      console.log(`[AttendeeService] Found ${attendees.length} attendees with full filter`);
-      console.log(`[AttendeeService] First 3 attendees (c, u, ul, uf, rc):`, 
-        attendees.slice(0, 3).map(a => ({ c: a.c, u: a.u, ul: a.ul, uf: a.uf, rc: a.rc })));
-      
-      // Debug: Check total count with just event filter (no rc, _id.g, etc.)
-      // Extract event filter from mongoFilter (could be in $or or directly)
-      let eventFilter = null;
-      if (mongoFilter.e) {
-        eventFilter = mongoFilter.e;
-      } else if (mongoFilter.$or && mongoFilter.$or[0] && mongoFilter.$or[0].e) {
-        eventFilter = mongoFilter.$or[0].e;
-      } else if (filter && filter.e) {
-        eventFilter = { $in: [Number(filter.e), String(filter.e)] };
-      }
-      
-      if (eventFilter) {
-        // Handle $in format for event filter
-        const simpleEventFilter = typeof eventFilter === 'object' && eventFilter.$in 
-          ? { e: { $in: eventFilter.$in } }
-          : { e: eventFilter };
-        
-        const totalCount = await attendeesCollection.countDocuments(simpleEventFilter);
-        console.log(`[AttendeeService] Total attendees for event (no other filters): ${totalCount}`);
-        
-        // Also check with just event + rc filter
-        const rcValue = mongoFilter.rc || (mongoFilter.$or && mongoFilter.$or[0] && mongoFilter.$or[0].rc) || (filter && filter.rc);
-        if (rcValue !== undefined) {
-          const rcFilter = { ...simpleEventFilter, rc: rcValue };
-          const rcCount = await attendeesCollection.countDocuments(rcFilter);
-          console.log(`[AttendeeService] Attendees with event + rc=${rcValue}: ${rcCount}`);
-          
-          // Check attendees without rc filter
-          const noRcCount = await attendeesCollection.countDocuments(simpleEventFilter);
-          console.log(`[AttendeeService] Attendees with event but rc != ${rcValue} or missing: ${totalCount - rcCount}`);
-          
-          // Check with event + rc + _id.g: 0 (or missing) but no p filter
-          const idGFilter = { ...rcFilter };
-          const idGOr = [
-            { ...idGFilter, '_id.g': 0 },
-            { ...idGFilter, '_id.g': { $exists: false } }
-          ];
-          const idGCount = await attendeesCollection.countDocuments({ $or: idGOr });
-          console.log(`[AttendeeService] Attendees with event + rc=${rcValue} + (_id.g=0 OR missing): ${idGCount}`);
-        }
-        
-        // Get a sample of recent attendees to see their field values
-        const recentAttendees = await attendeesCollection
-          .find(simpleEventFilter)
-          .sort({ rt: -1 }) // Sort by registration time descending
-          .limit(5)
-          .toArray();
-        console.log(`[AttendeeService] Sample of 5 most recent attendees (showing rc, _id.g, p fields):`);
-        recentAttendees.forEach((att, idx) => {
-          console.log(`  [${idx + 1}] c: ${att.c}, u: ${att.u}, rc: ${att.rc}, _id.g: ${att._id?.g}, p: ${att.p}, rt: ${att.rt}`);
-        });
-        
-        // Check specifically for records with rc: 0
-        const rcZeroCount = await attendeesCollection.countDocuments({ ...simpleEventFilter, rc: 0 });
-        const rcOneCount = await attendeesCollection.countDocuments({ ...simpleEventFilter, rc: 1 });
-        const rcMissingCount = await attendeesCollection.countDocuments({ ...simpleEventFilter, rc: { $exists: false } });
-        console.log(`[AttendeeService] Attendees with rc=0: ${rcZeroCount}, rc=1: ${rcOneCount}, rc missing: ${rcMissingCount}`);
-      }
 
       // Always return an array, even if empty
       return Array.isArray(attendees) ? attendees : [];
@@ -371,10 +279,6 @@ class AttendeeService {
       
       // First get the base attendees
       let attendees = await this.findAttendees(request);
-      
-      console.log(`[AttendeeService] findAndPivotAttendees: Got ${attendees.length} attendees from findAttendees`);
-      console.log(`[AttendeeService] First 3 attendees before pivot (c, u, ul, uf):`, 
-        attendees.slice(0, 3).map(a => ({ c: a.c, u: a.u, ul: a.ul, uf: a.uf })));
       
       let eventData = {};
       let zoneData = {};
@@ -618,8 +522,6 @@ class AttendeeService {
         try {
           const userBios = await getBiosByEventID(filter.e, vert);
           
-          console.log(`[AttendeeService] Fetched ${userBios?.length || 0} bios for event ${filter.e}`);
-          
           if (userBios && Array.isArray(userBios) && userBios.length > 0) {
             // Create a lookup map for faster matching (handle both Number and String u values)
             const bioMap = new Map();
@@ -640,8 +542,6 @@ class AttendeeService {
               }
             });
             
-            console.log(`[AttendeeService] Found ${biosWithUbio} bios with ubio field`);
-            
             // Match attendees to bios
             let matchedCount = 0;
             attendees.forEach((attendee, index) => {
@@ -657,17 +557,12 @@ class AttendeeService {
               }
             });
             
-            console.log(`[AttendeeService] Added ub to ${matchedCount} of ${attendees.length} attendees`);
-          } else {
-            console.log(`[AttendeeService] No bios returned for event ${filter.e}`);
           }
         } catch (error) {
           // Log but don't fail if bios can't be fetched
           console.warn('Error fetching user bios:', error.message);
           console.warn('Error stack:', error.stack);
         }
-      } else {
-        console.log(`[AttendeeService] No event filter (filter.e) provided, skipping ub field`);
       }
 
       // OLD CODE BEHAVIOR: Don't re-sort after pivoting - preserve the original MongoDB sort order
@@ -767,7 +662,6 @@ class AttendeeService {
       const db = await getDatabase(null, vert);
       const attendeesCollection = db.collection('attendees');
       const usersCollection = db.collection('users');
-      const eventsCollection = db.collection('events');
 
       const fi = Number(fieldID);
       const o = Number(optionID || 0);
