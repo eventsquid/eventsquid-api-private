@@ -32,6 +32,16 @@ function isDeployed() {
 }
 
 /**
+ * Whether this Lambda container is serving the dev stage.
+ * The dev API Gateway stage tracks $LATEST; the v1 stage tracks the `live` alias
+ * (a numeric published version). AWS_LAMBDA_FUNCTION_VERSION is the per-container
+ * signal that distinguishes them.
+ */
+function isDevStage() {
+  return process.env.AWS_LAMBDA_FUNCTION_VERSION === '$LATEST';
+}
+
+/**
  * Get MSSQL connection credentials from environment variable or Secrets Manager
  */
 async function getMssqlCredentials() {
@@ -101,18 +111,27 @@ async function getMssqlCredentials() {
     const response = await secretsClient.send(command);
     
     const secret = JSON.parse(response.SecretString);
-    
-    // Extract credentials from key/value secret
-    const username = secret.username || secret.userName || secret.user;
-    const password = secret.password || secret.pwd;
-    const host = secret.host || secret.server;
-    const port = secret.port || 1433;
-    const database = secret.database || secret.db;
-    
+
+    // On the dev stage ($LATEST), use the dev* keys and hard-fail if any are missing.
+    // Port and database are reused from the prod-shaped keys unless dev variants are set.
+    const dev = isDevStage();
+    const username = dev ? secret.devUsername : (secret.username || secret.userName || secret.user);
+    const password = dev ? secret.devPassword : (secret.password || secret.pwd);
+    const host = dev ? secret.devHost : (secret.host || secret.server);
+    const port = (dev && secret.devPort) || secret.port || 1433;
+    const database = (dev && secret.devDatabase) || secret.database || secret.db;
+
+    if (dev && (!username || !password || !host)) {
+      throw new Error(
+        'MSSQL secret missing devUsername/devPassword/devHost — refusing to fall back to prod credentials. ' +
+        'Add the dev* keys to the secret for the dev stage.'
+      );
+    }
+
     if (!username || !password || !host) {
       throw new Error('Missing required MSSQL credentials: username, password, or host');
     }
-    
+
     return {
       username,
       password,

@@ -42,6 +42,44 @@ function extractMongoDbName(connStr) {
 }
 
 /**
+ * Whether this Lambda container is serving the dev stage.
+ * The dev API Gateway stage tracks $LATEST; the v1 stage tracks the `live` alias
+ * (a numeric published version). AWS_LAMBDA_FUNCTION_VERSION is the per-container
+ * signal that distinguishes them. Locally this is unset, so isDev is false and
+ * the prod-shaped keys are used (local dev never reaches the secret-fetch paths).
+ */
+export function isDevStage() {
+  return process.env.AWS_LAMBDA_FUNCTION_VERSION === '$LATEST';
+}
+
+/**
+ * Pick the right MongoDB connection string from a parsed secret payload.
+ * On the dev stage, requires `devConnectionString` and hard-fails if it is
+ * missing — never silently falls back to the prod connection string.
+ * @param {Object} secret - Parsed Secrets Manager JSON
+ * @param {string} [fallbackDbName='eventsquid'] - DB name to embed when constructing from parts
+ * @returns {string} MongoDB connection string
+ */
+function pickMongoConnectionString(secret, fallbackDbName = 'eventsquid') {
+  if (isDevStage()) {
+    if (!secret.devConnectionString) {
+      throw new Error(
+        'MongoDB secret missing "devConnectionString" — refusing to fall back to prod. ' +
+        'Add a devConnectionString key to the secret for the dev stage.'
+      );
+    }
+    return secret.devConnectionString;
+  }
+
+  if (secret.connectionString) return secret.connectionString;
+  if (secret.uri) return secret.uri;
+  if (secret.mongodb_uri) return secret.mongodb_uri;
+
+  const { host, port, database, username, password } = secret;
+  return `mongodb://${username}:${password}@${host}:${port || 27017}/${database || fallbackDbName}?authSource=admin`;
+}
+
+/**
  * Get MongoDB connection string from Secrets Manager or environment variable
  * @param {string} dbName - Database name (e.g., 'cm' for common database)
  */
@@ -84,26 +122,21 @@ async function getMongoConnectionString(dbName = null) {
     
     // The secret may be a JSON object or a plain string (connection string)
     let secretValue = response.SecretString;
-    
+
     // Try to parse as JSON first
     try {
       const secret = JSON.parse(secretValue);
-      
-      // MongoDB secrets are key/value pairs with connectionString as the key
-      if (secret.connectionString) {
-        return secret.connectionString;
-      } else if (secret.uri) {
-        return secret.uri;
-      } else if (secret.mongodb_uri) {
-        return secret.mongodb_uri;
-      } else {
-        // Construct from individual components
-        const { host, port, database, username, password } = secret;
-        return `mongodb://${username}:${password}@${host}:${port || 27017}/${database}?authSource=admin`;
-      }
+      return pickMongoConnectionString(secret);
     } catch (parseError) {
       // If parsing fails, assume the secret is the connection string directly
       // This handles cases where the secret is stored as: mongodb+srv://...
+      // Plain-string secrets can't carry a separate dev value — refuse on dev stage.
+      if (isDevStage()) {
+        throw new Error(
+          'MongoDB secret is a plain connection string — cannot resolve a dev variant. ' +
+          'Convert the secret to JSON with connectionString and devConnectionString keys.'
+        );
+      }
       return secretValue;
     }
   } catch (error) {
@@ -292,26 +325,22 @@ export async function connectToMongoByVertical(vert) {
     
     // The secret may be a JSON object or a plain string (connection string)
     let secretValue = response.SecretString;
-    
+
     // Try to parse as JSON first
     let connectionString;
     try {
       const secret = JSON.parse(secretValue);
-      
-      // MongoDB secrets are key/value pairs with connectionString as the key
-      if (secret.connectionString) {
-        connectionString = secret.connectionString;
-      } else if (secret.uri) {
-        connectionString = secret.uri;
-      } else if (secret.mongodb_uri) {
-        connectionString = secret.mongodb_uri;
-      } else {
-        const { host, port, database, username, password } = secret;
-        connectionString = `mongodb://${username}:${password}@${host}:${port || 27017}/${database}?authSource=admin`;
-      }
+      connectionString = pickMongoConnectionString(secret);
     } catch (parseError) {
       // If parsing fails, assume the secret is the connection string directly
       // This handles cases where the secret is stored as: mongodb+srv://...
+      // Plain-string secrets can't carry a separate dev value — refuse on dev stage.
+      if (isDevStage()) {
+        throw new Error(
+          `MongoDB secret ${secretName} is a plain connection string — cannot resolve a dev variant. ` +
+          'Convert the secret to JSON with connectionString and devConnectionString keys.'
+        );
+      }
       connectionString = secretValue;
     }
 
@@ -466,9 +495,17 @@ export async function getDatabase(dbName = null, vert = null) {
               let secretValue = response.SecretString;
               try {
                 const secret = JSON.parse(secretValue);
-                cmConnectionString = secret.connectionString || secret.uri || secret.mongodb_uri ||
-                  `mongodb://${secret.username}:${secret.password}@${secret.host}:${secret.port || 27017}/${secret.database || 'cm'}?authSource=admin`;
-              } catch {
+                cmConnectionString = pickMongoConnectionString(secret, 'cm');
+              } catch (parseError) {
+                // pickMongoConnectionString throws on dev stage when devConnectionString is missing
+                if (parseError.message?.includes('devConnectionString')) throw parseError;
+                // Otherwise the secret is a plain connection string — refuse on dev stage
+                if (isDevStage()) {
+                  throw new Error(
+                    `MongoDB secret ${cmSecretName} is a plain connection string — cannot resolve a dev variant. ` +
+                    'Convert the secret to JSON with connectionString and devConnectionString keys.'
+                  );
+                }
                 cmConnectionString = secretValue;
               }
             }
