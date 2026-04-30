@@ -61,3 +61,27 @@ Retrieve the full list from the migration audit notes or by diffing Mantle's `se
 There is a `// TODO` comment in `ReportService.js` where a call to `EventService.updateEventConfig` has been commented out. The method does not exist in Lambda's `EventService`. Decide whether to:
 - Port `updateEventConfig` from Mantle and wire it back in, or
 - Confirm the report flow no longer needs it and delete the TODO comment
+
+---
+
+## 8. Switch SQL string interpolation to parameterized queries
+
+**Files:**
+- `src/services/EventService.js` — `getTouchEventQueries` (`safeS3`, `safeSite`)
+- `src/services/AttendeeService.js` — `updateAttendeeEventDocs` (`safeS3`, `safeDomain`)
+
+These methods read `s3RootURL`, `siteURL`, and `domain` from `request.body` and concatenate them into SQL string literals like `'${safeS3}/' + uu.filenameS3`. The current fix escapes single quotes (`'` → `''`) to neutralize string-literal terminators — adequate as a quick safety net but not the proper solution.
+
+The proper fix is to bind these as parameters and concatenate inside SQL:
+
+```sql
+-- Before (string interpolation, escaped):
+'${safeS3}/' + uu.filenameS3
+
+-- After (parameter binding):
+@s3RootURL + '/' + uu.filenameS3
+```
+
+with `request.input('s3RootURL', sql.NVarChar, s3RootURL)` on the JS side. Removes the need for the `safe*` escape variables and eliminates the injection vector entirely.
+
+This is a low-risk refactor — both methods are already inside `try/catch` blocks and have integration coverage via the touch-event and attendee-docs flows. Track here so the temporary escape isn't forgotten.

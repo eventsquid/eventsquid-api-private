@@ -756,10 +756,16 @@ class AttendeeService {
       const { contestantID } = request.pathParameters || {};
       const { s3RootURL, domain } = request.body || {};
       const vert = request.headers?.['vert'] || request.headers?.['Vert'] || request.headers?.['VERT'];
-      
+
       if (!contestantID || !vert) {
         throw new Error('Contestant ID and vertical are required');
       }
+
+      // s3RootURL and domain come from request.body and are interpolated into SQL
+      // string literals below. Escape single quotes to prevent injection.
+      // TODO: switch these to parameterized queries (see docs/post-migration-cleanup.md).
+      const safeS3 = String(s3RootURL || '').replace(/'/g, "''");
+      const safeDomain = String(domain || '').replace(/'/g, "''");
 
       const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
       const sql = await getConnection(vert);
@@ -780,13 +786,13 @@ class AttendeeService {
                 NULL
             END AS [f3],
             CASE WHEN( ISNULL( uu.filenameS3, '' ) != '' AND LEFT( uu.filenameS3, 7 ) != 'Invalid' ) THEN
-                '${s3RootURL || ''}/' + uu.filenameS3
+                '${safeS3}/' + uu.filenameS3
             WHEN ( LEFT( uu.filename, 3 ) = 'kei' ) THEN
-                'https://kei.${domain || ''}/s3c/' + uu.filename
+                'https://kei.${safeDomain}/s3c/' + uu.filename
             WHEN ( LEFT( uu.filename, 3 ) = 'squid1' ) THEN
-                'https://squid1.${domain || ''}/s3c/' + uu.filename
+                'https://squid1.${safeDomain}/s3c/' + uu.filename
             WHEN ( LEFT( uu.filename, 3 ) = 'squid2' ) THEN
-                'https://squid2.${domain || ''}/s3c/' + uu.filename
+                'https://squid2.${safeDomain}/s3c/' + uu.filename
             ELSE
                 NULL
             END AS [upu],
@@ -795,7 +801,7 @@ class AttendeeService {
             uu.uploadDate AS [udt],
             uu.uploadDate AS [udi],
             CASE WHEN( ISNULL( uu.thumbS3, '' ) != '' AND LEFT( uu.thumbS3, 7 ) != 'Invalid' ) THEN
-                '${s3RootURL || ''}/' + uu.thumbS3
+                '${safeS3}/' + uu.thumbS3
             ELSE
                 NULL
             END AS [thu],

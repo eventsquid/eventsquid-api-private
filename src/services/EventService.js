@@ -1637,6 +1637,12 @@ class EventService {
    * This method queries all relevant tables to build a complete event document
    */
   async getTouchEventQueries(eventID, vert, connection, dbName, s3RootURL, siteURL) {
+    // s3RootURL and siteURL come from request.body and are interpolated into SQL
+    // string literals below. Escape single quotes to prevent injection.
+    // TODO: switch these to parameterized queries (see docs/post-migration-cleanup.md).
+    const safeS3 = String(s3RootURL || '').replace(/'/g, "''");
+    const safeSite = String(siteURL || '').replace(/'/g, "''");
+
     const sql = await getConnection(vert);
     const request1 = new sql.Request();
     request1.input('eventID', sql.Int, Number(eventID));
@@ -1724,7 +1730,7 @@ class EventService {
                   CASE WHEN ( LEFT( ISNULL( NULLIF(e.EventlogoS3, ''), '' ), 5 ) = 'https' )
                       THEN e.EventlogoS3
                   ELSE
-                      '${s3RootURL}/' + e.EventlogoS3
+                      '${safeS3}/' + e.EventlogoS3
                   END
           END AS el3,
           e.firstPublished AS fpb,
@@ -1749,20 +1755,20 @@ class EventService {
                       CASE WHEN ( ISNULL(NULLIF(e.newEventBanner, ''), '') = '')
                           THEN NULL
                       ELSE
-                          'http://${siteURL}/eventBanners/' + e.newEventBanner
+                          'http://${safeSite}/eventBanners/' + e.newEventBanner
                       END
               ELSE
                   CASE WHEN (LEFT( ISNULL( NULLIF(e.newEventBannerS3, ''), ''), 5 ) = 'https')
                       THEN e.newEventBannerS3
                   ELSE
-                      '${s3RootURL}/' + e.newEventBannerS3
+                      '${safeS3}/' + e.newEventBannerS3
                   END
           END AS eb3,
           CASE
               WHEN ( LEFT( ISNULL( e.regBackgroundS3, '' ), 5 ) = 'https' )
                   THEN e.regBackgroundS3
               ELSE
-                  '${s3RootURL}/' + e.regBackgroundS3
+                  '${safeS3}/' + e.regBackgroundS3
           END AS rb3,
           e.payMethodEvent AS cpd,
           e.payMethodEventVendor AS vpd,
