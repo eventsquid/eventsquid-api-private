@@ -182,19 +182,15 @@ export async function connectToMssql() {
   connectionPromise = (async () => {
     try {
       const credentials = await getMssqlCredentials();
-      
-      // Debug: Log credentials (without password) in local dev
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`📋 MSSQL Credentials: host=${credentials.host}, port=${credentials.port}, database=${credentials.database}, username=${credentials.username ? '***' : 'MISSING!'}`);
-        if (!credentials.username || !credentials.password) {
-          throw new Error(`MSSQL credentials incomplete: username=${!!credentials.username}, password=${!!credentials.password}`);
-        }
+
+      if (process.env.NODE_ENV === 'development' && (!credentials.username || !credentials.password)) {
+        throw new Error(`MSSQL credentials incomplete: username=${!!credentials.username}, password=${!!credentials.password}`);
       }
 
       // Build config matching working Lambda pattern
       const isLocalDev = process.env.NODE_ENV === 'development';
       const isDeployedEnv = isDeployed();
-      
+
       // AWS RDS requires SSL but certificate validation may fail without proper CA certificates
       // trustServerCertificate: true allows RDS certificates to be accepted
       // This is safe for AWS RDS as the connection is still encrypted (encrypt: true)
@@ -218,24 +214,11 @@ export async function connectToMssql() {
           idleTimeoutMillis: 30000
         }
       };
-      
-      // Debug: Log the actual config being used (without password)
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`🔧 MSSQL Config: server=${config.server}, port=${config.port}, database=${config.database}`);
-        console.log(`   user=${config.user ? '***' : 'MISSING!'}`);
-        console.log(`   SSL: encrypt=${config.options.encrypt}, trustServerCertificate=${config.options.trustServerCertificate}`);
-      } else if (isDeployedEnv) {
-        // Log SSL config in AWS for debugging
-        console.log(`🔧 MSSQL Config (AWS): server=${config.server}, port=${config.port}, database=${config.database}`);
-        console.log(`   SSL: encrypt=${config.options.encrypt}, trustServerCertificate=${config.options.trustServerCertificate}`);
-      }
 
       // Connect using mssql package (handles pooling automatically)
       // sql.connect() returns a ConnectionPool promise
-      console.log('🔄 Connecting to MSSQL...');
       connectionPool = await sql.connect(config);
-      console.log('✅ Successfully connected to MSSQL');
-      
+
       connectionPromise = null;
       return sql;
     } catch (error) {
@@ -282,7 +265,6 @@ export async function closeMssqlConnection() {
     try {
       await connectionPool.close();
       connectionPool = null;
-      console.log('MSSQL connection pool closed');
     } catch (error) {
       console.error('Error closing MSSQL connection pool:', error);
     }

@@ -125,10 +125,8 @@ async function getMongoConnectionString(dbName = null) {
   const secretName = process.env.MONGO_SECRET_NAME || 'mongodb/eventsquid';
 
   try {
-    console.log(`Attempting to retrieve MongoDB secret: ${secretName}`);
     const command = new GetSecretValueCommand({ SecretId: secretName });
-    console.log(`Sending GetSecretValueCommand for secret: ${secretName}`);
-    
+
     // Add timeout wrapper for Secrets Manager call (15 seconds)
     const secretPromise = secretsClient.send(command);
     const timeoutPromise = new Promise((_, reject) => {
@@ -136,10 +134,9 @@ async function getMongoConnectionString(dbName = null) {
         reject(new Error(`Secrets Manager API call timeout after 15s for secret: ${secretName}`));
       }, 15000);
     });
-    
+
     const response = await Promise.race([secretPromise, timeoutPromise]);
-    console.log(`Successfully retrieved secret: ${secretName}`);
-    
+
     // The secret may be a JSON object or a plain string (connection string)
     let secretValue = response.SecretString;
 
@@ -197,10 +194,8 @@ export async function connectToMongo() {
 
   connectionPromise = (async () => {
     try {
-      console.log('Connecting to MongoDB using default connection...');
       const connectionString = await getMongoConnectionString();
-      console.log('Retrieved MongoDB connection string (length:', connectionString.length, '), attempting connection...');
-      
+
       const options = {
         maxPoolSize: 10,
         minPoolSize: 2,
@@ -209,16 +204,8 @@ export async function connectToMongo() {
         connectTimeoutMS: isDeployed() ? 10000 : (process.env.NODE_ENV === 'development' ? 10000 : 5000), // Reduced for deployed
       };
 
-      console.log('Creating MongoClient with options:', JSON.stringify({
-        maxPoolSize: options.maxPoolSize,
-        serverSelectionTimeoutMS: options.serverSelectionTimeoutMS,
-        socketTimeoutMS: options.socketTimeoutMS,
-        connectTimeoutMS: options.connectTimeoutMS
-      }));
-      
       mongoClient = new MongoClient(connectionString, options);
-      console.log('MongoClient created, calling connect()...');
-      
+
       // Add a timeout wrapper to ensure we don't hang forever (use 20s total to stay under Lambda timeout)
       const connectPromise = mongoClient.connect();
       const timeoutMs = 20000; // 20 seconds total timeout
@@ -227,10 +214,9 @@ export async function connectToMongo() {
           reject(new Error(`MongoDB connection timeout after ${timeoutMs}ms`));
         }, timeoutMs);
       });
-      
+
       await Promise.race([connectPromise, connectTimeoutPromise]);
-      
-      console.log('Successfully connected to MongoDB');
+
       connectionPromise = null;
       return mongoClient;
     } catch (error) {
@@ -311,9 +297,8 @@ export async function connectToMongoByVertical(vert) {
 
     const client = new MongoClient(process.env.MONGO_CONNECTION_STRING, options);
     await client.connect();
-    
+
     mongoClients[normalizedVert] = client;
-    console.log(`Successfully connected to MongoDB for vertical: ${normalizedVert}`);
     return client;
   }
 
@@ -328,10 +313,8 @@ export async function connectToMongoByVertical(vert) {
                     'mongodb/eventsquid';
 
   try {
-    console.log(`Attempting to retrieve MongoDB secret: ${secretName} for vertical: ${normalizedVert}`);
     const command = new GetSecretValueCommand({ SecretId: secretName });
-    console.log(`Sending GetSecretValueCommand for secret: ${secretName} (vertical: ${normalizedVert})`);
-    
+
     // Add timeout wrapper for Secrets Manager call (15 seconds)
     const secretPromise = secretsClient.send(command);
     const timeoutPromise = new Promise((_, reject) => {
@@ -339,10 +322,9 @@ export async function connectToMongoByVertical(vert) {
         reject(new Error(`Secrets Manager API call timeout after 15s for secret: ${secretName}`));
       }, 15000);
     });
-    
+
     const response = await Promise.race([secretPromise, timeoutPromise]);
-    console.log(`Successfully retrieved secret: ${secretName} for vertical: ${normalizedVert}`);
-    
+
     // The secret may be a JSON object or a plain string (connection string)
     let secretValue = response.SecretString;
 
@@ -364,7 +346,6 @@ export async function connectToMongoByVertical(vert) {
       connectionString = secretValue;
     }
 
-    console.log(`Retrieved MongoDB secret for ${normalizedVert} (connection string length: ${connectionString.length}), attempting connection...`);
     const options = {
       maxPoolSize: 10,
       minPoolSize: 2,
@@ -373,16 +354,8 @@ export async function connectToMongoByVertical(vert) {
       connectTimeoutMS: isDeployed() ? 10000 : 5000, // Reduced for deployed
     };
 
-    console.log(`Creating MongoClient for vertical ${normalizedVert} with options:`, JSON.stringify({
-      maxPoolSize: options.maxPoolSize,
-      serverSelectionTimeoutMS: options.serverSelectionTimeoutMS,
-      socketTimeoutMS: options.socketTimeoutMS,
-      connectTimeoutMS: options.connectTimeoutMS
-    }));
-    
     const client = new MongoClient(connectionString, options);
-    console.log(`MongoClient created for ${normalizedVert}, calling connect()...`);
-    
+
     // Add a timeout wrapper to ensure we don't hang forever (use 20s total to stay under Lambda timeout)
     const connectPromise = client.connect();
     const timeoutMs = 20000; // 20 seconds total timeout
@@ -391,11 +364,10 @@ export async function connectToMongoByVertical(vert) {
         reject(new Error(`MongoDB connection timeout for vertical ${normalizedVert} after ${timeoutMs}ms`));
       }, timeoutMs);
     });
-    
+
     await Promise.race([connectPromise, connectTimeoutPromise]);
-    
+
     mongoClients[normalizedVert] = client;
-    console.log(`Successfully connected to MongoDB for vertical: ${normalizedVert}`);
     return client;
   } catch (error) {
     console.error(`Error connecting to MongoDB for vertical ${normalizedVert} (secret: ${secretName}):`, error.message);
@@ -452,24 +424,22 @@ export async function getDatabase(dbName = null, vert = null) {
         const commonClient = new MongoClient(commonConnectionString, options);
         await commonClient.connect();
         mongoClients['cm'] = commonClient;
-        console.log('Successfully connected to MongoDB common database');
       }
-      
+
       // Extract database name from connection string - use that, not hardcoded 'cm'
       const dbMatch = commonConnectionString.match(/\/([^\/\?]+)(\?|$)/);
       const dbNameFromConnection = dbMatch ? dbMatch[1] : 'cm';
-      const dbNameToUse = dbNameFromConnection !== 'unknown' && dbNameFromConnection !== '' 
-        ? dbNameFromConnection 
+      const dbNameToUse = dbNameFromConnection !== 'unknown' && dbNameFromConnection !== ''
+        ? dbNameFromConnection
         : 'cm';
-      
+
       console.log(`[getDatabase] Local dev: Using database ${dbNameToUse} from connection string`);
-      
+
       // Always use database from connection string - hard fail if not accessible
       const cmDb = mongoClients['cm'].db(dbNameToUse);
       // Test access using a simple database command (like deployed version)
       try {
         await cmDb.command({ ping: 1 });
-        console.log(`[getDatabase] Successfully accessed ${dbNameToUse} database`);
         return cmDb;
       } catch (cmError) {
         // Hard fail - no fallback to other databases
@@ -504,7 +474,6 @@ export async function getDatabase(dbName = null, vert = null) {
           try {
             // Only fetch the secret if we don't have it cached already
             if (!cmConnectionString) {
-              console.log(`Fetching cm MongoDB secret: ${cmSecretName}`);
               const command = new GetSecretValueCommand({ SecretId: cmSecretName });
               const secretPromise = secretsClient.send(command);
               const timeoutPromise = new Promise((_, reject) =>
@@ -540,7 +509,6 @@ export async function getDatabase(dbName = null, vert = null) {
             });
             await client.connect();
             mongoClients['cm'] = client;
-            console.log('Connected to MongoDB cm database');
             return client.db(dbNameToUse);
           } catch (cmError) {
             // Evict the cached connection string on auth/not-found errors so a
@@ -578,7 +546,6 @@ export async function getDatabase(dbName = null, vert = null) {
     client = await connectToMongoByVertical(vert);
   } else {
     // Use default connection (this will use mongodb/eventsquid secret when deployed)
-    console.log(`Connecting to MongoDB using ${vert ? `vertical: ${vert}` : 'default connection'}`);
     client = await connectToMongo();
   }
   

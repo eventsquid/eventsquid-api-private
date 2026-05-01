@@ -204,9 +204,7 @@ Common mistakes to watch for when writing new code:
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Payment gateways | Partial | Authorize.Net is functional; Vantiv/Worldpay, Stripe, PayZang are stubs |
-| `CreditsService.runGrant()` | Not implemented | CEU auto-grant cron job is a stub |
-| VEO `userRegisteredForEvent` middleware | TODO | Scheduling API missing registration check |
+| Payment gateways | Partial | Authorize.Net and Vantiv/Worldpay are implemented (charge, refund, void where applicable). Stripe is webhook-logging only by design (charges are client-side via the Stripe SDK). PayZang has config fields only — no service or routes. |
 | Unit / integration tests | None | `npm test` has no test files yet |
 | Debug logs | Present | Several services emit verbose debug `console.log` lines |
 | CORS | Open (`*`) | Intended for API-first usage; restrict in production if SPA-only |

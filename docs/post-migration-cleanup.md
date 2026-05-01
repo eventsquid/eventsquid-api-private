@@ -24,13 +24,20 @@ Both files had header comments noting unimplemented gaps at the time of the init
 
 ---
 
-## 4. `POST /images/:vert` body size vs. API Gateway limit
+## 4. `POST /images/:vert` body size vs. API Gateway limit — DEFERRED
 
-**File:** `src/routes/images.js` (or wherever the image upload route lives)
+**Decision:** Not changing. Keeping Mantle parity (same endpoint shape, same base64 body contract).
 
-The local dev server applies a 50 MB body parser limit, but AWS API Gateway has a hard 6 MB payload limit. Any image upload larger than 6 MB will be rejected at the gateway before Lambda is invoked. Options:
-- Switch to presigned S3 PUT URLs (client uploads directly to S3, bypassing API Gateway entirely)
-- Enforce a ≤ 6 MB limit client-side and document it
+**Context:** Mantle ran on EC2 with no payload limit; Lambda + API Gateway caps inbound body at 6 MB (~4.5 MB binary after base64 overhead). Uploads larger than that fail at API Gateway with an opaque `Request Entity Too Large` before Lambda is invoked. This is a regression vs Mantle for the rare case of >6 MB images (typically only un-resized DSLR speaker photos).
+
+**File:** `src/routes/root.js:170` (`POST /images/:vert`)
+
+**Why deferred:**
+- Typical uploads (logos, avatars, normal speaker photos) are well under the cap.
+- This codebase is being sunset before the gap is likely to matter to a real customer.
+- The clean fix (presigned S3 PUT URLs) is a multi-endpoint refactor with client-side coordination changes — not justified for a sunsetting codebase.
+
+**Revisit if:** A customer reports a failed upload and the rollover to the replacement codebase is far enough out that fixing here is cheaper than waiting.
 
 ---
 
@@ -54,13 +61,18 @@ Retrieve the full list from the migration audit notes or by diffing Mantle's `se
 
 ---
 
-## 7. `EventService.updateEventConfig` — port vs. retire
+## 7. `EventService.updateEventConfig` — DEFERRED
 
-**File:** `src/services/ReportService.js`
+**Decision:** Not porting before go-live. The TODO in `ReportService.js` has been removed.
 
-There is a `// TODO` comment in `ReportService.js` where a call to `EventService.updateEventConfig` has been commented out. The method does not exist in Lambda's `EventService`. Decide whether to:
-- Port `updateEventConfig` from Mantle and wire it back in, or
-- Confirm the report flow no longer needs it and delete the TODO comment
+**Context:** Mantle's `updateEventConfig` is a defensive MSSQL → MongoDB freshness sync that runs before `POST /reports/:eventGUID/report-config` (the only caller, from CF `report-basic.js`). It re-pulls the reg form from MSSQL when `event.lu !== event.rgu`. The full port would require ~1175 lines: `updateEventConfig` itself (~50), `updateEventProfilesMongo` (36), and `saveEventRegForm` (1089).
+
+**Why it's deferred:**
+- The response shape (the 11 fields CF reads: `rgf`, `pfs`, `pfsToFees`, `groupings`, `fees`, `boothCount`, `ebt`, `feeRef`, `eef`, `ech`, `an`) is already built correctly by `findEventReportConfig` (function) at `src/functions/reports.js:279`.
+- `updateEventConfig` doesn't shape the response — it only refreshes MongoDB data the response reads. Stale data only happens if normal save flows fail to keep MongoDB in sync with MSSQL.
+- If MongoDB drifts from MSSQL, the right fix is to repair the save flows, not paper over reads with this sweep.
+
+**Revisit if:** Reports show stale reg form, profile, or fee data in production. Symptom: admin edits event/reg form, then a user opens the report config page and sees the previous version. If this happens, port the three Mantle methods or (better) audit the event-save and regform-save flows for a missing MongoDB sync step.
 
 ---
 

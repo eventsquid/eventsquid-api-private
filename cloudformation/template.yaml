@@ -117,7 +117,7 @@ Resources:
         SecurityGroupIds:
           - sg-277a3b5e  # Use existing security group from working Lambda
           - sg-d087f8ac   # Use existing security group from working Lambda
-      ReservedConcurrentExecutions: 700  # Sized for registration spikes of 600-1000 concurrent users; bump to 1000 once the L-B99A9384 quota raise to 3000 is approved
+      ReservedConcurrentExecutions: 1000  # Sized for registration spikes of 600-1000 concurrent users. Account quota L-B99A9384 = 5000, so this leaves 4000 unreserved for other Lambdas.
 
   # Lambda alias dev -> $LATEST (develop branch). Alias "live" is created/updated by pipeline on main.
   LambdaAliasDev:
