@@ -40,7 +40,18 @@ import {
   updateEventResourceRoute,
   addEventDocumentRoute,
   createEventResourceCategoryRoute,
-  deleteEventResourceCategoryRoute
+  deleteEventResourceCategoryRoute,
+  toggleAgendaSlotBindingRoute,
+  moveResourceRoute,
+  moveResourceCategoryRoute,
+  addLibraryResourceToEventRoute,
+  addVideoResourceRoute,
+  getSingleResourceRoute,
+  getSponsorRoute,
+  getSlotSponsorResourcesRoute,
+  updateResourceSponsorRoute,
+  setSponsorLocationAgendaRoute,
+  sponsorInstantContactRoute
 } from './events.js';
 import {
   findPivotedAttendeesRoute,
@@ -397,6 +408,17 @@ export const routes = [
   addEventDocumentRoute,
   createEventResourceCategoryRoute,
   deleteEventResourceCategoryRoute,
+  toggleAgendaSlotBindingRoute,
+  moveResourceRoute,
+  moveResourceCategoryRoute,
+  addLibraryResourceToEventRoute,
+  addVideoResourceRoute,
+  getSingleResourceRoute,
+  getSponsorRoute,
+  getSlotSponsorResourcesRoute,
+  updateResourceSponsorRoute,
+  setSponsorLocationAgendaRoute,
+  sponsorInstantContactRoute,
   // Attendee routes (10 routes)
   findPivotedAttendeesRoute,
   findAttendeesRoute,

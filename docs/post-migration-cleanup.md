@@ -53,11 +53,27 @@ Three items to confirm before production:
 
 ---
 
-## 6. `EventService.js` missing methods
+## 6. `EventService.js` missing methods — COMPLETE
 
-Eight methods were identified during the migration audit as present in Mantle but absent from Lambda's `EventService`. Before those call sites go live, each needs a decision: port it or confirm the route/feature is retired.
+**Decision:** All 11 missing methods that backed real Mantle controller routes have been ported with same request/response JSON contracts. Three additional methods (`searchEvents`, `getCouponCodes`, `getProfileNames`) flagged in the original audit were verified as dead code in Mantle (no controller routes, no internal callers) and were not ported.
 
-Retrieve the full list from the migration audit notes or by diffing Mantle's `services/EventService.js` method names against Lambda's. Medium-risk items include anything called from report or CEU routes.
+**Ported methods and routes:**
+
+| EventService method | Underlying function | Route |
+|---------------------|---------------------|-------|
+| `addLibraryResourceToEvent` | (logic in service) | `POST /event/:eventID/resource/fromLibrary` |
+| `addVideoResource` | (logic in service) | `POST /event/:eventID/resource` |
+| `getSingleResource` | `getAccessibleResources` (existing) | `GET /event/:eventGUID/resource/:videoID` |
+| `moveResource` | `moveResource` (new in `functions/resources.js`) | `POST /event/:eventID/resources/move` |
+| `moveResourceCategory` | `moveResourceCategory` (new) | `POST /event/:eventID/resources/categories/move` |
+| `toggleAgendaSlotBinding` | `toggleAgendaSlotBinding` (new) | `POST /event/resources/slotBinding` |
+| `getSponsor` | `getSponsor` (new) | `GET /event/resources/getSponsor/:sponsorID` |
+| `getSlotSponsorResources` | `getSlotSponsorResources` (new) | `POST /event/resources/getSlotSponsorResources` |
+| `updateResourceSponsor` | `updateResourceSponsor` (new) | `POST /event/:eventID/resources/sponsor/update` |
+| `setSponsorLocationAgenda` | (direct SQL in service) | `POST /event/:eventID/sponsorLocationAgenda` |
+| `sponsorInstantContact` | uses `getSponsor` + `getRegisteredAttendeeByUserID` + `sendEmail` + inline `getInstantContactEmail` template | `POST /event/:eventGUID/resources/sponsor/contact/:sponsorID` |
+
+All ports are faithful to Mantle's request and response JSON contracts.
 
 ---
 

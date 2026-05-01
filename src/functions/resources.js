@@ -765,3 +765,183 @@ export async function deleteEventResourceCategory(event_id, category_id, sortOrd
     throw error;
   }
 }
+
+/**
+ * Move a resource — change its category, sort order, or both.
+ * Calls dbo.node_resourceMove with the same params as Mantle.
+ * Faithful port of Mantle's functions/resources/moveResource.js.
+ */
+export async function moveResource(event_id, category_id, upload_id, updateMode, sortOrder, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    // Mantle preserves null category_id (no Number() coercion when null)
+    const categoryParam = category_id !== null ? Number(category_id) : null;
+
+    const request = new sql.Request();
+    request.input('event_id', sql.Int, Number(event_id));
+    request.input('category_id', sql.Int, categoryParam);
+    request.input('upload_id', sql.Int, Number(upload_id));
+    request.input('updateMode', sql.VarChar, updateMode);
+    request.input('sortOrder', sql.Int, Number(sortOrder));
+    return await request.query(`
+      USE ${dbName};
+      EXEC dbo.node_resourceMove
+          @event_id,
+          @category_id,
+          @upload_id,
+          @updateMode,
+          @sortOrder
+    `);
+  } catch (error) {
+    console.error('Error moving resource:', error);
+    throw error;
+  }
+}
+
+/**
+ * Move a resource category (reorder).
+ * Faithful port of Mantle's functions/resources/moveResourceCategory.js.
+ */
+export async function moveResourceCategory(event_id, category_id, sortOrder, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('event_id', sql.Int, Number(event_id));
+    request.input('category_id', sql.Int, Number(category_id));
+    request.input('sortOrder', sql.Int, Number(sortOrder));
+    return await request.query(`
+      USE ${dbName};
+      EXEC dbo.node_resourceCategoryMove
+          @event_id,
+          @category_id,
+          @sortOrder
+    `);
+  } catch (error) {
+    console.error('Error moving resource category:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch a single sponsor record by sponsorID.
+ * Faithful port of Mantle's functions/resources/getSponsor.js.
+ */
+export async function getSponsor(sponsorID, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+    const result = await request.query(`
+      USE ${dbName};
+      EXEC dbo.node_getSponsor
+              @sponsorID
+    `);
+    return result.recordset[0];
+  } catch (error) {
+    console.error('Error getting sponsor:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch sponsor resources tied to a specific agenda slot (with sponsor email).
+ * Faithful port of Mantle's functions/resources/getSlotSponsorResources.js.
+ */
+export async function getSlotSponsorResources(sponsorID, slotID, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('sponsorID', sql.Int, Number(sponsorID));
+    request.input('slotID', sql.Int, Number(slotID));
+    const result = await request.query(`
+      USE ${dbName};
+      EXEC dbo.node_getSlotSponsorResourcesWithEmail
+              @sponsorID,
+              @slotID
+    `);
+    return result.recordset;
+  } catch (error) {
+    console.error('Error getting slot sponsor resources:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update the sponsor associated with an event upload (resource).
+ * Faithful port of Mantle's functions/resources/updateResourceSponsor.js.
+ */
+export async function updateResourceSponsor(upload_id, sponsorID, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('upload_id', sql.Int, Number(upload_id));
+    // Mantle passes sponsorID without Number() coercion to allow null/empty — match that
+    request.input('sponsorID', sql.Int, sponsorID);
+    const result = await request.query(`
+      USE ${dbName};
+      UPDATE eventUploads
+      SET sponsorID = @sponsorID
+      WHERE upload_id = @upload_id
+    `);
+    return result.recordset?.[0];
+  } catch (error) {
+    console.error('Error updating resource sponsor:', error);
+    throw error;
+  }
+}
+
+/**
+ * Toggle agenda slot binding for a resource — inserts the (resource_id, slot_id)
+ * pair if absent, deletes it if present.
+ * Faithful port of Mantle's functions/resources/toggleAgendaSlotBinding.js.
+ */
+export async function toggleAgendaSlotBinding(resourceID, slotID, vert) {
+  try {
+    const sql = await getConnection(vert);
+    const dbName = getDatabaseName(vert);
+
+    const request = new sql.Request();
+    request.input('resourceID', sql.Int, Number(resourceID));
+    request.input('slotID', sql.Int, Number(slotID));
+    await request.query(`
+      USE ${dbName};
+
+      IF NOT EXISTS (
+          SELECT record_id
+          FROM event_resources_to_agenda_slots
+          WHERE slot_id = @slotID
+              AND resource_id = @resourceID
+      )
+          BEGIN
+              INSERT INTO event_resources_to_agenda_slots (
+                  resource_id,
+                  slot_id
+              ) VALUES (
+                  @resourceID,
+                  @slotID
+              )
+          END
+      ELSE
+          BEGIN
+              DELETE FROM event_resources_to_agenda_slots
+              WHERE resource_id = @resourceID
+                  AND slot_id = @slotID
+          END
+    `);
+
+    return 'Agenda Slot Binding Updated';
+  } catch (error) {
+    console.error('Error toggling agenda slot binding:', error);
+    throw error;
+  }
+}

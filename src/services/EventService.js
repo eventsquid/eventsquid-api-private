@@ -16,6 +16,95 @@ import _ from 'lodash';
 import moment from 'moment-timezone';
 import axios from 'axios';
 
+const ES_S3_BASE_URL = process.env.S3_BASE_URL || 'https://s3-us-west-2.amazonaws.com/eventsquid/';
+
+/**
+ * Build the HTML body for a sponsor instant-contact email.
+ * Faithful port of Mantle's functions/veo/getInstantContactEmail.js — same markup,
+ * same field references, same fallback handling.
+ */
+function getInstantContactEmail(attendee, sponsor, event, form) {
+  return `
+    <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional //EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+    <html xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml">
+        <head>
+            <!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->
+            <meta content="text/html; charset=utf-8" http-equiv="Content-Type"/>
+            <meta content="width=device-width" name="viewport"/>
+            <!--[if !mso]><!-->
+            <meta content="IE=edge" http-equiv="X-UA-Compatible"/>
+            <style>
+                .container {
+                    background: #F2F3F5;
+                    padding: 50px 0px;
+                    color: #444;
+                }
+
+                .innerContainer {
+                    background: white;
+                    padding: 25px;
+                    border: 1px solid #ddd;
+                    max-width: 650px;
+                    margin: auto;
+                }
+
+                .imageContainer {
+                    width: 100%;
+                    text-align: center;
+                }
+
+                .contentBlock {
+                    background: #c5c5c5;
+                    border-radius: 5px;
+                    padding: 15px;
+                }
+                .contentMessage {
+                    line-height: 1.2em;
+                    font-size: 12px;
+                    color: #444;
+                }
+            </style>
+        </head>
+        <body>
+        <div class="container">
+            <div class="innerContainer">
+            <div class="imageContainer">
+                ${event.el3 ? `<img src="${event.el3}" style="max-height: 100px;"/>` : ''}
+            </div>
+            <br>
+            <br>
+            <p>${sponsor.sponsorName},</p>
+            <p>One of the attendees at our event, ${event.et}, has requested a contact from you. We would greatly appreciate your reaching out to them. Here is the information provided by the attendee:</p>
+            <br>
+            <div class="contentBlock">
+                <p><b>CONTACT NAME:</b> ${attendee.uf || ''} ${attendee.ul || ''}</p>
+                <p><b>MESSAGE:</b></p>
+                <p class="contentMessage">
+                    ${form.message}
+                </p>
+                <p><b>CONTACT EMAIL:</b> ${attendee.ue || ''}</p>
+                ${form.useMobile ? `<p><b>CONTACT PHONE:</b> ${form.phone || ''}</p>` : ''}
+            </div>
+            <br>
+            <br>
+            <p>Thank you for responding to this inquiry! We appreciate your supporting our event.</p>
+            <br>
+            <p style="margin:0;">${event.an}</p>
+            <p style="margin:0;">${event.en}</p>
+            <p style="margin:0;">${event.em}</p>
+            </div>
+            <br>
+            <div class="imageContainer">
+                <p style="text-align: center; font-size: 9px;">Event software powered by</p>
+                <img style="text-align: center;" src="${ES_S3_BASE_URL}resources/instant_contact_es_logo.png"/>
+            </div>
+        </div>
+        </body>
+    </html>
+    `;
+}
+
 class EventService {
   /**
    * Column sets for different resultsets
@@ -2295,6 +2384,258 @@ class EventService {
       return await getResourceSponsors(affiliate_id, vert);
     } catch (error) {
       console.error('Error getting resource sponsors:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Toggle agenda slot binding for a resource (insert if absent, delete if present).
+   * Mirrors Mantle EventService.toggleAgendaSlotBinding.
+   */
+  async toggleAgendaSlotBinding(resourceID, slotID, vert) {
+    try {
+      const { toggleAgendaSlotBinding } = await import('../functions/resources.js');
+      return await toggleAgendaSlotBinding(resourceID, slotID, vert);
+    } catch (error) {
+      console.error('Error toggling agenda slot binding:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Move a resource — change category, sort order, or both.
+   * Mirrors Mantle EventService.moveResource.
+   */
+  async moveResource(event_id, category_id, upload_id, updateMode, sortOrder, vert) {
+    try {
+      const { moveResource } = await import('../functions/resources.js');
+      return await moveResource(event_id, category_id, upload_id, updateMode, sortOrder, vert);
+    } catch (error) {
+      console.error('Error moving resource:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Move a resource category (reorder).
+   * Mirrors Mantle EventService.moveResourceCategory.
+   */
+  async moveResourceCategory(event_id, category_id, sortOrder, vert) {
+    try {
+      const { moveResourceCategory } = await import('../functions/resources.js');
+      return await moveResourceCategory(event_id, category_id, sortOrder, vert);
+    } catch (error) {
+      console.error('Error moving resource category:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add an existing affiliate library resource to an event.
+   * If `linked` is true, the event resource references the library doc by ID.
+   * If `linked` is false, the underlying file is copied to a new S3 key so the event has its own copy.
+   * Mirrors Mantle EventService.addLibraryResourceToEvent.
+   */
+  async addLibraryResourceToEvent(eventID, affID, resourceID, linked, useCategory, s3domain, vert) {
+    try {
+      const { getAffiliateResources, addEventResource } = await import('../functions/resources.js');
+      const { copyS3 } = await import('../utils/s3.js');
+
+      const libraryDocs = await getAffiliateResources(affID, [], vert);
+      const doc = libraryDocs.find(d => d.doc_id === Number(resourceID));
+
+      const data = {
+        category: doc.uploadCategory,
+        title: doc.uploadTitle,
+        ext: doc.uploadType,
+        filename: (doc.filenameS3 && doc.filenameS3.length ? doc.filenameS3 : doc.filename) || '',
+        type: doc.resource_type,
+        url: doc.resource_url,
+        ...(linked && { linkedID: doc.doc_id })
+      };
+
+      if (!linked && (doc.filenameS3 || doc.filename)) {
+        const newFile = await copyS3(doc.filenameS3.length ? doc.filenameS3 : doc.filename, s3domain);
+        data.filename = newFile.name;
+      }
+
+      if (!useCategory) delete data.category;
+
+      await addEventResource(eventID, data, vert);
+
+      return {
+        message: 'Added resource from library to the event'
+      };
+    } catch (error) {
+      console.error('Error adding library resource to event:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add a video resource (or other URL-based resource) to an event,
+   * optionally also adding it to the affiliate library.
+   * Mirrors Mantle EventService.addVideoResource.
+   */
+  async addVideoResource(eventID, data, affiliateID, vert) {
+    try {
+      const { addEventResource, addAffiliateResource } = await import('../functions/resources.js');
+
+      const resourceData = {
+        title: data.title,
+        url: data.url,
+        category: data.category,
+        type: data.type
+      };
+
+      await addEventResource(eventID, resourceData, vert);
+
+      if (data.saveToLibrary) {
+        await addAffiliateResource(affiliateID, resourceData, vert);
+      }
+
+      return {
+        message: 'Added event resource'
+      };
+    } catch (error) {
+      console.error('Error adding video resource:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch a single accessible resource for an event by upload_id.
+   * Walks all VEO-visible resources for the event and finds the matching one.
+   * Mirrors Mantle EventService.getSingleResource.
+   */
+  async getSingleResource(userID, eventID, resourceID, vert) {
+    try {
+      const { getAccessibleResources } = await import('../functions/resources.js');
+      const resources = await getAccessibleResources({ showOnVeo: true }, userID, eventID, vert);
+      return resources.find(r => r.upload_id == resourceID);
+    } catch (error) {
+      console.error('Error getting single resource:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch a single sponsor record. Mirrors Mantle EventService.getSponsor.
+   */
+  async getSponsor(sponsorID, vert) {
+    try {
+      const { getSponsor } = await import('../functions/resources.js');
+      return await getSponsor(sponsorID, vert);
+    } catch (error) {
+      console.error('Error getting sponsor:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch sponsor resources for an agenda slot.
+   * Mirrors Mantle EventService.getSlotSponsorResources.
+   */
+  async getSlotSponsorResources(sponsorID, slotID, vert) {
+    try {
+      const { getSlotSponsorResources } = await import('../functions/resources.js');
+      return await getSlotSponsorResources(sponsorID, slotID, vert);
+    } catch (error) {
+      console.error('Error getting slot sponsor resources:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update an event upload's associated sponsor.
+   * Mirrors Mantle EventService.updateResourceSponsor.
+   */
+  async updateResourceSponsor(upload_id, sponsorID, vert) {
+    try {
+      const { updateResourceSponsor } = await import('../functions/resources.js');
+      return await updateResourceSponsor(upload_id, sponsorID, vert);
+    } catch (error) {
+      console.error('Error updating resource sponsor:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send a sponsor instant-contact email — used when an event attendee asks
+   * to be contacted by a sponsor. Validates the form, looks up the sponsor and event,
+   * resolves the attendee (or falls back to the form's email/name fields), and emails the sponsor.
+   * Mirrors Mantle EventService.sponsorInstantContact.
+   */
+  async sponsorInstantContact(eventGUID, userID, sponsorID, form, vert) {
+    try {
+      const { getSponsor } = await import('../functions/resources.js');
+      const { getRegisteredAttendeeByUserID } = await import('../functions/attendees.js');
+      const { sendEmail } = await import('../functions/sendgrid.js');
+
+      const sponsor = await getSponsor(sponsorID, vert);
+      // If there is no sponsor, don't send an email
+      if (!sponsor) return { success: false, data: 'This sponsor does not exist. Please contact the event admin.' };
+      // If there are problems with the form, no email
+      if (form.useMobile && form.phone.length < 10) return { success: false, data: 'Invalid Phone #' };
+      if (form.message.length < 7) return { success: false, data: 'Invalid Message. Must be at least 7 characters long.' };
+
+      // If this event doesn't exist, no email
+      const event = await this.getEventDataByGUID(eventGUID, { e: 1, et: 1, an: 1, em: 1, en: 1, el3: 1 }, vert);
+      if (!event) return { success: false, data: 'This event does not exist.' };
+
+      // If you aren't registered for the event, no email — fall back to form-supplied identity
+      let attendee = await getRegisteredAttendeeByUserID(userID, event.e, vert);
+      if (!attendee) {
+        if (!form.email) return { success: false, data: 'Please provide a valid email' };
+        attendee = {
+          uf: form.firstName,
+          ul: form.lastName,
+          ue: form.email
+        };
+      }
+
+      const emailSent = await sendEmail({
+        to: sponsor.defaultSponsorEmail,
+        fromName: event.an,
+        subject: `${event.et} - Instant Contact`,
+        html: getInstantContactEmail(attendee, sponsor, event, form),
+        reply_to: event.em
+      });
+
+      if (emailSent) {
+        return { success: true, data: 'Email Sent' };
+      } else {
+        return { success: false, data: 'Email Not Sent' };
+      }
+    } catch (error) {
+      console.error('Error sending sponsor instant contact:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set the sponsor agenda location for an event (b_events.sponsorFirstAgenda).
+   * Mirrors Mantle EventService.setSponsorLocationAgenda.
+   */
+  async setSponsorLocationAgenda(eventID, location, vert) {
+    try {
+      const { getConnection, getDatabaseName } = await import('../utils/mssql.js');
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('location', sql.Int, Number(location));
+      await request.query(`
+        USE ${dbName};
+        UPDATE b_events
+        SET sponsorFirstAgenda = @location
+        WHERE event_id = @eventID
+      `);
+
+      return { message: 'success' };
+    } catch (error) {
+      console.error('Error setting sponsor location agenda:', error);
       throw error;
     }
   }
