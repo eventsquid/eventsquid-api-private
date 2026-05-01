@@ -61,22 +61,42 @@ export function isDevStage() {
  * @returns {string} MongoDB connection string
  */
 function pickMongoConnectionString(secret, fallbackDbName = 'eventsquid') {
-  if (isDevStage()) {
+  const dev = isDevStage();
+  let chosen;
+  let chosenKey;
+
+  if (dev) {
     if (!secret.devConnectionString) {
       throw new Error(
         'MongoDB secret missing "devConnectionString" — refusing to fall back to prod. ' +
         'Add a devConnectionString key to the secret for the dev stage.'
       );
     }
-    return secret.devConnectionString;
+    chosen = secret.devConnectionString;
+    chosenKey = 'devConnectionString';
+  } else if (secret.connectionString) {
+    chosen = secret.connectionString;
+    chosenKey = 'connectionString';
+  } else if (secret.uri) {
+    chosen = secret.uri;
+    chosenKey = 'uri';
+  } else if (secret.mongodb_uri) {
+    chosen = secret.mongodb_uri;
+    chosenKey = 'mongodb_uri';
+  } else {
+    const { host, port, database, username, password } = secret;
+    chosen = `mongodb://${username}:${password}@${host}:${port || 27017}/${database || fallbackDbName}?authSource=admin`;
+    chosenKey = 'constructed-from-parts';
   }
 
-  if (secret.connectionString) return secret.connectionString;
-  if (secret.uri) return secret.uri;
-  if (secret.mongodb_uri) return secret.mongodb_uri;
+  // Log which secret key was picked + sanitized host so CloudWatch confirms dev/prod selection.
+  // Matches the format from local startup logging in mongodb.js / mssql.js.
+  const hostMatch = chosen.match(/@([^/?]+)/);
+  const host = hostMatch ? hostMatch[1] : 'unknown';
+  const dbName = extractMongoDbName(chosen);
+  console.log(`📚 MongoDB stage=${dev ? 'DEV' : 'PROD'} key=${chosenKey} host=${host} db=${dbName}`);
 
-  const { host, port, database, username, password } = secret;
-  return `mongodb://${username}:${password}@${host}:${port || 27017}/${database || fallbackDbName}?authSource=admin`;
+  return chosen;
 }
 
 /**

@@ -132,6 +132,9 @@ async function getMssqlCredentials() {
       throw new Error('Missing required MSSQL credentials: username, password, or host');
     }
 
+    // Log which side of the secret was picked so CloudWatch confirms dev/prod selection.
+    console.log(`🔗 MSSQL stage=${dev ? 'DEV' : 'PROD'} host=${host} port=${port} db=${database || '(default)'}`);
+
     return {
       username,
       password,
