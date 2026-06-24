@@ -42,6 +42,27 @@ function extractMongoDbName(connStr) {
 }
 
 /**
+ * Map vertical code → MongoDB database name. Same names MSSQL uses (per CLAUDE.md).
+ * Used locally when a single MONGO_CONNECTION_STRING points at a multi-DB dev cluster
+ * and we need to pick the right DB by vert. Production keeps using `'eventsquid'` since
+ * each vert there has its own cluster with that DB name.
+ */
+const MONGO_DB_BY_VERTICAL = {
+  cn: 'connect',
+  es: 'eventsquid',
+  fd: 'rcflightdeck',
+  ft: 'fitsquid',
+  ir: 'inreach',
+  kt: 'kindertales',
+  ln: 'launchsquid'
+};
+
+function getMongoDbNameByVert(vert) {
+  if (!vert) return null;
+  return MONGO_DB_BY_VERTICAL[String(vert).toLowerCase()] || null;
+}
+
+/**
  * Whether this Lambda container is serving the dev stage.
  * The dev API Gateway stage tracks $LATEST; the v1 stage tracks the `live` alias
  * (a numeric published version). AWS_LAMBDA_FUNCTION_VERSION is the per-container
@@ -549,9 +570,17 @@ export async function getDatabase(dbName = null, vert = null) {
     client = await connectToMongo();
   }
   
-  // Database name - typically the same for all verticals, but can be overridden
-  // If dbName is 'cm', use 'cm', otherwise use the provided dbName or default
-  const databaseName = dbName === 'cm' ? 'cm' : (dbName || process.env.MONGO_DB_NAME || 'eventsquid');
+  // Database name resolution:
+  //   1. Explicit dbName arg wins
+  //   2. MONGO_DB_NAME env override
+  //   3. Local dev (single dev cluster, multiple DBs): derive from vert (cn → connect, ft → fitsquid, ...)
+  //   4. Deployed prod: each vert points at its own cluster with an `eventsquid` DB — keep that default
+  const databaseName = dbName === 'cm'
+    ? 'cm'
+    : (dbName
+       || process.env.MONGO_DB_NAME
+       || (!isDeployed() && vert ? getMongoDbNameByVert(vert) : null)
+       || 'eventsquid');
   
   // HARD FAIL: We should NEVER reach here with dbName === 'cm' because isCommonDb check above should have handled it
   // This is a safety check to prevent accidentally using mongodb/eventsquid to access 'cm'
