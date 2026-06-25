@@ -115,7 +115,7 @@ async function sendResponse(lambdaResponse, res) {
 }
 
 // Catch-all route handler
-app.all('*', async (req, res) => {
+app.use(async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
     
