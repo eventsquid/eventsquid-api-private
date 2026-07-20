@@ -210,7 +210,7 @@ Resources:
                 # missing-module errors BEFORE any zip or AWS resource update. An unhandled
                 # rejection here makes the build exit non-zero, aborting the deploy.
                 - node --input-type=module -e "import('./src/handler.js').then(() => { console.log('✓ Import check passed'); }).catch(err => { console.error('✗ Import check FAILED:', err.message); if (err.stack) console.error(err.stack.split('\n').slice(0, 5).join('\n')); process.exit(1); });"
-                - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
+                - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*' -x 'eslint.config.js'
                 - |
                   if [ -z "$VPC_ID" ] || [ -z "$SUBNET_IDS" ]; then
                     echo "ERROR: VPC_ID and SUBNET_IDS must be set. Update the pipeline stack with VpcId and SubnetIds parameters."

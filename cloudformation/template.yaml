@@ -127,6 +127,15 @@ Resources:
       FunctionVersion: $LATEST
       Name: dev
 
+  # Placeholder live alias pointing to $LATEST so CloudFormation can create it on first deploy.
+  # The pipeline overwrites this to a published version on every prod deploy.
+  LambdaAliasLive:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      FunctionVersion: $LATEST
+      Name: live
+
   # REST API with stage variables: dev -> :dev ($LATEST), v1 -> :live (published version)
   ApiGatewayRestApi:
     Type: AWS::ApiGateway::RestApi
