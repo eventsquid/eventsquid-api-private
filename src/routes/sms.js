@@ -15,7 +15,7 @@ const smsService = new SmsService();
 // For now, using a standard path that can be configured
 export const logTwilioStatusRoute = {
   method: 'POST',
-  path: '/sms/twilio-status', // TODO: Configure actual Twilio callback path in API Gateway
+  path: '/sms/log-twilio-status',
   handler: async (request) => {
     const result = await smsService.logMessage(request);
     return createResponse(200, result);

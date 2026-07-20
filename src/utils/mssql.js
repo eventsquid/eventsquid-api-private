@@ -10,8 +10,6 @@ import sql from 'mssql';
 const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION || 'us-west-2' });
 let connectionPool = null;
 let connectionPromise = null;
-let mssqlErrorLogCount = 0; // Track how many times we've logged MSSQL errors
-const MAX_MSSQL_ERROR_LOGS = 2; // Only log first 2 errors to reduce noise
 
 // Database names by vertical (from old CONSTANTS._s)
 const DATABASES_BY_VERTICAL = {
@@ -31,6 +29,16 @@ const DATABASES_BY_VERTICAL = {
 function isDeployed() {
   // AWS Lambda sets AWS_LAMBDA_FUNCTION_NAME automatically
   return !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+}
+
+/**
+ * Whether this Lambda container is serving the dev stage.
+ * The dev API Gateway stage tracks $LATEST; the v1 stage tracks the `live` alias
+ * (a numeric published version). AWS_LAMBDA_FUNCTION_VERSION is the per-container
+ * signal that distinguishes them.
+ */
+function isDevStage() {
+  return process.env.AWS_LAMBDA_FUNCTION_VERSION === '$LATEST';
 }
 
 /**
@@ -66,8 +74,10 @@ async function getMssqlCredentials() {
     if (!credentials.username || !credentials.password || !credentials.host) {
       throw new Error('MSSQL_CONNECTION_STRING missing required fields: Server, User Id, Password');
     }
-    
-    console.log('Using MSSQL_CONNECTION_STRING from environment variable');
+
+    const host = credentials.host;
+    const db = credentials.database || 'eventsquid';
+    console.log(`\n🔗 MSSQL: Using local env MSSQL_CONNECTION_STRING → ${host}:${credentials.port || 1433} / ${db}\n`);
     return {
       username: credentials.username,
       password: credentials.password,
@@ -80,13 +90,16 @@ async function getMssqlCredentials() {
   // When deployed, always use Secrets Manager (skip env vars)
   // Alternative: Use individual environment variables (local dev only)
   if (!isDeployed() && process.env.MSSQL_HOST && process.env.MSSQL_USERNAME && process.env.MSSQL_PASSWORD) {
-    console.log('Using MSSQL credentials from individual environment variables');
+    const host = process.env.MSSQL_HOST;
+    const port = parseInt(process.env.MSSQL_PORT || '1433');
+    const db = process.env.MSSQL_DATABASE || 'eventsquid';
+    console.log(`\n🔗 MSSQL: Using local env vars → ${host}:${port} / ${db}\n`);
     return {
       username: process.env.MSSQL_USERNAME,
       password: process.env.MSSQL_PASSWORD,
       host: process.env.MSSQL_HOST,
-      port: parseInt(process.env.MSSQL_PORT || '1433'),
-      database: process.env.MSSQL_DATABASE || 'eventsquid'
+      port: port,
+      database: db
     };
   }
 
@@ -98,18 +111,30 @@ async function getMssqlCredentials() {
     const response = await secretsClient.send(command);
     
     const secret = JSON.parse(response.SecretString);
-    
-    // Extract credentials from key/value secret
-    const username = secret.username || secret.userName || secret.user;
-    const password = secret.password || secret.pwd;
-    const host = secret.host || secret.server;
-    const port = secret.port || 1433;
-    const database = secret.database || secret.db;
-    
+
+    // On the dev stage ($LATEST), use the dev* keys and hard-fail if any are missing.
+    // Port and database are reused from the prod-shaped keys unless dev variants are set.
+    const dev = isDevStage();
+    const username = dev ? secret.devUsername : (secret.username || secret.userName || secret.user);
+    const password = dev ? secret.devPassword : (secret.password || secret.pwd);
+    const host = dev ? secret.devHost : (secret.host || secret.server);
+    const port = (dev && secret.devPort) || secret.port || 1433;
+    const database = (dev && secret.devDatabase) || secret.database || secret.db;
+
+    if (dev && (!username || !password || !host)) {
+      throw new Error(
+        'MSSQL secret missing devUsername/devPassword/devHost — refusing to fall back to prod credentials. ' +
+        'Add the dev* keys to the secret for the dev stage.'
+      );
+    }
+
     if (!username || !password || !host) {
       throw new Error('Missing required MSSQL credentials: username, password, or host');
     }
-    
+
+    // Log which side of the secret was picked so CloudWatch confirms dev/prod selection.
+    console.log(`🔗 MSSQL stage=${dev ? 'DEV' : 'PROD'} host=${host} port=${port} db=${database || '(default)'}`);
+
     return {
       username,
       password,
@@ -157,19 +182,15 @@ export async function connectToMssql() {
   connectionPromise = (async () => {
     try {
       const credentials = await getMssqlCredentials();
-      
-      // Debug: Log credentials (without password) in local dev
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`📋 MSSQL Credentials: host=${credentials.host}, port=${credentials.port}, database=${credentials.database}, username=${credentials.username ? '***' : 'MISSING!'}`);
-        if (!credentials.username || !credentials.password) {
-          throw new Error(`MSSQL credentials incomplete: username=${!!credentials.username}, password=${!!credentials.password}`);
-        }
+
+      if (process.env.NODE_ENV === 'development' && (!credentials.username || !credentials.password)) {
+        throw new Error(`MSSQL credentials incomplete: username=${!!credentials.username}, password=${!!credentials.password}`);
       }
 
       // Build config matching working Lambda pattern
       const isLocalDev = process.env.NODE_ENV === 'development';
       const isDeployedEnv = isDeployed();
-      
+
       // AWS RDS requires SSL but certificate validation may fail without proper CA certificates
       // trustServerCertificate: true allows RDS certificates to be accepted
       // This is safe for AWS RDS as the connection is still encrypted (encrypt: true)
@@ -193,37 +214,15 @@ export async function connectToMssql() {
           idleTimeoutMillis: 30000
         }
       };
-      
-      // Debug: Log the actual config being used (without password)
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`🔧 MSSQL Config: server=${config.server}, port=${config.port}, database=${config.database}`);
-        console.log(`   user=${config.user ? '***' : 'MISSING!'}`);
-        console.log(`   SSL: encrypt=${config.options.encrypt}, trustServerCertificate=${config.options.trustServerCertificate}`);
-      } else if (isDeployedEnv) {
-        // Log SSL config in AWS for debugging
-        console.log(`🔧 MSSQL Config (AWS): server=${config.server}, port=${config.port}, database=${config.database}`);
-        console.log(`   SSL: encrypt=${config.options.encrypt}, trustServerCertificate=${config.options.trustServerCertificate}`);
-      }
 
       // Connect using mssql package (handles pooling automatically)
       // sql.connect() returns a ConnectionPool promise
-      console.log('🔄 Connecting to MSSQL...');
       connectionPool = await sql.connect(config);
-      console.log('✅ Successfully connected to MSSQL');
-      
+
       connectionPromise = null;
       return sql;
     } catch (error) {
       connectionPromise = null;
-      // In local dev, provide helpful error message but don't crash
-      if (process.env.NODE_ENV === 'development') {
-        if (mssqlErrorLogCount < MAX_MSSQL_ERROR_LOGS) {
-          console.error('⚠️  MSSQL connection error (local dev):', error.message);
-          mssqlErrorLogCount++;
-        }
-        // Return sql module anyway - callers can check connection status
-        return sql;
-      }
       console.error('MSSQL connection error:', error);
       throw error;
     }
@@ -266,7 +265,6 @@ export async function closeMssqlConnection() {
     try {
       await connectionPool.close();
       connectionPool = null;
-      console.log('MSSQL connection pool closed');
     } catch (error) {
       console.error('Error closing MSSQL connection pool:', error);
     }

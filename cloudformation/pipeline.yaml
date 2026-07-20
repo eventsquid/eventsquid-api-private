@@ -205,7 +205,12 @@ Resources:
             build:
               commands:
                 - npm install --production
-                - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*'
+                # Pre-deploy import check: load the Lambda handler against the production-only
+                # dep tree that's about to ship. Catches SyntaxError, missing exports, and
+                # missing-module errors BEFORE any zip or AWS resource update. An unhandled
+                # rejection here makes the build exit non-zero, aborting the deploy.
+                - node --input-type=module -e "import('./src/handler.js').then(() => { console.log('✓ Import check passed'); }).catch(err => { console.error('✗ Import check FAILED:', err.message); if (err.stack) console.error(err.stack.split('\n').slice(0, 5).join('\n')); process.exit(1); });"
+                - zip -r function.zip . -x '*.git*' -x '*.zip' -x 'node_modules/.cache/*' -x '*.md' -x '.github/*' -x 'cloudformation/*' -x '*.test.js' -x '.eslintrc*' -x 'eslint.config.js'
                 - |
                   if [ -z "$VPC_ID" ] || [ -z "$SUBNET_IDS" ]; then
                     echo "ERROR: VPC_ID and SUBNET_IDS must be set. Update the pipeline stack with VpcId and SubnetIds parameters."
@@ -213,6 +218,12 @@ Resources:
                     exit 1
                   fi
                 - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
+                # Set Lambda log retention to 30 days. Done here instead of in the CFN template because
+                # AWS::Logs::LogGroup has a Create+PutRetention race that intermittently fails. Both
+                # commands are idempotent: create-log-group no-ops if it exists; put-retention-policy
+                # overwrites without error.
+                - aws logs create-log-group --log-group-name /aws/lambda/eventsquid-private-api --region ${AWS_REGION} || true
+                - aws logs put-retention-policy --log-group-name /aws/lambda/eventsquid-private-api --retention-in-days 30 --region ${AWS_REGION}
                 - aws lambda update-function-code --function-name eventsquid-private-api --zip-file fileb://function.zip --region ${AWS_REGION}
                 - aws lambda wait function-updated --function-name eventsquid-private-api --region ${AWS_REGION}
                 - aws lambda update-function-configuration --function-name eventsquid-private-api --environment Variables="{NODE_ENV=${DEPLOY_ENV}}" --region ${AWS_REGION}
@@ -221,6 +232,9 @@ Resources:
                   if [ "$DEPLOY_ENV" = "prod" ]; then
                     VERSION=$(aws lambda publish-version --function-name eventsquid-private-api --region ${AWS_REGION} --query 'Version' --output text)
                     aws lambda update-alias --function-name eventsquid-private-api --name live --function-version $VERSION --region ${AWS_REGION} || aws lambda create-alias --function-name eventsquid-private-api --name live --function-version $VERSION --region ${AWS_REGION}
+                    # Pre-warm 10 containers on the live alias to eliminate cold starts on routine traffic.
+                    # Provisioned concurrency persists across alias updates; put-config enforces the desired state every deploy.
+                    aws lambda put-provisioned-concurrency-config --function-name eventsquid-private-api --qualifier live --provisioned-concurrent-executions 10 --region ${AWS_REGION}
                   fi
           artifacts:
             files: '**/*'

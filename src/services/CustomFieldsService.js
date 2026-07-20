@@ -5,6 +5,7 @@
 
 import { getDatabase } from '../utils/mongodb.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
+import { withEventMongoLock } from '../utils/eventTouchMongo.js';
 
 class CustomFieldsService {
   /**
@@ -118,10 +119,23 @@ class CustomFieldsService {
         };
       });
 
-      // Execute bulk operations
       let mongoData = null;
       if (bulkOps.length > 0) {
-        mongoData = await eventsCollection.bulkWrite(bulkOps);
+        bulkOps.sort((a, b) => a.updateOne.filter.e - b.updateOne.filter.e);
+        let insertedCount = 0;
+        let modifiedCount = 0;
+        let matchedCount = 0;
+        for (const op of bulkOps) {
+          const { filter, update } = op.updateOne;
+          const eid = filter.e;
+          await withEventMongoLock(db, vert, eid, async () => {
+            const r = await eventsCollection.updateOne(filter, update);
+            insertedCount += r.upsertedCount || 0;
+            modifiedCount += r.modifiedCount || 0;
+            matchedCount += r.matchedCount || 0;
+          });
+        }
+        mongoData = { insertedCount, modifiedCount, matchedCount };
       }
 
       return { status: 'success', data: mongoData };

@@ -19,14 +19,28 @@ export const utcToEventZoneRoute = {
   path: '/utcToEventZone',
   handler: requireAuth(async (request) => {
     try {
-      const { date, zone, format } = request.body || {};
-      
+      const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const { date, zone, format } = body;
+
       if (!date || !zone) {
+        console.log('[utcToEventZone] 400: Missing date or zone. bodyType=', typeof request.body, 'bodyKeys=', typeof request.body === 'object' && request.body ? Object.keys(request.body).slice(0, 10) : 'n/a');
         return errorResponse('date and zone are required', 400);
       }
-      
-      const convertedDate = utcToTimezone(new Date(date), zone, format || 'YYYY-MM-DD HH:mm:ss');
-      
+
+      const dateObj = new Date(date);
+      if (Number.isNaN(dateObj.getTime())) {
+        console.log('[utcToEventZone] 400: Invalid date value.', { date, zone });
+        return errorResponse('Invalid date value', 400);
+      }
+
+      const convertedDate = utcToTimezone(dateObj, zone, format || 'YYYY-MM-DD HH:mm:ss');
+      if (convertedDate == null || String(convertedDate).toLowerCase().includes('invalid')) {
+        console.log('[utcToEventZone] 400: Conversion failed.', { date, zone, result: convertedDate });
+        return errorResponse('Invalid timezone or conversion failed', 400);
+      }
+
       return createResponse(200, { date: convertedDate });
     } catch (error) {
       console.error('Error in utcToEventZone:', error);
@@ -44,14 +58,28 @@ export const timezoneToUTCRoute = {
   path: '/timezoneToUTC',
   handler: requireAuth(async (request) => {
     try {
-      const { date, zone, format } = request.body || {};
-      
+      const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const { date, zone, format } = body;
+
       if (!date || !zone) {
+        console.log('[timezoneToUTC] 400: Missing date or zone. bodyType=', typeof request.body, 'bodyKeys=', typeof request.body === 'object' && request.body ? Object.keys(request.body).slice(0, 10) : 'n/a');
         return errorResponse('date and zone are required', 400);
       }
-      
-      const utcDate = timezoneToUTC(new Date(date), zone, format || 'YYYY-MM-DD HH:mm:ss');
-      
+
+      const dateObj = new Date(date);
+      if (Number.isNaN(dateObj.getTime())) {
+        console.log('[timezoneToUTC] 400: Invalid date value.', { date, zone });
+        return errorResponse('Invalid date value', 400);
+      }
+
+      const utcDate = timezoneToUTC(dateObj, zone, format || 'YYYY-MM-DD HH:mm:ss');
+      if (utcDate == null || String(utcDate).toLowerCase().includes('invalid')) {
+        console.log('[timezoneToUTC] 400: Conversion failed (invalid zone or result).', { date, zone, result: utcDate });
+        return errorResponse('Invalid timezone or conversion failed', 400);
+      }
+
       return createResponse(200, { date: utcDate });
     } catch (error) {
       console.error('Error in timezoneToUTC:', error);
@@ -83,13 +111,69 @@ export const jurisdictionsRoute = {
  * POST /images/:vert
  * Save an image to S3 and update MSSQL/MongoDB
  */
+/**
+ * Normalize POST body for /images/:vert.
+ * - JSON object: use as-is (expected shape).
+ * - application/x-www-form-urlencoded with one field whose value is JSON: unwrap.
+ * - Raw string body `data:image/...;base64,...`: combine with query ?fileName=&_guid=&type=
+ */
+function normalizePostImageBody(request) {
+  let body = request.body;
+  const qp = request.queryStringParameters || {};
+
+  // API Gateway / proxy may leave JSON as a string; base64 payloads contain "=" so handler must parse first,
+  // but keep this as a fallback for any code path that still passes a JSON string.
+  if (typeof body === 'string') {
+    const t = body.trim().replace(/^\uFEFF/, '');
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try {
+        body = JSON.parse(t);
+      } catch (_) {
+        /* continue to data:image / empty */
+      }
+    }
+  }
+
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const keys = Object.keys(body);
+    if (keys.length === 1 && typeof body[keys[0]] === 'string') {
+      const v = body[keys[0]].trim();
+      if ((v.startsWith('{') && v.endsWith('}')) || (v.startsWith('[') && v.endsWith(']'))) {
+        try {
+          body = JSON.parse(v);
+        } catch (_) {
+          /* keep object */
+        }
+      }
+    }
+  }
+
+  if (typeof body === 'string') {
+    const s = body.trim();
+    if (s.startsWith('data:image/')) {
+      const mime = s.match(/^data:image\/(png|jpeg|jpg);base64,/i);
+      const inferredType = mime
+        ? (mime[1].toLowerCase() === 'png' ? 'png' : 'jpg')
+        : null;
+      return {
+        base64: s,
+        type: qp.type || inferredType,
+        fileName: qp.fileName,
+        _guid: qp._guid,
+      };
+    }
+  }
+
+  return body && typeof body === 'object' ? body : {};
+}
+
 export const postImagesRoute = {
   method: 'POST',
   path: '/images/:vert',
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const vert = request.pathParameters?.vert;
-      const body = request.body || {};
+      const body = normalizePostImageBody(request);
       const session = request.session || request.user || {};
       
       // Validate required fields
@@ -99,8 +183,10 @@ export const postImagesRoute = {
         if (!body.type) missing.push('type');
         if (!body.fileName) missing.push('fileName');
         if (!body._guid) missing.push('_guid');
-        console.log('[postImages] 400: Missing required fields:', missing.join(', '), 'bodyKeys:', body ? Object.keys(body) : []);
-        return errorResponse('Missing required fields: base64, type, fileName, _guid', 400);
+        return errorResponse(
+          'Missing required fields: base64, type, fileName, _guid. Send Content-Type: application/json with those properties, or POST a raw data:image/png;base64,... body with query params ?fileName=org-logo&_guid=YOUR-GUID&type=png',
+          400
+        );
       }
 
       // File type mapping
@@ -111,7 +197,6 @@ export const postImagesRoute = {
 
       const fileType = fileTypes[body.type];
       if (!fileType) {
-        console.log('[postImages] 400: Invalid file type:', body.type);
         return errorResponse('Invalid file type. Must be jpg or png', 400);
       }
 
@@ -131,6 +216,7 @@ export const postImagesRoute = {
       // Update database based on file type
       const { getConnection, getDatabaseName, TYPES } = await import('../utils/mssql.js');
       const { getDatabase } = await import('../utils/mongodb.js');
+      const { withEventMongoLock } = await import('../utils/eventTouchMongo.js');
       const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
       const db = await getDatabase(null, vert);
@@ -151,11 +237,15 @@ export const postImagesRoute = {
         const results = result.recordset;
 
         if (results.length) {
+          const affiliateId = Number(results[0].affiliate_id);
           const eventsColl = db.collection('events');
-          await eventsColl.updateMany(
-            { '_id.a': Number(results[0].affiliate_id) },
-            { $set: { al3: logoURL } }
-          );
+          const eventIds = await eventsColl.distinct('e', { '_id.a': affiliateId });
+          eventIds.sort((a, b) => a - b);
+          for (const eid of eventIds) {
+            await withEventMongoLock(db, vert, eid, async () => {
+              await eventsColl.updateOne({ e: eid }, { $set: { al3: logoURL } });
+            });
+          }
         }
       } else if (body.fileName === 'speaker-photo') {
         // Update speaker record
@@ -189,7 +279,6 @@ export const postImagesRoute = {
           WHERE user_id = @userID
         `);
       } else {
-        console.log('[postImages] 400: Invalid fileName:', body.fileName);
         return errorResponse('Invalid fileName. Must be org-logo, speaker-photo, or avatars', 400);
       }
 

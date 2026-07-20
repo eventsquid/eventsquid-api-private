@@ -9,12 +9,10 @@ import { routes } from './routes/index.js';
 import { publishErrorToSNS } from './utils/sns.js';
 
 export const handler = async (event) => {
-  // Log incoming request
-  console.log('=== Lambda Request Start ===');
-  console.log('Event:', JSON.stringify(event, null, 2));
-  console.log('Request ID:', event.requestContext?.requestId || 'unknown');
-  console.log('HTTP Method:', event.requestContext?.http?.method || event.httpMethod);
-  console.log('Path:', event.requestContext?.http?.path || event.path || event.rawPath);
+  const reqMethod = event.requestContext?.http?.method || event.httpMethod;
+  const reqPath = event.requestContext?.http?.path || event.path || event.rawPath;
+  const reqId = event.requestContext?.requestId || 'unknown';
+  console.log(`[${reqId}] ${reqMethod} ${reqPath}`);
 
   try {
     // Extract HTTP method and path
@@ -40,19 +38,76 @@ export const handler = async (event) => {
     // Parse body if present (API Gateway may send base64-encoded body when binary media types are configured)
     let body = null;
     if (event.body) {
+      let rawBody = event.body;
+      if (event.isBase64Encoded && typeof rawBody === 'string') {
+        rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
+      }
+      // Try parse as JSON; if body is base64-encoded JSON (without isBase64Encoded set), try decode then parse
       try {
-        let rawBody = event.body;
-        if (event.isBase64Encoded && typeof rawBody === 'string') {
-          rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
-        }
         body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
-        // Handle double-encoded JSON: API Gateway or client may send JSON as a string value, so parsed body is still a string
-        if (typeof body === 'string' && (body.trim().startsWith('{') || body.trim().startsWith('['))) {
-          body = JSON.parse(body);
-        }
       } catch (e) {
-        // If body is not JSON, keep as string
-        body = event.body;
+        if (typeof rawBody === 'string') {
+          try {
+            const decoded = Buffer.from(rawBody, 'base64').toString('utf8');
+            if (decoded.trim().startsWith('{') || decoded.trim().startsWith('[')) {
+              body = JSON.parse(decoded);
+            } else {
+              body = rawBody;
+            }
+          } catch (e2) {
+            body = rawBody;
+          }
+        } else {
+          body = rawBody;
+        }
+      }
+      // Handle body as array of bytes (API Gateway or client may send JSON as array of char codes)
+      if (Array.isArray(body) && body.length > 0) {
+        try {
+          const str = typeof body[0] === 'number'
+            ? Buffer.from(body).toString('utf8')
+            : body.join('');
+          if (str.trim().startsWith('{') || str.trim().startsWith('[')) {
+            body = JSON.parse(str);
+          }
+        } catch (e4) {
+          // leave body as array
+        }
+      }
+      // JSON as string (BOM, whitespace): MUST run before form-urlencoded — JSON with base64 contains "="
+      // and would be mis-parsed as application/x-www-form-urlencoded if we split on "&" / first "=".
+      if (typeof body === 'string') {
+        const trimmed = body.trim().replace(/^\uFEFF/, '');
+        if (trimmed.startsWith('{') || trimmed.startsWith('[') || (trimmed.startsWith('"') && trimmed.length > 1)) {
+          try {
+            body = JSON.parse(trimmed);
+          } catch (e6) {
+            // leave body as string
+          }
+        }
+      }
+      // Fallback: application/x-www-form-urlencoded (e.g. date=...&zone=... or base64=...&type=jpg&...)
+      if (typeof body === 'string' && body.includes('=') && (body.includes('&') || body.includes('='))) {
+        const t = body.trim().replace(/^\uFEFF/, '');
+        const looksLikeJson = t.startsWith('{') || t.startsWith('[');
+        if (!looksLikeJson) {
+          try {
+            const parsed = {};
+            for (const pair of body.split('&')) {
+              const eq = pair.indexOf('=');
+              if (eq !== -1) {
+                const k = decodeURIComponent(pair.slice(0, eq).replace(/\+/g, ' '));
+                const v = decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '));
+                parsed[k] = v;
+              }
+            }
+            if (Object.keys(parsed).length > 0) {
+              body = parsed;
+            }
+          } catch (e5) {
+            // leave body as string
+          }
+        }
       }
     }
     
@@ -103,9 +158,7 @@ export const handler = async (event) => {
     request.pathParameters = { ...request.pathParameters, ...extractedParams };
 
     // Execute route handler
-    console.log('Executing route:', route.path, 'with method:', route.method);
     const result = await route.handler(request);
-    console.log('Route handler completed, status:', result?.statusCode || 200);
 
     // If handler returns a response object, ensure it has CORS headers
     if (result && result.statusCode) {
@@ -128,33 +181,18 @@ export const handler = async (event) => {
 
   } catch (error) {
     // Enhanced error logging
-    console.error('=== Lambda Error ===');
-    console.error('Error Type:', error.constructor.name);
-    console.error('Error Message:', error.message);
-    console.error('Error Stack:', error.stack);
-    console.error('Request Path:', event.requestContext?.http?.path || event.path || event.rawPath);
-    console.error('Request Method:', event.requestContext?.http?.method || event.httpMethod);
-    console.error('Request ID:', event.requestContext?.requestId || 'unknown');
-    if (error.cause) {
-      console.error('Error Cause:', error.cause);
-    }
-    console.error('Full Error Object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    console.error('=== End Error ===');
-    
+    console.error(`[${reqId}] ${reqMethod} ${reqPath} — ${error.constructor.name}: ${error.message}`);
+    console.error(error.stack);
+    if (error.cause) console.error('Caused by:', error.cause);
+
     // Publish error to SNS if configured
-    await publishErrorToSNS(error, {
-      requestId: event.requestContext?.requestId || 'unknown',
-      path: event.requestContext?.http?.path || event.path || event.rawPath,
-      method: event.requestContext?.http?.method || event.httpMethod
-    });
+    await publishErrorToSNS(error, { requestId: reqId, path: reqPath, method: reqMethod });
     
     return createResponse(500, {
       error: 'Internal Server Error',
       message: process.env.NODE_ENV === 'development' ? error.message : undefined,
       requestId: event.requestContext?.requestId || 'unknown'
     });
-  } finally {
-    console.log('=== Lambda Request End ===');
   }
 };
 

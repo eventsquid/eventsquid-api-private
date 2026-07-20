@@ -105,6 +105,47 @@ All secrets are stored in AWS Secrets Manager. No GitHub secrets are needed sinc
 Ensure the following secrets exist in AWS Secrets Manager:
 - MongoDB connection string (referenced by `MongoSecretName` parameter)
 - MSSQL connection string (if needed)
+- **SendGrid** (optional but required for email): secret name `sendgrid/api-credentials` (override with Lambda env `SENDGRID_SECRET_NAME`). Store one JSON object; keys can be camelCase **or** the same names you use in `.env` (see table). Omitted keys fall back to defaults or optional behavior.
+
+  | Purpose | `.env` / Lambda env | JSON keys accepted (any one) |
+  |--------|---------------------|------------------------------|
+  | Mail send API | `SG_API_KEY` or `SENDGRID_API_KEY` | `apiKey`, `SG_API_KEY`, `SENDGRID_API_KEY` |
+  | Default From | `SENDGRID_SENDER` | `sender`, `SENDGRID_SENDER` (default `noreply@eventsquid.com`) |
+  | Webhook / tracking (`_esk`) | `TWILIO_INBOUND_API_KEY` or `SENDGRID_INBOUND_API_KEY` | `inboundApiKey`, `TWILIO_INBOUND_API_KEY`, `SENDGRID_INBOUND_API_KEY` |
+  | Email validation API | `SG_EMAIL_VAL_KEY` | `emailValidationKey`, `SG_EMAIL_VAL_KEY` |
+  | Email activity API | `SG_EMAIL_ACTIVITY_KEY` | `emailActivityKey`, `SG_EMAIL_ACTIVITY_KEY` |
+
+  Example (all fields optional except what you use):
+  ```json
+  {
+    "SG_API_KEY": "SG.xxx",
+    "SENDGRID_SENDER": "noreply@eventsquid.com",
+    "TWILIO_INBOUND_API_KEY": "shared-webhook-key",
+    "SG_EMAIL_VAL_KEY": "SG.xxx",
+    "SG_EMAIL_ACTIVITY_KEY": "SG.xxx"
+  }
+  ```
+  Local development: set the same variables in `.env` (loaded by `local-server.js`). In Lambda, environment variables **override** the secret when set.
+
+- **Twilio** (optional but required for SMS): secret name `twilio/api-credentials` (override with Lambda env `TWILIO_SECRET_NAME`).
+
+  | Purpose | `.env` / Lambda env | JSON keys accepted |
+  |--------|---------------------|-------------------|
+  | Account | `TWILIO_ACCT_SID` | `accountSid`, `TWILIO_ACCT_SID` |
+  | Token | `TWILIO_AUTH_TOKEN` | `authToken`, `TWILIO_AUTH_TOKEN` |
+  | Messaging Service | `TWILIO_MSG_SERVICE_SID` | `messagingServiceSid`, `TWILIO_MSG_SERVICE_SID` |
+  | Status callback path segment | `TWILIO_STATUS_CALLBACK` | `statusCallback`, `TWILIO_STATUS_CALLBACK` (default `twilio-status`) |
+
+  Example:
+  ```json
+  {
+    "TWILIO_ACCT_SID": "ACxxx",
+    "TWILIO_AUTH_TOKEN": "xxx",
+    "TWILIO_MSG_SERVICE_SID": "MGxxx",
+    "TWILIO_STATUS_CALLBACK": "twilio-status"
+  }
+  ```
+  `API_GATEWAY_HOST` / `API_GATEWAY_PROTOCOL` stay as plain Lambda environment variables (not in these secrets).
 
 The CodePipeline uses IAM roles with appropriate permissions to access these secrets during deployment.
 
@@ -148,6 +189,8 @@ export NODE_ENV=development
 ```
 
 3. For local testing, you may want to use a local MongoDB or configure AWS credentials to access Secrets Manager.
+
+4. **TimeZoneDB** (optional): For `POST /event/:eventGUID/updateTimezoneData` and fee timezone updates, set `TIMEZONEDB_API_KEY` in `.env` for local testing. In **production (Lambda)**, the API key is read from **AWS Secrets Manager** by default: secret name `timezonedb/api-key`. The secret value may be either the raw API key string or JSON such as `{"apiKey":"YOUR_KEY"}`. To use a different secret name, set the Lambda environment variable `TIMEZONEDB_SECRET_NAME`. You can still override with `TIMEZONEDB_API_KEY` on the function if needed. Ensure the Lambda IAM role allows `secretsmanager:GetSecretValue` on that secret (the API stack includes `timezonedb/*`).
 
 ### Adding Routes
 

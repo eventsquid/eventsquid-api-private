@@ -820,3 +820,303 @@ export const deleteEventResourceCategoryRoute = {
     }
   }))
 };
+
+/**
+ * POST /event/:eventGUID/resources/sponsor/contact/:sponsorID
+ * Send a sponsor instant-contact email. Body: { firstName?, lastName?, email?, phone, useMobile, message }.
+ * Mirrors Mantle events-controller.js:327.
+ */
+export const sponsorInstantContactRoute = {
+  method: 'POST',
+  path: '/event/:eventGUID/resources/sponsor/contact/:sponsorID',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const { eventGUID, sponsorID } = request.pathParameters || {};
+      const session = request.session || {};
+      const result = await _eventsService.sponsorInstantContact(
+        eventGUID,
+        Number(session.user_id),
+        Number(sponsorID),
+        request.body || {},
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error sending sponsor instant contact:', error);
+      return errorResponse('Failed to send sponsor instant contact', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * POST /event/:eventID/sponsorLocationAgenda
+ * Set the sponsor agenda location for an event. Body: { location }.
+ * Mirrors Mantle events-controller.js:138.
+ */
+export const setSponsorLocationAgendaRoute = {
+  method: 'POST',
+  path: '/event/:eventID/sponsorLocationAgenda',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = request.pathParameters.eventID;
+      const { location } = request.body || {};
+      const result = await _eventsService.setSponsorLocationAgenda(
+        eventID,
+        location,
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error setting sponsor location agenda:', error);
+      return errorResponse('Failed to set sponsor location agenda', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * GET /event/resources/getSponsor/:sponsorID
+ * Fetch a single sponsor record. Mirrors Mantle events-controller.js:338.
+ */
+export const getSponsorRoute = {
+  method: 'GET',
+  path: '/event/resources/getSponsor/:sponsorID',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const { sponsorID } = request.pathParameters || {};
+      const result = await _eventsService.getSponsor(sponsorID, request.vert);
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error getting sponsor:', error);
+      return errorResponse('Failed to get sponsor', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * POST /event/resources/getSlotSponsorResources
+ * Fetch sponsor resources for an agenda slot. Body: { sponsorID, slotID }.
+ * Mirrors Mantle events-controller.js:346.
+ */
+export const getSlotSponsorResourcesRoute = {
+  method: 'POST',
+  path: '/event/resources/getSlotSponsorResources',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const { sponsorID, slotID } = request.body || {};
+      const result = await _eventsService.getSlotSponsorResources(
+        sponsorID,
+        slotID,
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error getting slot sponsor resources:', error);
+      return errorResponse('Failed to get slot sponsor resources', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * POST /event/:eventID/resources/sponsor/update
+ * Update the sponsor associated with an event upload. Body: { upload_id, sponsorID }.
+ * Mirrors Mantle events-controller.js:364.
+ */
+export const updateResourceSponsorRoute = {
+  method: 'POST',
+  path: '/event/:eventID/resources/sponsor/update',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const { upload_id, sponsorID } = request.body || {};
+      const result = await _eventsService.updateResourceSponsor(
+        upload_id,
+        sponsorID,
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error updating resource sponsor:', error);
+      return errorResponse('Failed to update resource sponsor', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * GET /event/:eventGUID/resource/:videoID
+ * Fetch a single accessible resource on an event by upload_id.
+ * Auth-only (no verticalCheck) — matches Mantle events-controller.js:374.
+ */
+export const getSingleResourceRoute = {
+  method: 'GET',
+  path: '/event/:eventGUID/resource/:videoID',
+  handler: requireAuth(async (request) => {
+    try {
+      const { eventGUID, videoID } = request.pathParameters || {};
+      const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
+      const session = request.session || {};
+
+      const event = await _eventsService.getEventDataByGUID(eventGUID, ['e'], vert);
+      const result = await _eventsService.getSingleResource(
+        Number(session.user_id),
+        Number(event.e),
+        videoID,
+        vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error getting single resource:', error);
+      return errorResponse('Failed to get single resource', 500, error.message);
+    }
+  })
+};
+
+/**
+ * POST /event/:eventID/resource/fromLibrary
+ * Add an existing affiliate library resource to an event.
+ * Body: { docID, linked?, useCategory? } — `linked` and `useCategory` default to true.
+ * Headers: s3domain (for S3 copy when linked=false).
+ * Mirrors Mantle events-controller.js:175.
+ */
+export const addLibraryResourceToEventRoute = {
+  method: 'POST',
+  path: '/event/:eventID/resource/fromLibrary',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = request.pathParameters.eventID;
+      const session = request.session || {};
+      const body = request.body || {};
+      // Match Mantle defaults: linked=true and useCategory=true unless explicitly provided
+      const linked = 'linked' in body ? body.linked : true;
+      const useCategory = 'useCategory' in body ? body.useCategory : true;
+      const s3domain = request.headers?.s3domain;
+
+      const result = await _eventsService.addLibraryResourceToEvent(
+        eventID,
+        session.affiliate_id,
+        body.docID,
+        linked,
+        useCategory,
+        s3domain,
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error adding library resource to event:', error);
+      return errorResponse('Failed to add library resource to event', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * POST /event/:eventID/resource
+ * Add a video (or URL-based) resource to an event.
+ * Body: { title, type, url, category, saveToLibrary }.
+ * Mirrors Mantle events-controller.js:198.
+ */
+export const addVideoResourceRoute = {
+  method: 'POST',
+  path: '/event/:eventID/resource',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = request.pathParameters.eventID;
+      const session = request.session || {};
+      const body = request.body || {};
+
+      const resourceData = {
+        title: body.title,
+        type: body.type,
+        url: body.url,
+        category: body.category,
+        saveToLibrary: Number(body.saveToLibrary)
+      };
+
+      const result = await _eventsService.addVideoResource(
+        eventID,
+        resourceData,
+        session.affiliate_id,
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error adding video resource:', error);
+      return errorResponse('Failed to add video resource', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * POST /event/:eventID/resources/move
+ * Move a resource. Body: { category_id, upload_id, updateMode, sortOrder }.
+ * Mirrors Mantle events-controller.js:252.
+ */
+export const moveResourceRoute = {
+  method: 'POST',
+  path: '/event/:eventID/resources/move',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = request.pathParameters.eventID;
+      const { category_id, upload_id, updateMode, sortOrder } = request.body || {};
+      const result = await _eventsService.moveResource(
+        eventID,
+        category_id,
+        upload_id,
+        updateMode,
+        sortOrder,
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error moving resource:', error);
+      return errorResponse('Failed to move resource', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * POST /event/:eventID/resources/categories/move
+ * Move a resource category. Body: { category_id, sortOrder }.
+ * Mirrors Mantle events-controller.js:240.
+ */
+export const moveResourceCategoryRoute = {
+  method: 'POST',
+  path: '/event/:eventID/resources/categories/move',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const eventID = request.pathParameters.eventID;
+      const { category_id, sortOrder } = request.body || {};
+      const result = await _eventsService.moveResourceCategory(
+        eventID,
+        category_id,
+        sortOrder,
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error moving resource category:', error);
+      return errorResponse('Failed to move resource category', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * POST /event/resources/slotBinding
+ * Toggle agenda slot binding for a resource. Body: { resourceID, slotID }.
+ * Mirrors Mantle events-controller.js:286.
+ */
+export const toggleAgendaSlotBindingRoute = {
+  method: 'POST',
+  path: '/event/resources/slotBinding',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const { resourceID, slotID } = request.body || {};
+      const result = await _eventsService.toggleAgendaSlotBinding(
+        resourceID,
+        slotID,
+        request.vert
+      );
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error toggling agenda slot binding:', error);
+      return errorResponse('Failed to toggle agenda slot binding', 500, error.message);
+    }
+  }))
+};

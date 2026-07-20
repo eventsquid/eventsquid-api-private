@@ -23,7 +23,17 @@ class EmailService {
    */
   async logEmail(request) {
     try {
-      const form = Array.isArray(request.body) ? request.body : [request.body];
+      let body = request.body;
+      // SendGrid POSTs a JSON array; if body is still a string (e.g. Lambda/API Gateway), parse it
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch (e) {
+          console.error('logEmail: body could not be parsed as JSON', e.message);
+          throw e;
+        }
+      }
+      const form = Array.isArray(body) ? body : [body];
       await logEmailFunc(form);
       return { status: 'success' };
     } catch (error) {

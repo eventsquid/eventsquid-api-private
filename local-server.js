@@ -10,19 +10,6 @@ import express from 'express';
 import cors from 'cors';
 import { handler } from './src/handler.js';
 
-// Handle Node.js 24 compatibility issues with tedious-connection-pool in local dev
-if (process.env.NODE_ENV === 'development') {
-  process.on('uncaughtException', (error) => {
-    // Silently suppress MSSQL/Tedious Node.js 24 compatibility errors
-    if (error.message && error.message.includes('createSecurePair')) {
-      // Silently ignore - don't log, don't crash
-      return;
-    }
-    // Re-throw other errors
-    throw error;
-  });
-}
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -128,7 +115,7 @@ async function sendResponse(lambdaResponse, res) {
 }
 
 // Catch-all route handler
-app.all('*', async (req, res) => {
+app.use(async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
     
@@ -149,6 +136,53 @@ app.all('*', async (req, res) => {
     });
   }
 });
+
+/**
+ * Extract the host portion of a MongoDB connection string.
+ * Strips protocol, credentials, path, and query — returns just the hostname(s).
+ */
+function getMongoHost(connectionString) {
+  if (!connectionString) return null;
+  const withoutProtocol = connectionString.replace(/^[a-z+]+:\/\//i, '');
+  const afterAuth = withoutProtocol.includes('@')
+    ? withoutProtocol.split('@').slice(1).join('@')
+    : withoutProtocol;
+  return afterAuth.split('/')[0].split('?')[0];
+}
+
+/**
+ * Refuse to start the local server if any DB host looks like prod.
+ * "Dev" is identified by a "-dev" substring in the host name.
+ */
+function verifyDevEnvironment() {
+  const hosts = [
+    { label: 'MSSQL', value: process.env.MSSQL_HOST || '' },
+    { label: 'MongoDB', value: getMongoHost(process.env.MONGO_CONNECTION_STRING) || '' },
+    { label: 'MongoDB (cm)', value: getMongoHost(process.env.MONGO_COMMON_CONNECTION_STRING) || '' },
+  ];
+
+  console.log('');
+  console.log('🔎 Database hosts:');
+  for (const h of hosts) {
+    console.log(`   ${h.label.padEnd(13)} ${h.value || '(not set)'}`);
+  }
+
+  const prodHosts = hosts.filter(h => h.value && !h.value.toLowerCase().includes('-dev'));
+  if (prodHosts.length > 0) {
+    console.error('');
+    console.error('🛑 PROD DATABASE DETECTED — refusing to start local server.');
+    console.error('   These hosts do not contain "-dev":');
+    for (const h of prodHosts) {
+      console.error(`     - ${h.label}: ${h.value}`);
+    }
+    console.error('');
+    console.error('   Update your .env to point at -dev hosts before starting.');
+    console.error('');
+    process.exit(1);
+  }
+}
+
+verifyDevEnvironment();
 
 // Start server
 app.listen(PORT, () => {

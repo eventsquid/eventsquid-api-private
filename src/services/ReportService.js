@@ -255,10 +255,6 @@ class ReportService {
    */
   async findEventReportConfig(request) {
     try {
-      // We need to check if the event configuration is up-to-date
-      // TODO: Implement EventService.updateEventConfig if needed
-      // await _eventsService.updateEventConfig(request);
-
       return await findEventReportConfig(request);
     } catch (error) {
       console.error('Error finding event report config:', error);

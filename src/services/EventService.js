@@ -4,12 +4,106 @@
  * This is a placeholder - the full service is 2900+ lines and needs to be migrated incrementally
  */
 
-import { getDatabase } from '../utils/mongodb.js';
+import { getDatabase, isDeployed } from '../utils/mongodb.js';
+import { getTimeZoneDbApiKey } from '../utils/timezonedbApiKey.js';
+import {
+  withEventMongoLock,
+  replaceEventDocumentInEventsCollection
+} from '../utils/eventTouchMongo.js';
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 // Note: getConnection now returns sql module, use new sql.Request() for queries
 import _ from 'lodash';
 import moment from 'moment-timezone';
 import axios from 'axios';
+
+const ES_S3_BASE_URL = process.env.S3_BASE_URL || 'https://s3-us-west-2.amazonaws.com/eventsquid/';
+
+/**
+ * Build the HTML body for a sponsor instant-contact email.
+ * Faithful port of Mantle's functions/veo/getInstantContactEmail.js — same markup,
+ * same field references, same fallback handling.
+ */
+function getInstantContactEmail(attendee, sponsor, event, form) {
+  return `
+    <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional //EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+    <html xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml">
+        <head>
+            <!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->
+            <meta content="text/html; charset=utf-8" http-equiv="Content-Type"/>
+            <meta content="width=device-width" name="viewport"/>
+            <!--[if !mso]><!-->
+            <meta content="IE=edge" http-equiv="X-UA-Compatible"/>
+            <style>
+                .container {
+                    background: #F2F3F5;
+                    padding: 50px 0px;
+                    color: #444;
+                }
+
+                .innerContainer {
+                    background: white;
+                    padding: 25px;
+                    border: 1px solid #ddd;
+                    max-width: 650px;
+                    margin: auto;
+                }
+
+                .imageContainer {
+                    width: 100%;
+                    text-align: center;
+                }
+
+                .contentBlock {
+                    background: #c5c5c5;
+                    border-radius: 5px;
+                    padding: 15px;
+                }
+                .contentMessage {
+                    line-height: 1.2em;
+                    font-size: 12px;
+                    color: #444;
+                }
+            </style>
+        </head>
+        <body>
+        <div class="container">
+            <div class="innerContainer">
+            <div class="imageContainer">
+                ${event.el3 ? `<img src="${event.el3}" style="max-height: 100px;"/>` : ''}
+            </div>
+            <br>
+            <br>
+            <p>${sponsor.sponsorName},</p>
+            <p>One of the attendees at our event, ${event.et}, has requested a contact from you. We would greatly appreciate your reaching out to them. Here is the information provided by the attendee:</p>
+            <br>
+            <div class="contentBlock">
+                <p><b>CONTACT NAME:</b> ${attendee.uf || ''} ${attendee.ul || ''}</p>
+                <p><b>MESSAGE:</b></p>
+                <p class="contentMessage">
+                    ${form.message}
+                </p>
+                <p><b>CONTACT EMAIL:</b> ${attendee.ue || ''}</p>
+                ${form.useMobile ? `<p><b>CONTACT PHONE:</b> ${form.phone || ''}</p>` : ''}
+            </div>
+            <br>
+            <br>
+            <p>Thank you for responding to this inquiry! We appreciate your supporting our event.</p>
+            <br>
+            <p style="margin:0;">${event.an}</p>
+            <p style="margin:0;">${event.en}</p>
+            <p style="margin:0;">${event.em}</p>
+            </div>
+            <br>
+            <div class="imageContainer">
+                <p style="text-align: center; font-size: 9px;">Event software powered by</p>
+                <img style="text-align: center;" src="${ES_S3_BASE_URL}resources/instant_contact_es_logo.png"/>
+            </div>
+        </div>
+        </body>
+    </html>
+    `;
+}
 
 class EventService {
   /**
@@ -65,12 +159,214 @@ class EventService {
       return docs;
     }
 
-    // For the event config in the new group tool
+    // for the event config in the new group tool
     if (resultset === "grouptool-event") {
-      // This is complex restructuring logic - simplified version
-      // Full implementation would restructure fees-by-cat and questions-with-options
-      // For now, return docs as-is (full implementation can be added later)
-      return docs;
+
+      let
+        i = 0,
+        j = 0,
+        k = 0,
+        l = 0,
+        m = 0,
+        n = 0,
+        feeCatObj = {},
+        feeCatRA = [],
+        thisFee = {},
+        thisFeeCat = "",
+        thisFeeCatName = "",
+        thisOpt = "",
+        thisQ = {},
+        thisQObj = {},
+        questionRA = [],
+        questionObj = {};
+
+      // loop the results (there should be only one, but just in case)
+      for ( i=0; i<docs.length; i++ ) {
+
+        feeCatObj = {};
+        feeCatRA = [];
+        thisFee = {};
+        thisFeeCat = "";
+        thisFeeCatName = "";
+        thisOpt = "",
+        thisQ = {},
+        thisQObj = {},
+        questionRA = [];
+        questionObj = {};
+
+        // if we have fees
+        if ( docs[i].evfs ) {
+
+          // create a fees by category array on this doc
+          docs[i]["fees-by-cat"] = [];
+
+          // loop the fees
+          for ( j=0; j<docs[i].evfs.length; j++ ) {
+
+            thisFee = docs[i].evfs[j];
+            thisFeeCatName = thisFee.fgn || thisFee.fc;
+
+            if ( !thisFeeCatName ) {
+              thisFeeCatName = thisFee.fc;
+            }
+
+            // if we don't yet have this fee category recorded
+            if ( !feeCatObj[ String( thisFeeCatName ) ] ) {
+
+              // add it
+              feeCatObj[ String( thisFeeCatName ) ] = [];
+              feeCatRA.push( String( thisFeeCatName ) );
+            }
+
+            // add this fee to the fee category
+            feeCatObj[ String( thisFeeCatName ) ].push( thisFee );
+
+          }
+          // end loop fees
+
+          // alpha sort the array of fee categories
+          feeCatRA.sort( function( a, b ) {
+
+            if ( a.toLowerCase() < b.toLowerCase() ) {
+              return -1;
+            }
+            if ( a.toLowerCase() > b.toLowerCase() ) {
+              return 1;
+            }
+
+            return 0;
+          } );
+
+          // loop the fee categories
+          for ( k=0; k<feeCatRA.length; k++ ) {
+
+            thisFeeCat = String( feeCatRA[k] );
+
+            // sort the fees for this category
+            feeCatObj[ thisFeeCat ].sort( function( a, b ) {
+
+              if ( a.fm.toLowerCase() < b.fm.toLowerCase() ) {
+                return -1;
+              }
+              if ( a.fm.toLowerCase() > b.fm.toLowerCase() ) {
+                return 1;
+              }
+
+              return 0;
+            } );
+
+            // add it to the fees by category array
+            docs[i]["fees-by-cat"].push( {
+              "category": String( thisFeeCat ),
+              "fees": feeCatObj[ thisFeeCat ]
+            } );
+
+          }
+
+          delete docs[i].evfs;
+
+        }
+        // end if we have fees
+
+        // if we have questions
+        if ( docs[i].eq ) {
+
+          // create a questions with options array on this doc
+          docs[i]["questions-with-options"] = [];
+
+          // loop the questions
+          for ( l=0; l<docs[i].eq.length; l++ ) {
+
+            thisQ = docs[i].eq[l];
+
+            // if this question should have options
+            if ( thisQ.fo && thisQ.fo === 1 ) {
+
+              // add it to the question object
+              questionObj[ "_" + String( thisQ.fi ) ] = thisQ;
+              questionObj[ "_" + String( thisQ.fi ) ].op = [];
+
+              questionRA.push( {
+                "fi": Number( thisQ.fi ),
+                "fl": String( thisQ.fl )
+              } );
+            }
+          }
+          // end loop questions
+
+          // alpha sort the array of questions
+          questionRA.sort( function( a, b ) {
+
+            if ( a.fl.toLowerCase() < b.fl.toLowerCase() ) {
+              return -1;
+            }
+            if ( a.fl.toLowerCase() > b.fl.toLowerCase() ) {
+              return 1;
+            }
+
+            return 0;
+          } );
+
+          // if we have event question options
+          if ( docs[i].eqo ) {
+
+            // loop the question options
+            for ( m=0; m<docs[i].eqo.length; m++ ) {
+
+              thisOpt = docs[i].eqo[m];
+
+              // if this option has a matching question
+              if ( thisOpt && questionObj[ "_" + String( thisOpt.fid ) ] ) {
+                // add it to the question objects options array
+                questionObj[ "_" + String( thisOpt.fid ) ].op.push( {
+                  "ol": String( thisOpt.ol ),
+                  "ov": String( thisOpt.ov ),
+                  "id": Number( thisOpt.id )
+                } );
+              }
+            }
+            // end loop the question options
+          }
+          // end if we have event question options
+
+          // loop the questions array
+          for ( n=0; n<questionRA.length; n++ ) {
+
+            thisQObj = questionObj[ "_" + String( questionRA[n].fi ) ];
+
+            // if we have any options
+            if ( thisQObj.op.length > 0 ) {
+
+              // sort the options for this question
+              thisQObj.op.sort( function( a, b ) {
+
+                if ( a.ol.toLowerCase() < b.ol.toLowerCase() ) {
+                  return -1;
+                }
+                if ( a.ol.toLowerCase() > b.ol.toLowerCase() ) {
+                  return 1;
+                }
+
+                return 0;
+              } );
+
+              // and add the question to the return array
+              docs[i]["questions-with-options"].push( {
+                "fl": String( thisQObj.fl ),
+                "fi": Number( thisQObj.fi ),
+                "op": thisQObj.op
+              } );
+            }
+          }
+          // end loop the questions array
+        }
+        // end if we have questions
+
+        delete docs[i].eq;
+        delete docs[i].eqo;
+
+      }
+
     }
 
     return docs;
@@ -198,18 +494,50 @@ class EventService {
         }
       });
 
-      // Update the event record in MongoDB
-      const result = await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { eq: prompts, eqo: options }
-        }
+      // Update the event record in MongoDB (serialized with touchEvent)
+      const result = await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { eq: prompts, eqo: options }
+          }
+        )
       );
 
       return result;
     } catch (error) {
       console.error('Error updating custom prompts:', error);
+      throw error;
+    }
+  }
+
+  async getAdditionalContacts(eventGUID, vert) {
+    try {
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const request = new sql.Request();
+      request.input('guid', sql.VarChar, eventGUID);
+      const result = await request.query(`
+        USE ${dbName};
+        SELECT
+            cd_name,
+            cd_email,
+            cd_phone
+        FROM eventCD
+        WHERE event_id = (
+            SELECT event_id FROM b_events WHERE _guid = @guid
+        )
+      `);
+
+      return result.recordset.map(contact => ({
+        name: contact.cd_name,
+        email: contact.cd_email,
+        phone: contact.cd_phone
+      }));
+    } catch (error) {
+      console.error('Error getting additional contacts:', error);
       throw error;
     }
   }
@@ -527,13 +855,26 @@ class EventService {
 
       const startDateUnix = startDate.unix();
 
-      // Get timezone config from TimeZoneDB API
-      if (!process.env.TIMEZONEDB_API_KEY) {
-        throw new Error('TIMEZONEDB_API_KEY environment variable is required');
+      const timeZoneDbApiKey = await getTimeZoneDbApiKey();
+      if (!timeZoneDbApiKey) {
+        if (!isDeployed()) {
+          console.warn(
+            'TimeZoneDB API key not set; skipping TimeZoneDB call and SQL timezone update (local only). Set TIMEZONEDB_API_KEY in .env or configure the timezonedb/api-key secret in AWS.'
+          );
+          return {
+            success: false,
+            skipped: true,
+            message:
+              'TimeZoneDB API key not configured locally. Set TIMEZONEDB_API_KEY in .env to test this path.'
+          };
+        }
+        throw new Error(
+          'TimeZoneDB API key is missing (Secrets Manager or TIMEZONEDB_API_KEY)'
+        );
       }
 
       const tzConfigs = await axios.request({
-        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${process.env.TIMEZONEDB_API_KEY}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
+        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${timeZoneDbApiKey}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
         method: 'get'
       }).then(response => {
         response.data.dst = Number(response.data.dst);
@@ -616,13 +957,26 @@ class EventService {
 
       const startDateUnix = startDate.unix();
 
-      // Get timezone config from TimeZoneDB API
-      if (!process.env.TIMEZONEDB_API_KEY) {
-        throw new Error('TIMEZONEDB_API_KEY environment variable is required');
+      const timeZoneDbApiKey = await getTimeZoneDbApiKey();
+      if (!timeZoneDbApiKey) {
+        if (!isDeployed()) {
+          console.warn(
+            'TimeZoneDB API key not set; skipping TimeZoneDB call and SQL timezone update (local only). Set TIMEZONEDB_API_KEY in .env or configure the timezonedb/api-key secret in AWS.'
+          );
+          return {
+            success: false,
+            skipped: true,
+            message:
+              'TimeZoneDB API key not configured locally. Set TIMEZONEDB_API_KEY in .env to test this path.'
+          };
+        }
+        throw new Error(
+          'TimeZoneDB API key is missing (Secrets Manager or TIMEZONEDB_API_KEY)'
+        );
       }
 
       const tzConfigs = await axios.request({
-        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${process.env.TIMEZONEDB_API_KEY}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
+        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${timeZoneDbApiKey}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
         method: 'get'
       }).then(response => {
         response.data.dst = Number(response.data.dst);
@@ -881,13 +1235,14 @@ class EventService {
         getSpeakers[i] = _.omitBy(getSpeakers[i], _.isNull);
       }
 
-      // Update the event record
-      await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { spk: getSpeakers }
-        }
+      await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { spk: getSpeakers }
+          }
+        )
       );
 
       return { success: true, speakerCount: getSpeakers.length };
@@ -1060,13 +1415,14 @@ class EventService {
         getItems[i] = _.omitBy(getItems[i], _.isNull);
       }
 
-      // Update the event record in MongoDB
-      const result = await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        {
-          $currentDate: { lu: { $type: 'date' } },
-          $set: { evfs: getItems }
-        }
+      const result = await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne(
+          { e: Number(eventID) },
+          {
+            $currentDate: { lu: { $type: 'date' } },
+            $set: { evfs: getItems }
+          }
+        )
       );
 
       return result;
@@ -1224,9 +1580,8 @@ class EventService {
       const updateObj = {};
       updateObj[String(key)] = updateTS;
 
-      await eventsCollection.updateOne(
-        { e: Number(eventID) },
-        { $set: updateObj }
+      await withEventMongoLock(db, vert, eventID, async () =>
+        eventsCollection.updateOne({ e: Number(eventID) }, { $set: updateObj })
       );
 
       return { success: true };
@@ -1416,68 +1771,224 @@ class EventService {
    * This method queries all relevant tables to build a complete event document
    */
   async getTouchEventQueries(eventID, vert, connection, dbName, s3RootURL, siteURL) {
-    // Main event data query - start with core fields we know exist
-    // Additional fields can be added as needed
+    // s3RootURL and siteURL come from request.body and are interpolated into SQL
+    // string literals below. Escape single quotes to prevent injection.
+    // TODO: switch these to parameterized queries (see docs/post-migration-cleanup.md).
+    const safeS3 = String(s3RootURL || '').replace(/'/g, "''");
+    const safeSite = String(siteURL || '').replace(/'/g, "''");
+
     const sql = await getConnection(vert);
     const request1 = new sql.Request();
     request1.input('eventID', sql.Int, Number(eventID));
     const result1 = await request1.query(`
       USE ${dbName};
-      SELECT TOP 1
-          -- Basic event identifiers
+      SELECT
+          a._guid AS ag,
+          a.affiliate_name AS an,
+          a.customAffiliateID AS cai,
+          a.logoS3 AS al3,
           e._guid AS eg,
-          e.Event_id AS e,
+          e.accessCode AS eac,
+          e.addOnReg AS eao,
+          e.addOnRegExpires AS eax,
+          e.address_req AS rqa,
+          e.adultReg AS etp,
           e.affiliate_id AS a,
-          -- Event dates and times
-          e.Event_begins AS eb,
-          e.Event_ends AS ee,
-          e.startTime AS est,
+          e.affiliate_notes AS ano,
+          e.ama_district AS amd,
+          e.ama_sanction AS ams,
+          e.archive AS av,
+          e.deleted AS dp,
+          e.balesLive AS egl,
+          e.billingComplete AS ebc,
+          e.bio_req AS rqb,
+          e.birthdate_req AS rqd,
+          e.boothReg AS ebr,
+          e.booths_req AS rqu,
+          e.boothTitle AS ebt,
+          e.bringing_req AS rqr,
+          e.bringingLimit AS ebl,
+          e.bringingNotes AS ebg,
+          e.calSum AS ecl,
+          e.checkOutNotes AS eco,
+          e.company_req AS rqc,
+          e.confirmLabel1 AS em1,
+          e.confirmLabel2 AS em2,
+          e.confirmLabel3 AS em3,
+          e.confirmLink1 AS eu1,
+          e.confirmLink2 AS eu2,
+          e.confirmLink3 AS eu3,
+          e.ContestantReg AS cr,
+          e.conversionRate AS ecv,
+          e.customHost AS ech,
+          e.departure_req AS rqe,
+          e.disclaimer AS edr,
+          e.docNotes AS edn,
+          e.docNotesVendor AS env,
+          e.docsNeeded AS edd,
+          e.docsNeededVendor AS evd,
           e.endTime AS eet,
-          -- Event information
-          e.Event_title AS et,
-          e.Event_description AS de,
+          e.entryLimit AS emc,
+          e.entryLimitSpec AS emt,
+          e.entryLimitVendor AS emv,
+          e.equipRecordCompleteRequired AS rqq,
+          e.Event_active AS ea,
+          e.Event_altemail AS ema,
+          e.Event_begins AS eb,
           e.Event_contact AS en,
+          e.Event_count AS evv,
+          dbo.udf_StripHTML( REPLACE( CAST( e.Event_description AS VARCHAR(MAX) ), CHAR(3), '' ) ) AS de,
+          REPLACE( REPLACE( REPLACE( CAST( e.Event_description AS VARCHAR(MAX) ), '"', '\"' ), '&', '\&' ), CHAR(3), '' ) AS dh,
+          e.Event_deviations AS edv,
           e.Event_email AS em,
+          e.Event_emailFrom AS eef,
+          e.Event_ends AS ee,
+          e.Event_id AS e,
+          e.Event_indoor AS [in],
+          e.Event_parking AS epk,
+          e.Event_parking_link AS epu,
           e.Event_phone AS eph,
-          -- Event logo S3 URL
+          e.Event_results_link AS erl,
+          e.Event_room AS erm,
+          e.Event_title AS et,
+          e.Event_type_id AS t,
+          e.Event_website AS ew,
+          e.EventFeeDue AS efd,
+          e.EventFeePaid AS efp,
+          e.EventFeePaidDate AS epd,
+          e.EventFeeTotalPaid AS ept,
+          e.EventFlyerS3 AS ef3,
           CASE WHEN (ISNULL(NULLIF(e.EventlogoS3, ''), '') = '')
-            THEN a.logo
-            ELSE
-              CASE WHEN (LEFT(ISNULL(NULLIF(e.EventlogoS3, ''), ''), 5) = 'https')
-                THEN e.EventlogoS3
+              THEN (SELECT logo FROM b_affiliates WHERE affiliate_id = e.affiliate_id)
               ELSE
-                '${s3RootURL || ''}/' + e.EventlogoS3
-              END
+                  CASE WHEN ( LEFT( ISNULL( NULLIF(e.EventlogoS3, ''), '' ), 5 ) = 'https' )
+                      THEN e.EventlogoS3
+                  ELSE
+                      '${safeS3}/' + e.EventlogoS3
+                  END
           END AS el3,
-          -- Venue information
+          e.firstPublished AS fpb,
+          e.fullguest AS ege,
+          e.gender_req AS rqj,
+          e.GuestCustomPrompt AS gp1,
+          e.GuestCustomPrompt2 AS gp2,
+          e.GuestCustomPrompt3 AS gp3,
+          e.GuestCustomPrompt4 AS gp4,
+          e.GuestCustomPrompt5 AS gp5,
+          e.guestLimit AS emg,
+          e.hotel_req AS rqh,
+          e.isPrivateSeries AS eip,
+          e.isSeries AS eis,
+          e.jobslive AS ejl,
+          REPLACE( e.keywords, ',', '|^^|,|^^|' ) AS ek,
+          e.minorReg AS emr,
+          e.mobile_req AS rqm,
+          CASE
+              WHEN ( ISNULL( NULLIF(e.newEventBannerS3, ''), '') = '' )
+                  THEN
+                      CASE WHEN ( ISNULL(NULLIF(e.newEventBanner, ''), '') = '')
+                          THEN NULL
+                      ELSE
+                          'http://${safeSite}/eventBanners/' + e.newEventBanner
+                      END
+              ELSE
+                  CASE WHEN (LEFT( ISNULL( NULLIF(e.newEventBannerS3, ''), ''), 5 ) = 'https')
+                      THEN e.newEventBannerS3
+                  ELSE
+                      '${safeS3}/' + e.newEventBannerS3
+                  END
+          END AS eb3,
+          CASE
+              WHEN ( LEFT( ISNULL( e.regBackgroundS3, '' ), 5 ) = 'https' )
+                  THEN e.regBackgroundS3
+              ELSE
+                  '${safeS3}/' + e.regBackgroundS3
+          END AS rb3,
+          e.payMethodEvent AS cpd,
+          e.payMethodEventVendor AS vpd,
+          e.payMethodMail AS cpm,
+          e.payMethodMailVendor AS vpm,
+          e.payMethodOnline AS cpo,
+          e.payMethodOnlineVendor AS vpo,
+          e.payRequired AS epr,
+          e.payRequiredVendor AS vpr,
+          e.phone_req AS rqn,
+          e.position_req AS rqo,
+          e.private AS pvt,
+          e.RegistrationEnd AS re,
+          e.RegistrationEndDate AS ere,
+          e.RegistrationStart AS rs,
+          e.RegistrationStartDate AS ers,
+          e.regNotes AS ern,
+          e.roomTypeList AS rtl,
+          e.schedulesLive AS ekl,
+          e.scoreslive AS esl,
+          e.sellTickets AS etr,
+          e.series_Contestant_cost AS scc,
+          e.series_id AS sr,
+          e.series_notes AS esn,
+          e.series_team_cost AS stc,
+          e.seriesPayment AS spm,
+          e.seriesPaymentDue AS spd,
+          e.seriesRevShare AS sef,
+          e.startTime AS est,
+          e.surcharge AS su,
+          e.surchargeFlat AS suf,
+          e.surchargeflatVendor AS svf,
+          e.surchargeSpec AS sp,
+          e.surchargeSpecFlat AS spf,
+          e.surchargeVendor AS sv,
+          e.team_req AS rqt,
+          e.TeamLink AS tu,
+          e.timeZone_id AS tz,
+          e.totalAttending AS eta,
+          e.travelNotes AS etn,
+          e.user_id AS u,
+          e.Vendor_instructions AS vi,
+          e.VendorReg AS rqv,
           e.venue_id AS vn,
-          vu.venue_name AS vm,
-          vu.venue_address AS va,
+          e.volunteer_end AS eve,
+          e.volunteer_start AS evs,
+          e.volunteerNotes AS evn,
+          e.voting AS vt,
+          ISNULL( e.isWebsitePublished, 0 ) AS epb,
+          CASE
+              WHEN ( RTRIM(LTRIM( ISNULL( e.taxID, '' ) )) = '' )
+                  THEN NULL
+              ELSE
+                  RTRIM(LTRIM( e.taxID ))
+          END AS tx,
+          et.team_id AS ti,
+          ISNULL(etz.zoneName, 'UTC') AS tzn,
+          t.Event_type AS ep,
+          t.Event_type_category AS epc,
+          t.Event_type_subcat AS eps,
           vu.venue_city AS vc,
-          vu.venue_region AS vr,
+          vu.venue_country AS vcy,
           vu.venue_lat AS vlt,
           vu.venue_long AS vlg,
-          -- Timezone
-          e.timeZone_id AS tz,
-          ISNULL(tz.zoneName, 'UTC') AS tzn,
-          -- Check-in app settings (from b_events)
+          vu.venue_name AS vm,
+          vu.venue_region AS vr,
+          vu.venue_address AS va,
+          vu.venue_directions AS vdi,
+          c.currencyVar AS cu,
+          getDate() AS [lu],
           e.autoAdvance AS aa,
           e.autoAdvanceRevert AS aar,
           e.multiDayCheckIn AS mdc,
-          -- Contact scan app settings (from b_events)
           e.scanAppActive AS saa,
           e.scanAppCode AS sac,
-          -- CEU settings (from b_events)
           e.ceuAcronym AS ceua,
           e.ceuDisplayOnReg AS ceud,
           e.ceuValueLabel AS ceuv,
-          e.ceuDisplayCounterOnReg AS ceuc,
-          -- Timestamps
-          getDate() AS lu
-      FROM b_Events AS e
-          LEFT JOIN b_venues AS vu ON vu.venue_id = e.venue_id
-          LEFT JOIN b_timezones AS tz ON tz.timeZoneID = e.timeZone_id
-          JOIN b_affiliates AS a ON a.affiliate_id = e.affiliate_id
+          e.ceuDisplayCounterOnReg AS ceuc
+      FROM [b_Events] AS e
+          LEFT JOIN [b_Event_types] AS t ON e.Event_type_id = t.Event_type_id
+          LEFT JOIN [b_venues] AS vu ON vu.venue_id = e.venue_id
+          LEFT JOIN [Event_team] AS et ON et.affiliate_id = e.affiliate_id AND et.Event_id = e.Event_id
+          LEFT JOIN [b_timeZones] AS etz ON etz.timeZoneID = e.timeZone_id
+          JOIN [b_affiliates] AS a ON e.affiliate_id = a.affiliate_id
+          JOIN [b_currency] AS c ON ISNULL( e.Event_currency, 1 ) = c.currencyID
       WHERE e.Event_id = @eventID
     `);
 
@@ -1487,36 +1998,22 @@ class EventService {
 
     let eventData = result1.recordset[0];
 
-    // Get affiliate name
-    const request2 = new sql.Request();
-    request2.input('affiliateID', sql.Int, Number(eventData.a));
-    const result2 = await request2.query(`
-      USE ${dbName};
-      SELECT TOP 1 affiliate_name AS an
-      FROM b_affiliates
-      WHERE affiliate_id = @affiliateID
-    `);
-
-    if (result2.recordset.length) {
-      eventData.an = result2.recordset[0].an;
-    }
-
     // Get authority data
-    const request3 = new sql.Request();
-    request3.input('eventID', sql.Int, Number(eventID));
-    const result3 = await request3.query(`
+    const request2 = new sql.Request();
+    request2.input('eventID', sql.Int, Number(eventID));
+    const result2 = await request2.query(`
       USE ${dbName};
       SELECT ea.authority_id AS [at]
       FROM EventAuthority ea
       WHERE ea.Event_id = @eventID
     `);
 
-    eventData.eat = result3.recordset.map(authority => authority.at);
+    eventData.eat = result2.recordset.map(authority => authority.at);
 
     // Get profile data
-    const request4 = new sql.Request();
-    request4.input('eventID', sql.Int, Number(eventID));
-    const result4 = await request4.query(`
+    const request3 = new sql.Request();
+    request3.input('eventID', sql.Int, Number(eventID));
+    const result3 = await request3.query(`
       USE ${dbName};
       SELECT
           bundle_id AS p,
@@ -1529,12 +2026,12 @@ class EventService {
       ORDER BY RTRIM(LTRIM(bundle_name))
     `);
 
-    eventData.pfs = result4.recordset;
+    eventData.pfs = result3.recordset;
 
     // Get meal data
-    const request5 = new sql.Request();
-    request5.input('eventID', sql.Int, Number(eventID));
-    const result5 = await request5.query(`
+    const request4 = new sql.Request();
+    request4.input('eventID', sql.Int, Number(eventID));
+    const result4 = await request4.query(`
       USE ${dbName};
       SELECT
           m.meal_id AS m,
@@ -1555,7 +2052,7 @@ class EventService {
       ORDER BY RTRIM(LTRIM(m.meal_name))
     `);
 
-    eventData.evml = result5.recordset;
+    eventData.evml = result4.recordset;
 
     return eventData;
   }
@@ -1645,6 +2142,19 @@ class EventService {
       eventData.eei = await dateAndTimeToDatetime(eventData.ee, eventData.eet);
     }
 
+    if (!eventData.rs || eventData.rs.toString().trim() === '') {
+      eventData.rs = '12:00 AM';
+    }
+    if (!eventData.re || eventData.re.toString().trim() === '') {
+      eventData.re = '12:00 AM';
+    }
+    if (eventData.rs && eventData.ers) {
+      eventData.rsi = await dateAndTimeToDatetime(eventData.ers, eventData.rs);
+    }
+    if (eventData.re && eventData.ere) {
+      eventData.rei = await dateAndTimeToDatetime(eventData.ere, eventData.re);
+    }
+
     return eventData;
   }
 
@@ -1682,8 +2192,17 @@ class EventService {
       // Delete any existing record
       await eventsCollection.deleteOne({ '_id.s': vert, '_id.e': Number(eventID) });
 
-      // Save the updated version
-      await eventsCollection.insertOne(eventData);
+      const eventFilter = { '_id.s': vert, '_id.e': Number(eventID) };
+      const mongoClient = db.client;
+
+      await withEventMongoLock(db, vert, eventID, async () =>
+        replaceEventDocumentInEventsCollection(
+          mongoClient,
+          eventsCollection,
+          eventFilter,
+          eventData
+        )
+      );
 
       return {
         status: 'success',
@@ -1691,7 +2210,11 @@ class EventService {
         eventData: eventData
       };
     } catch (error) {
-      console.error('Error touching event:', error);
+      console.error(
+        `[touchEvent] failed vert=${request.headers?.vert || request.vert || '?'} eventID=${request.pathParameters?.eventID}:`,
+        error.message,
+        error.stack
+      );
       throw error;
     }
   }
@@ -1751,23 +2274,23 @@ class EventService {
             AND getDate() >= dateadd(d,1,activityEnd)
       `);
 
-      // Update MongoDB event record
-      const event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
-      
-      if (event && event.evfs) {
-        // Update fees in the evfs array
-        const updatedFees = event.evfs.map(evf => {
-          if (updateIDs.includes(evf.f)) {
-            return { ...evf, fa: 0 }; // Set active to 0
-          }
-          return evf;
-        });
+      await withEventMongoLock(db, vert, eventID, async () => {
+        const event = await eventsCollection.findOne({ '_id.e': Number(eventID) });
 
-        await eventsCollection.updateOne(
-          { '_id.e': Number(eventID) },
-          { $set: { evfs: updatedFees } }
-        );
-      }
+        if (event && event.evfs) {
+          const updatedFees = event.evfs.map(evf => {
+            if (updateIDs.includes(evf.f)) {
+              return { ...evf, fa: 0 };
+            }
+            return evf;
+          });
+
+          await eventsCollection.updateOne(
+            { '_id.e': Number(eventID) },
+            { $set: { evfs: updatedFees } }
+          );
+        }
+      });
 
       return { message: 'success', updateCount: updateIDs.length };
     } catch (error) {
@@ -1912,6 +2435,258 @@ class EventService {
       return await getResourceSponsors(affiliate_id, vert);
     } catch (error) {
       console.error('Error getting resource sponsors:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Toggle agenda slot binding for a resource (insert if absent, delete if present).
+   * Mirrors Mantle EventService.toggleAgendaSlotBinding.
+   */
+  async toggleAgendaSlotBinding(resourceID, slotID, vert) {
+    try {
+      const { toggleAgendaSlotBinding } = await import('../functions/resources.js');
+      return await toggleAgendaSlotBinding(resourceID, slotID, vert);
+    } catch (error) {
+      console.error('Error toggling agenda slot binding:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Move a resource — change category, sort order, or both.
+   * Mirrors Mantle EventService.moveResource.
+   */
+  async moveResource(event_id, category_id, upload_id, updateMode, sortOrder, vert) {
+    try {
+      const { moveResource } = await import('../functions/resources.js');
+      return await moveResource(event_id, category_id, upload_id, updateMode, sortOrder, vert);
+    } catch (error) {
+      console.error('Error moving resource:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Move a resource category (reorder).
+   * Mirrors Mantle EventService.moveResourceCategory.
+   */
+  async moveResourceCategory(event_id, category_id, sortOrder, vert) {
+    try {
+      const { moveResourceCategory } = await import('../functions/resources.js');
+      return await moveResourceCategory(event_id, category_id, sortOrder, vert);
+    } catch (error) {
+      console.error('Error moving resource category:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add an existing affiliate library resource to an event.
+   * If `linked` is true, the event resource references the library doc by ID.
+   * If `linked` is false, the underlying file is copied to a new S3 key so the event has its own copy.
+   * Mirrors Mantle EventService.addLibraryResourceToEvent.
+   */
+  async addLibraryResourceToEvent(eventID, affID, resourceID, linked, useCategory, s3domain, vert) {
+    try {
+      const { getAffiliateResources, addEventResource } = await import('../functions/resources.js');
+      const { copyS3 } = await import('../utils/s3.js');
+
+      const libraryDocs = await getAffiliateResources(affID, [], vert);
+      const doc = libraryDocs.find(d => d.doc_id === Number(resourceID));
+
+      const data = {
+        category: doc.uploadCategory,
+        title: doc.uploadTitle,
+        ext: doc.uploadType,
+        filename: (doc.filenameS3 && doc.filenameS3.length ? doc.filenameS3 : doc.filename) || '',
+        type: doc.resource_type,
+        url: doc.resource_url,
+        ...(linked && { linkedID: doc.doc_id })
+      };
+
+      if (!linked && (doc.filenameS3 || doc.filename)) {
+        const newFile = await copyS3(doc.filenameS3.length ? doc.filenameS3 : doc.filename, s3domain);
+        data.filename = newFile.name;
+      }
+
+      if (!useCategory) delete data.category;
+
+      await addEventResource(eventID, data, vert);
+
+      return {
+        message: 'Added resource from library to the event'
+      };
+    } catch (error) {
+      console.error('Error adding library resource to event:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add a video resource (or other URL-based resource) to an event,
+   * optionally also adding it to the affiliate library.
+   * Mirrors Mantle EventService.addVideoResource.
+   */
+  async addVideoResource(eventID, data, affiliateID, vert) {
+    try {
+      const { addEventResource, addAffiliateResource } = await import('../functions/resources.js');
+
+      const resourceData = {
+        title: data.title,
+        url: data.url,
+        category: data.category,
+        type: data.type
+      };
+
+      await addEventResource(eventID, resourceData, vert);
+
+      if (data.saveToLibrary) {
+        await addAffiliateResource(affiliateID, resourceData, vert);
+      }
+
+      return {
+        message: 'Added event resource'
+      };
+    } catch (error) {
+      console.error('Error adding video resource:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch a single accessible resource for an event by upload_id.
+   * Walks all VEO-visible resources for the event and finds the matching one.
+   * Mirrors Mantle EventService.getSingleResource.
+   */
+  async getSingleResource(userID, eventID, resourceID, vert) {
+    try {
+      const { getAccessibleResources } = await import('../functions/resources.js');
+      const resources = await getAccessibleResources({ showOnVeo: true }, userID, eventID, vert);
+      return resources.find(r => r.upload_id == resourceID);
+    } catch (error) {
+      console.error('Error getting single resource:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch a single sponsor record. Mirrors Mantle EventService.getSponsor.
+   */
+  async getSponsor(sponsorID, vert) {
+    try {
+      const { getSponsor } = await import('../functions/resources.js');
+      return await getSponsor(sponsorID, vert);
+    } catch (error) {
+      console.error('Error getting sponsor:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch sponsor resources for an agenda slot.
+   * Mirrors Mantle EventService.getSlotSponsorResources.
+   */
+  async getSlotSponsorResources(sponsorID, slotID, vert) {
+    try {
+      const { getSlotSponsorResources } = await import('../functions/resources.js');
+      return await getSlotSponsorResources(sponsorID, slotID, vert);
+    } catch (error) {
+      console.error('Error getting slot sponsor resources:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update an event upload's associated sponsor.
+   * Mirrors Mantle EventService.updateResourceSponsor.
+   */
+  async updateResourceSponsor(upload_id, sponsorID, vert) {
+    try {
+      const { updateResourceSponsor } = await import('../functions/resources.js');
+      return await updateResourceSponsor(upload_id, sponsorID, vert);
+    } catch (error) {
+      console.error('Error updating resource sponsor:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send a sponsor instant-contact email — used when an event attendee asks
+   * to be contacted by a sponsor. Validates the form, looks up the sponsor and event,
+   * resolves the attendee (or falls back to the form's email/name fields), and emails the sponsor.
+   * Mirrors Mantle EventService.sponsorInstantContact.
+   */
+  async sponsorInstantContact(eventGUID, userID, sponsorID, form, vert) {
+    try {
+      const { getSponsor } = await import('../functions/resources.js');
+      const { getRegisteredAttendeeByUserID } = await import('../functions/attendees.js');
+      const { sendEmail } = await import('../functions/sendgrid.js');
+
+      const sponsor = await getSponsor(sponsorID, vert);
+      // If there is no sponsor, don't send an email
+      if (!sponsor) return { success: false, data: 'This sponsor does not exist. Please contact the event admin.' };
+      // If there are problems with the form, no email
+      if (form.useMobile && form.phone.length < 10) return { success: false, data: 'Invalid Phone #' };
+      if (form.message.length < 7) return { success: false, data: 'Invalid Message. Must be at least 7 characters long.' };
+
+      // If this event doesn't exist, no email
+      const event = await this.getEventDataByGUID(eventGUID, { e: 1, et: 1, an: 1, em: 1, en: 1, el3: 1 }, vert);
+      if (!event) return { success: false, data: 'This event does not exist.' };
+
+      // If you aren't registered for the event, no email — fall back to form-supplied identity
+      let attendee = await getRegisteredAttendeeByUserID(userID, event.e, vert);
+      if (!attendee) {
+        if (!form.email) return { success: false, data: 'Please provide a valid email' };
+        attendee = {
+          uf: form.firstName,
+          ul: form.lastName,
+          ue: form.email
+        };
+      }
+
+      const emailSent = await sendEmail({
+        to: sponsor.defaultSponsorEmail,
+        fromName: event.an,
+        subject: `${event.et} - Instant Contact`,
+        html: getInstantContactEmail(attendee, sponsor, event, form),
+        reply_to: event.em
+      });
+
+      if (emailSent) {
+        return { success: true, data: 'Email Sent' };
+      } else {
+        return { success: false, data: 'Email Not Sent' };
+      }
+    } catch (error) {
+      console.error('Error sending sponsor instant contact:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set the sponsor agenda location for an event (b_events.sponsorFirstAgenda).
+   * Mirrors Mantle EventService.setSponsorLocationAgenda.
+   */
+  async setSponsorLocationAgenda(eventID, location, vert) {
+    try {
+      const { getConnection, getDatabaseName } = await import('../utils/mssql.js');
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+
+      const request = new sql.Request();
+      request.input('eventID', sql.Int, Number(eventID));
+      request.input('location', sql.Int, Number(location));
+      await request.query(`
+        USE ${dbName};
+        UPDATE b_events
+        SET sponsorFirstAgenda = @location
+        WHERE event_id = @eventID
+      `);
+
+      return { message: 'success' };
+    } catch (error) {
+      console.error('Error setting sponsor location agenda:', error);
       throw error;
     }
   }

@@ -10,7 +10,6 @@ export function requireVertical(handler) {
     const vert = request.headers?.vert || request.pathParameters?.vert;
     
     if (!vert) {
-      console.log('[requireVertical] 400: Vertical identifier required. path:', request.path, 'pathParameters:', JSON.stringify(request.pathParameters));
       return errorResponse('Vertical identifier required', 400);
     }
     

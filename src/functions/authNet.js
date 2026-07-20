@@ -8,8 +8,23 @@
 
 import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 import { getDatabase } from '../utils/mongodb.js';
+import { recordRefund } from './paymentTransactions/recordRefund.js';
+import { sendUnconfirmedPaymentAlerts } from './paymentTransactions.js';
+import _attendeeService from '../services/AttendeeService.js';
+import _eventService from '../services/EventService.js';
 import _ from 'lodash';
 import moment from 'moment-timezone';
+
+// Mirrors Mantle CONSTANTS._dm — per-vertical app domain for email links
+const DOMAINS_BY_VERTICAL = {
+  cn: 'https://www.connectmeetings.events',
+  es: 'https://www.eventsquid.com',
+  fd: 'https://www.rcnation.com',
+  ft: 'https://www.fitsquid.com',
+  ir: 'https://inreachce.events',
+  kt: 'https://app.mykindercamps.com',
+  ln: 'https://www.launchsquid.com'
+};
 
 // Import authorizenet SDK (will need to be installed)
 // NOTE: This is a dynamic import that will fail if package is not installed
@@ -32,6 +47,83 @@ async function loadAuthorizeNet() {
 // Load on module initialization
 let authNetLoaded = false;
 loadAuthorizeNet().then(loaded => { authNetLoaded = loaded; });
+
+/**
+ * Sync the attendee's transaction list and total paid from MSSQL into MongoDB.
+ * Mirrors Mantle functions/paymentTransactions/updateTransactionsMongo.js
+ */
+async function updateTransactionsMongo(attendeeID, vert) {
+  const sql = await getConnection(vert);
+  const dbName = getDatabaseName(vert);
+
+  const totalPaidRequest = new sql.Request();
+  totalPaidRequest.input('attendeeID', TYPES.Int, Number(attendeeID));
+  const totalPaidResult = await totalPaidRequest.query(`
+    USE ${dbName};
+    DECLARE @regTotalPaid DECIMAL(10,2);
+    SET @regTotalPaid = ISNULL((
+      SELECT SUM(ISNULL(amount, 0))
+      FROM contestant_transactions
+      WHERE contestant_id = @attendeeID
+    ), 0);
+    SELECT @regTotalPaid AS regTotalPaid;
+  `);
+
+  const transactionsRequest = new sql.Request();
+  transactionsRequest.input('attendeeID', TYPES.Int, Number(attendeeID));
+  const transactionsResult = await transactionsRequest.query(`
+    USE ${dbName};
+    SELECT
+      amount       AS [am],
+      processDate  AS [pd],
+      processDate  AS [pdi],
+      processID    AS [pi],
+      processToken AS [ptk],
+      payMethod    AS pm
+    FROM contestant_transactions
+    WHERE contestant_id = @attendeeID;
+  `);
+
+  const totalPaid = Number(totalPaidResult.recordset[0]?.regTotalPaid || 0);
+  const transactions = transactionsResult.recordset || [];
+
+  const db = await getDatabase(null, vert);
+  await db.collection('attendees').updateOne(
+    { c: Number(attendeeID), sg: { $exists: false } },
+    {
+      $currentDate: { lu: { $type: 'date' } },
+      $set: { tr: transactions, tp: totalPaid }
+    }
+  );
+
+  return { totalPaid, transactionCount: transactions.length };
+}
+
+/**
+ * Call dbo.node_updateTransaction then sync MongoDB.
+ * Mirrors Mantle functions/paymentTransactions/updateTransaction.js
+ */
+async function updateTransaction(attendeeID, params, vert) {
+  const sql = await getConnection(vert);
+  const dbName = getDatabaseName(vert);
+
+  const sqlRequest = new sql.Request();
+  sqlRequest.input('failed',       TYPES.Bit,      params.failed ? 1 : 0);
+  sqlRequest.input('attendeeID',   TYPES.Int,      Number(attendeeID));
+  sqlRequest.input('processDate',  TYPES.DateTime, params.pdi);
+  sqlRequest.input('processID',    TYPES.VarChar,  _.truncate(_.trim(params.pi),       { length: 150, omission: '' }));
+  sqlRequest.input('processToken', TYPES.VarChar,  _.truncate(_.trim(params.ptk),      { length: 150, omission: '' }));
+  sqlRequest.input('pending',      TYPES.Bit,      Number(params.pending));
+  sqlRequest.input('payMethod',    TYPES.VarChar,  _.truncate(_.trim(params.py || ''), { length: 50,  omission: '' }));
+  sqlRequest.input('processIDNew', TYPES.VarChar,  _.truncate(_.trim(params.piNew || ''), { length: 150, omission: '' }));
+
+  await sqlRequest.query(`
+    USE ${dbName};
+    EXEC dbo.node_updateTransaction @failed, @attendeeID, @processDate, @processID, @processToken, @pending, @payMethod, @processIDNew
+  `);
+
+  await updateTransactionsMongo(attendeeID, vert);
+}
 
 /**
  * Get credentials by affiliate ID
@@ -199,9 +291,69 @@ export async function getTransactionDetails(request) {
                 response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' && 
                 response.transaction) {
               
-              // TODO: Implement transaction status handling and updates
-              // This would involve calling updateTransaction, sendUnconfirmedPaymentAlerts, etc.
-              // For now, just return the response
+              // Branch on transaction status — mirrors Mantle getTransactionDetails.js
+              const status = response.transaction.transactionStatus?.toLowerCase() || '';
+              const attendeeID = Number(response.transaction.order?.invoiceNumber?.split('-')[0]);
+
+              if (
+                ['capturedpendingsettlement', 'settledsuccessfully'].includes(status) &&
+                !request.body?.forceUnconfirmed &&
+                !request.body?.refund
+              ) {
+                // Captured / settled — write to MSSQL and sync MongoDB
+                await updateTransaction(attendeeID, {
+                  pi:      _.trim(transactionID),
+                  ptk:     _.trim(response.transaction.order.invoiceNumber),
+                  pdi:     new Date(response.transaction.submitTimeUTC),
+                  pending: 0,
+                  failed:  false
+                }, vert);
+
+              } else if (
+                ['declined', 'expired', 'generalerror', 'voided', 'failedreview'].includes(status) &&
+                !request.body?.forceUnconfirmed &&
+                !request.body?.refund
+              ) {
+                // Failed / declined — record failure with reason
+                await updateTransaction(attendeeID, {
+                  py:      `authNet (${response.transaction.authAmount} failed)`,
+                  pi:      _.trim(transactionID),
+                  ptk:     _.trim(response.transaction.order.invoiceNumber),
+                  pdi:     new Date(response.transaction.submitTimeUTC),
+                  pending: 0,
+                  piNew:   `${transactionID} ${response.transaction.responseReasonDescription}`,
+                  failed:  true
+                }, vert);
+
+              } else if (
+                (request.body?.payingnow || request.body?.forceUnconfirmed) &&
+                response.transaction.order
+              ) {
+                // Unconfirmed (pay-now event) — alert registrant and host
+                const attendeeObj = await _attendeeService.findAttendeeObj(0, attendeeID, 0, vert);
+                const eventObj = await _eventService.getEventData({
+                  headers: { vert },
+                  pathParameters: { eventID: Number(attendeeObj.e) }
+                });
+
+                await sendUnconfirmedPaymentAlerts({
+                  body: {
+                    dataObj: {
+                      eventname:        _.trim(attendeeObj.et),
+                      processor:        'AuthNet',
+                      eventcontactname: _.trim(eventObj.en),
+                      hostEmail:        _.trim(eventObj.em),
+                      attendeeID:       attendeeID,
+                      attendeeFirst:    _.trim(attendeeObj.uf),
+                      attendeeLast:     _.trim(attendeeObj.ul),
+                      attendeeEmail:    _.trim(attendeeObj.ue),
+                      amount:           Number(response.transaction.authAmount),
+                      affDashboard:     `${DOMAINS_BY_VERTICAL[vert] || 'https://www.eventsquid.com'}/aff-dashboard.cfm?affiliate_id=${attendeeObj.a}`
+                    }
+                  }
+                });
+              }
+
               resolve(response);
             } else {
               resolve({
@@ -286,12 +438,6 @@ export async function payByCreditCard(request) {
               response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' && 
               response.transactionResponse?.transId && !request.body.multiCheckout) {
             
-            // TODO: Implement transaction recording and attendee status updates
-            // This would involve calling:
-            // - recordTransaction(request)
-            // - updateFinancialsMongo(request.body.c, vert)
-            // - updateAttendeeRegStatus(request)
-            console.log('Transaction successful - recording pending implementation');
           }
 
           // If we have a transaction response
@@ -331,6 +477,78 @@ export async function payByCreditCard(request) {
 }
 
 /**
+ * Void a transaction that is pending settlement (cannot be refunded until settled).
+ * Finds all attendees tied to the transaction and records a void against each one.
+ */
+export async function voidTransaction(affiliateID, transactionID, credsRA, transactionDetails, vert) {
+  if (!authNetLoaded) await loadAuthorizeNet();
+  if (!ApiContracts || !ApiControllers) throw new Error('authorizenet package not installed');
+
+  const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
+  merchantAuthenticationType.setName(credsRA[0].login);
+  merchantAuthenticationType.setTransactionKey(credsRA[0].key);
+
+  const transactionRequestType = new ApiContracts.TransactionRequestType();
+  transactionRequestType.setTransactionType(ApiContracts.TransactionTypeEnum.VOIDTRANSACTION);
+  transactionRequestType.setRefTransId(transactionDetails.transaction.transId);
+
+  const createRequest = new ApiContracts.CreateTransactionRequest();
+  createRequest.setMerchantAuthentication(merchantAuthenticationType);
+  createRequest.setTransactionRequest(transactionRequestType);
+
+  const ctrl = new ApiControllers.CreateTransactionController(createRequest.getJSON());
+  if (Number(credsRA[0].auth_sandbox) === 0 || !credsRA[0].auth_sandbox) {
+    ctrl.setEnvironment(SDKConstants.endpoint.production);
+  }
+
+  return new Promise((resolve) => {
+    ctrl.execute(async function() {
+      const apiResponse = ctrl.getResponse();
+      const response = new ApiContracts.CreateTransactionResponse(apiResponse);
+
+      try {
+        if (response.messages && response.messages.resultCode?.toLowerCase() === 'ok' &&
+            response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' &&
+            response.transactionResponse) {
+
+          // Find all attendees tied to this transaction
+          const sql = await getConnection(vert);
+          const dbName = getDatabaseName(vert);
+          const sqlRequest = new sql.Request();
+          sqlRequest.input('processID', sql.VarChar, `%${_.trim(transactionID)}%`);
+          sqlRequest.input('gateway',   sql.VarChar, '%authnet%');
+          const qryResult = await sqlRequest.query(`
+            USE ${dbName};
+            EXEC dbo.node_transactionsByGatewayAndID @processID, @gateway;
+          `);
+          const attendees = qryResult.recordset || [];
+
+          const rec = { body: {}, headers: { vert } };
+          const voidSucceeded = Number(response.transactionResponse.responseCode) === 1;
+
+          for (const attendee of attendees) {
+            rec.body.amount = voidSucceeded ? 0 - Number(attendee.amount) : 0;
+            rec.body.c   = Number(attendee.contestant_id);
+            rec.body.pi  = _.trim(transactionID);
+            rec.body.ptk = '';
+            rec.body.rfi = _.trim(response.transactionResponse.transId);
+            rec.body.rfn = voidSucceeded
+              ? 'Void of unsettled transaction'
+              : `Failed Void. ${_.trim(response.transactionResponse.messages?.[0]?.description || '')} (${response.transactionResponse.responseCode})`;
+            await recordRefund(rec);
+          }
+        }
+
+        resolve(response);
+      } catch (e) {
+        console.error('ERROR in voidTransaction:', e);
+        resolve(e);
+      }
+    });
+  });
+}
+
+/**
  * Refund transaction
  */
 export async function refundTransaction(request) {
@@ -344,6 +562,7 @@ export async function refundTransaction(request) {
 
     const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
     const affiliateID = request.pathParameters?.affiliateID;
+    const contestantID = request.pathParameters?.contestantID;
     const transactionID = _.trim(_.last(_.split(request.pathParameters?.transactionID, ':')));
     const refundAmount = Number(request.pathParameters?.refundAmount);
 
@@ -359,8 +578,7 @@ export async function refundTransaction(request) {
 
       // If pending settlement, void instead of refund
       if (transactionDetails.transaction?.transactionStatus?.toLowerCase() === 'capturedpendingsettlement') {
-        // TODO: Implement voidTransaction
-        return { error: 'Transaction is pending settlement - void required (not implemented)' };
+        return await voidTransaction(affiliateID, transactionID, credsRA, transactionDetails, vert);
       }
 
       const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
@@ -407,13 +625,28 @@ export async function refundTransaction(request) {
 
           try {
             // If successful
-            if (response.messages && response.messages.resultCode?.toLowerCase() === 'ok' && 
-                response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' && 
+            if (response.messages && response.messages.resultCode?.toLowerCase() === 'ok' &&
+                response.messages.message?.[0]?.code?.toLowerCase() === 'i00001' &&
                 response.transactionResponse) {
-              
-              // TODO: Implement recordRefund
-              // This would involve calling recordRefund(request) with appropriate data
-              console.log('Refund successful - recording pending implementation');
+
+              const rec = { body: {}, headers: { vert } };
+              rec.body.c   = Number(contestantID);
+              rec.body.pi  = _.trim(transactionID);
+              rec.body.ptk = '';
+              rec.body.rfi = _.trim(response.transactionResponse.transId);
+
+              if (Number(response.transactionResponse.responseCode) === 1) {
+                // Successful refund — record negative amount
+                rec.body.amount = 0 - refundAmount;
+                rec.body.py     = 'authNet REFUND';
+              } else {
+                // Gateway declined the refund — record with zero amount and notes
+                rec.body.amount = 0;
+                rec.body.py     = 'authNet REFUND failed';
+                rec.body.rfn    = `Failed Refund. ${_.trim(response.transactionResponse.messages?.[0]?.description || '')} (${response.transactionResponse.responseCode})`;
+              }
+
+              await recordRefund(rec);
             }
 
             resolve(response);
@@ -500,9 +733,9 @@ export async function getPaymentForm(request) {
     const sql = await getConnection(vert);
     const dbName = getDatabaseName(vert);
 
-    const request = new sql.Request();
-    request.input('contestantID', sql.Int, Number(contestantID));
-    const result = await request.query(`
+    const sqlRequest = new sql.Request();
+    sqlRequest.input('contestantID', sql.Int, Number(contestantID));
+    const result = await sqlRequest.query(`
       USE ${dbName};
       SELECT c.multicheckout, e.event_title
       FROM eventContestant c
@@ -600,7 +833,6 @@ export async function getPaymentForm(request) {
 
         if (response != null) {
           if (response.getMessages().getResultCode() == ApiContracts.MessageTypeEnum.OK) {
-            console.log('Hosted payment page token:', response.getToken());
             resolve({ token: response.getToken(), form: response });
           } else {
             console.error('Error Code:', response.getMessages().getMessage()[0].getCode());

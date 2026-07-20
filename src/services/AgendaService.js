@@ -43,18 +43,6 @@ class AgendaService {
         vert
       );
       
-      console.log(`[getAgendaData] Found ${resources.length} accessible resources`);
-      const resourcesWithSlots = resources.filter(r => r.slots && r.slots.length > 0);
-      console.log(`[getAgendaData] ${resourcesWithSlots.length} resources have slots assigned`);
-      if (resourcesWithSlots.length > 0) {
-        console.log(`[getAgendaData] Resources with slots:`, resourcesWithSlots.map(r => ({
-          upload_id: r.upload_id,
-          uploadTitle: r.uploadTitle,
-          slots: r.slots,
-          accessRestriction: r.accessRestriction
-        })));
-      }
-
       const sql = await getConnection(vert);
       const dbName = getDatabaseName(vert);
 
@@ -276,8 +264,6 @@ class AgendaService {
       const result = await sqlRequest.query(slotQry);
       const results = result.recordset || [];
 
-      console.log(`[getAgendaData] Query returned ${results.length} rows for eventID ${eventID}`);
-
       const slots = {};
       const schedules = {};
       const tracks = {};
@@ -403,9 +389,6 @@ class AgendaService {
         }
       });
 
-      console.log(`[getAgendaData] Processed ${Object.keys(slots).length} unique slots`);
-      console.log(`[getAgendaData] Processed ${Object.keys(schedules).length} schedules`);
-
       // Format the slots - converts from object to array
       const formattedSlots = _.keys(slots).map(slotID => {
         const slot = slots[slotID];
@@ -421,20 +404,8 @@ class AgendaService {
           const isNotVideoEmbed = !resource.resource_type || resource.resource_type.indexOf('video-embed-') === -1;
           return hasSlot && isNotVideoEmbed;
         });
-        if (slot.resources.length > 0) {
-          console.log(`[getAgendaData] Slot ${slotID} has ${slot.resources.length} resources`);
-        } else {
-          // Debug: check if any resources have this slot ID
-          const matchingResources = resources.filter(r => r.slots && r.slots.indexOf(Number(slotID)) >= 0);
-          if (matchingResources.length > 0) {
-            console.log(`[getAgendaData] DEBUG: Found ${matchingResources.length} resources with slot ${slotID} but they were filtered out`);
-            console.log(`[getAgendaData] DEBUG: Resource types:`, matchingResources.map(r => r.resource_type));
-          }
-        }
         return slot;
       });
-
-      console.log(`[getAgendaData] Formatted ${formattedSlots.length} slots into array`);
 
       // Format the schedules - converts from object to array
       const formattedSchedules = _.keys(schedules).map(scheduleID => {
@@ -442,7 +413,6 @@ class AgendaService {
         // Use loose equality (==) to match old codebase behavior (handles type coercion)
         // scheduleID from _.keys() is a string, slot.scheduleID is a number
         schedule.slots = formattedSlots.filter(slot => slot.scheduleID == scheduleID);
-        console.log(`[getAgendaData] Schedule ${scheduleID} has ${schedule.slots.length} slots`);
         // Sort slots by date/time, duration, then title
         schedule.slots = _.orderBy(schedule.slots, ['slotTimeStart', 'slotDuration', 'slotTitle']);
         return schedule;

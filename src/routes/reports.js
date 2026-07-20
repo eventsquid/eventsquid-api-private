@@ -196,7 +196,7 @@ export const findEventReportConfigRoute = {
       const result = await reportService.findEventReportConfig(request);
       return createResponse(200, result);
     } catch (error) {
-      console.log('error', error);
+      console.error('Error finding event report config:', error);
       return createResponse(500, {
         status: 'fail',
         message: error.message

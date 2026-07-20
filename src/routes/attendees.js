@@ -28,7 +28,7 @@ export const findPivotedAttendeesRoute = {
 
 /**
  * POST /attendee/:vert
- * Get Attendees specifying filters
+ * Get Attendees specifying filters (body: { filter?, resultset?, columns?, limit? })
  */
 export const findAttendeesRoute = {
   method: 'POST',
@@ -36,7 +36,41 @@ export const findAttendeesRoute = {
   handler: requireAuth(requireVertical(async (request) => {
     try {
       const result = await _attendeeService.findAttendees(request);
-      // Return the array directly without wrapper
+      return createResponse(200, result);
+    } catch (error) {
+      console.error('Error finding attendees:', error);
+      return errorResponse('Failed to find attendees', 500, error.message);
+    }
+  }))
+};
+
+/**
+ * GET /attendee/:vert
+ * Get Attendees (same as POST but filter/resultset from query params for easy browser/curl).
+ * Query: resultset=grouptool (default), filter=JSON string (optional), limit=number (optional)
+ */
+export const findAttendeesGetRoute = {
+  method: 'GET',
+  path: '/attendee/:vert',
+  handler: requireAuth(requireVertical(async (request) => {
+    try {
+      const q = request.queryStringParameters || {};
+      if (!request.body || (typeof request.body === 'object' && Object.keys(request.body).length === 0)) {
+        let filter = {};
+        try {
+          if (q.filter && typeof q.filter === 'string') {
+            filter = JSON.parse(q.filter);
+          }
+        } catch (e) {
+          console.warn('[attendee] Invalid filter query JSON, using {}');
+        }
+        request.body = {
+          resultset: q.resultset || 'grouptool',
+          filter,
+          limit: q.limit != null ? Number(q.limit) : undefined
+        };
+      }
+      const result = await _attendeeService.findAttendees(request);
       return createResponse(200, result);
     } catch (error) {
       console.error('Error finding attendees:', error);
