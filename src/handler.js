@@ -180,17 +180,26 @@ export const handler = async (event) => {
     return createResponse(200, result);
 
   } catch (error) {
+    const statusCode = error.statusCode || error.status || (
+      error.message === 'Could not construct session identifier' ||
+      error.message === 'Invalid Session' ||
+      error.message === 'Invalid Dev Token' ? 401 :
+      error.message === 'Vertical identifier required' ? 400 : 500
+    );
+
     // Enhanced error logging
-    console.error(`[${reqId}] ${reqMethod} ${reqPath} — ${error.constructor.name}: ${error.message}`);
+    console.error(`[${reqId}] ${reqMethod} ${reqPath} — [${statusCode}] ${error.constructor.name}: ${error.message}`);
     console.error(error.stack);
     if (error.cause) console.error('Caused by:', error.cause);
 
-    // Publish error to SNS if configured
-    await publishErrorToSNS(error, { requestId: reqId, path: reqPath, method: reqMethod });
+    // Only publish to SNS for server errors (5xx)
+    if (statusCode >= 500) {
+      await publishErrorToSNS(error, { requestId: reqId, path: reqPath, method: reqMethod });
+    }
     
-    return createResponse(500, {
-      error: 'Internal Server Error',
-      message: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    return createResponse(statusCode, {
+      error: statusCode === 401 ? 'Unauthorized' : (statusCode === 400 ? error.message : 'Internal Server Error'),
+      message: process.env.NODE_ENV === 'development' || statusCode < 500 ? error.message : undefined,
       requestId: event.requestContext?.requestId || 'unknown'
     });
   }

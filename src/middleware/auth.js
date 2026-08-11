@@ -26,7 +26,9 @@ export async function authenticate(request) {
     session = await _authService.getSession(token);
 
     if (!session) {
-      throw new Error('Invalid Session');
+      const error = new Error('Invalid Session');
+      error.statusCode = 401;
+      throw error;
     }
 
     // Set session on request object
@@ -40,7 +42,9 @@ export async function authenticate(request) {
     const valid = await _authService.validateDevToken(headers.devtoken);
     
     if (!valid) {
-      throw new Error('Invalid Dev Token');
+      const error = new Error('Invalid Dev Token');
+      error.statusCode = 401;
+      throw error;
     }
     
     request.session = null;
@@ -55,7 +59,9 @@ export async function authenticate(request) {
     return { authenticated: true, session: null, cronRun: true };
   }
   
-  throw new Error('Could not construct session identifier');
+  const error = new Error('Could not construct session identifier');
+  error.statusCode = 401;
+  throw error;
 }
 
 /**
@@ -93,7 +99,9 @@ export async function verticalCheck(request) {
   const vert = request.headers?.vert || request.pathParameters?.vert;
   
   if (!vert) {
-    throw new Error('Vertical identifier required');
+    const error = new Error('Vertical identifier required');
+    error.statusCode = 400;
+    throw error;
   }
   
   request.vert = vert;

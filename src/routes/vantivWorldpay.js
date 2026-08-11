@@ -4,7 +4,8 @@
  */
 
 import { createResponse } from '../utils/response.js';
-import { authenticate, verticalCheck } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/auth.js';
+import { requireVertical } from '../middleware/verticalCheck.js';
 import VantivWorldpayService from '../services/VantivWorldpayService.js';
 
 const vantivWorldpayService = new VantivWorldpayService();
@@ -13,36 +14,18 @@ const vantivWorldpayService = new VantivWorldpayService();
 export const transactionSetupRoute = {
   method: 'POST',
   path: '/vantiv-worldpay/transactionSetup',
-  handler: async (request) => {
-    await authenticate(request);
-    await verticalCheck(request);
-    try {
-      const result = await vantivWorldpayService.transactionSetup(request);
-      return createResponse(200, result);
-    } catch (error) {
-      return createResponse(500, {
-        status: 'fail',
-        message: error.message
-      });
-    }
-  }
+  handler: requireAuth(requireVertical(async (request) => {
+    const result = await vantivWorldpayService.transactionSetup(request);
+    return createResponse(200, result);
+  }))
 };
 
 // Refund transaction
 export const refundTransactionRoute = {
   method: 'DELETE',
   path: '/vantiv-worldpay/refund/:contestantID/:affiliateID/:transactionID/:refundAmount',
-  handler: async (request) => {
-    await authenticate(request);
-    await verticalCheck(request);
-    try {
-      const result = await vantivWorldpayService.creditCardReturn(request);
-      return createResponse(200, result);
-    } catch (error) {
-      return createResponse(500, {
-        status: 'fail',
-        message: error.message
-      });
-    }
-  }
+  handler: requireAuth(requireVertical(async (request) => {
+    const result = await vantivWorldpayService.creditCardReturn(request);
+    return createResponse(200, result);
+  }))
 };

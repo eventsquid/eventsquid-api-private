@@ -33,13 +33,16 @@ let ApiContracts, ApiControllers, SDKConstants;
 
 async function loadAuthorizeNet() {
   try {
-    const authorizenet = await import('authorizenet');
+    const authorizenetModule = await import('authorizenet');
+    const authorizenet = authorizenetModule.default || authorizenetModule;
     ApiContracts = authorizenet.APIContracts;
     ApiControllers = authorizenet.APIControllers;
     SDKConstants = authorizenet.Constants;
-    return true;
+    authNetLoaded = Boolean(ApiContracts && ApiControllers);
+    return authNetLoaded;
   } catch (error) {
-    console.warn('authorizenet package not installed - AuthNet functions will not work');
+    console.warn('authorizenet package not installed - AuthNet functions will not work', error);
+    authNetLoaded = false;
     return false;
   }
 }
