@@ -4,8 +4,7 @@
  * This is a placeholder - the full service is 2900+ lines and needs to be migrated incrementally
  */
 
-import { getDatabase, isDeployed } from '../utils/mongodb.js';
-import { getTimeZoneDbApiKey } from '../utils/timezonedbApiKey.js';
+import { getDatabase } from '../utils/mongodb.js';
 import {
   withEventMongoLock,
   replaceEventDocumentInEventsCollection
@@ -14,9 +13,32 @@ import { getConnection, getDatabaseName, TYPES } from '../utils/mssql.js';
 // Note: getConnection now returns sql module, use new sql.Request() for queries
 import _ from 'lodash';
 import moment from 'moment-timezone';
-import axios from 'axios';
 
 const ES_S3_BASE_URL = process.env.S3_BASE_URL || 'https://s3-us-west-2.amazonaws.com/eventsquid/';
+
+/**
+ * Derive timezone metadata from moment-timezone's bundled IANA data.
+ * Replaces the former TimezoneDB HTTP API call; returns the same shape.
+ */
+function getTimezoneConfigs(zoneName, unixTimestamp) {
+  const zone = moment.tz.zone(zoneName);
+  if (!zone) throw new Error(`Unknown timezone: ${zoneName}`);
+
+  const ms = unixTimestamp * 1000;
+
+  // Find the period index: untils[i] is the end of period i; offsets[i] applies during period i.
+  let idx = zone.untils.findIndex(u => u > ms);
+  if (idx === -1) idx = zone.untils.length; // after all transitions → last period
+
+  const gmtOffset = -(zone.offsets[idx] ?? zone.offsets[zone.offsets.length - 1]) * 60;
+  const abbreviation = zone.abbrs[idx] ?? zone.abbrs[zone.abbrs.length - 1];
+  const nextAbbreviation = zone.abbrs[Math.min(idx + 1, zone.abbrs.length - 1)];
+  const dst = moment.unix(unixTimestamp).tz(zoneName).isDST() ? 1 : 0;
+  const zoneStart = idx > 0 ? Math.floor(zone.untils[idx - 1] / 1000) : 0;
+  const zoneEnd = idx < zone.untils.length ? Math.floor(zone.untils[idx] / 1000) : 0;
+
+  return { gmtOffset, abbreviation, nextAbbreviation, zoneName, dst, zoneStart, zoneEnd };
+}
 
 /**
  * Build the HTML body for a sponsor instant-contact email.
@@ -810,37 +832,13 @@ class EventService {
 
       const startDateUnix = startDate.unix();
 
-      const timeZoneDbApiKey = await getTimeZoneDbApiKey();
-      if (!timeZoneDbApiKey) {
-        if (!isDeployed()) {
-          console.warn(
-            'TimeZoneDB API key not set; skipping TimeZoneDB call and SQL timezone update (local only). Set TIMEZONEDB_API_KEY in .env or configure the timezonedb/api-key secret in AWS.'
-          );
-          return {
-            success: false,
-            skipped: true,
-            message:
-              'TimeZoneDB API key not configured locally. Set TIMEZONEDB_API_KEY in .env to test this path.'
-          };
-        }
-        throw new Error(
-          'TimeZoneDB API key is missing (Secrets Manager or TIMEZONEDB_API_KEY)'
-        );
-      }
+      const tzConfigs = getTimezoneConfigs(zoneName, startDateUnix);
 
-      const tzConfigs = await axios.request({
-        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${timeZoneDbApiKey}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
-        method: 'get'
-      }).then(response => {
-        response.data.dst = Number(response.data.dst);
-        return response.data;
-      });
-
-      const dstStart = tzConfigs.dst 
-        ? moment.unix(tzConfigs.zoneStart).utc() 
+      const dstStart = tzConfigs.dst
+        ? moment.unix(tzConfigs.zoneStart).utc()
         : moment.unix(tzConfigs.zoneEnd).utc();
-      const dstEnd = tzConfigs.dst 
-        ? moment.unix(tzConfigs.zoneEnd).utc() 
+      const dstEnd = tzConfigs.dst
+        ? moment.unix(tzConfigs.zoneEnd).utc()
         : moment.unix(tzConfigs.zoneStart).utc();
 
       // Update MSSQL
@@ -912,37 +910,13 @@ class EventService {
 
       const startDateUnix = startDate.unix();
 
-      const timeZoneDbApiKey = await getTimeZoneDbApiKey();
-      if (!timeZoneDbApiKey) {
-        if (!isDeployed()) {
-          console.warn(
-            'TimeZoneDB API key not set; skipping TimeZoneDB call and SQL timezone update (local only). Set TIMEZONEDB_API_KEY in .env or configure the timezonedb/api-key secret in AWS.'
-          );
-          return {
-            success: false,
-            skipped: true,
-            message:
-              'TimeZoneDB API key not configured locally. Set TIMEZONEDB_API_KEY in .env to test this path.'
-          };
-        }
-        throw new Error(
-          'TimeZoneDB API key is missing (Secrets Manager or TIMEZONEDB_API_KEY)'
-        );
-      }
+      const tzConfigs = getTimezoneConfigs(zoneName, startDateUnix);
 
-      const tzConfigs = await axios.request({
-        url: `http://vip.timezonedb.com/v2.1/get-time-zone?key=${timeZoneDbApiKey}&format=json&by=zone&zone=${zoneName}&time=${startDateUnix}`,
-        method: 'get'
-      }).then(response => {
-        response.data.dst = Number(response.data.dst);
-        return response.data;
-      });
-
-      const dstStart = tzConfigs.dst 
-        ? moment.unix(tzConfigs.zoneStart).utc() 
+      const dstStart = tzConfigs.dst
+        ? moment.unix(tzConfigs.zoneStart).utc()
         : moment.unix(tzConfigs.zoneEnd).utc();
-      const dstEnd = tzConfigs.dst 
-        ? moment.unix(tzConfigs.zoneEnd).utc() 
+      const dstEnd = tzConfigs.dst
+        ? moment.unix(tzConfigs.zoneEnd).utc()
         : moment.unix(tzConfigs.zoneStart).utc();
 
       // Update MSSQL
