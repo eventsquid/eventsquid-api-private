@@ -715,22 +715,48 @@ export async function getPaymentForm(request) {
     const vert = request.headers?.vert || request.headers?.Vert || request.headers?.VERT;
     const affiliateID = request.pathParameters?.affiliateID;
     const contestantID = request.pathParameters?.contestantID;
-    const login = request.pathParameters?.login;
-    const key = request.pathParameters?.key;
+    let login = request.pathParameters?.login;
+    let key = request.pathParameters?.key;
     const payAmount = request.pathParameters?.payAmount;
+
+    // Get credentials from MSSQL if affiliate credentials needed
+    let credsRA = [];
+    if (affiliateID) {
+      credsRA = await getCredentials(affiliateID, vert);
+    }
+
+    if ((!login || login === '0' || login === 'default') && credsRA?.[0]?.login) {
+      login = _.trim(credsRA[0].login);
+    }
+    if ((!key || key === '0' || key === 'default') && credsRA?.[0]?.key) {
+      key = _.trim(credsRA[0].key);
+    }
 
     // Get gateway config from MongoDB
     const db = await getDatabase(null, vert);
     const gateways = db.collection('gateways');
     const gatewayConfig = await gateways.findOne({
       a: Number(affiliateID),
-      pm: 'authnet',
+      pm: { $regex: /^authnet$/i },
       isDeleted: { $exists: false }
     });
 
-    if (!gatewayConfig) {
-      return { error: 'Gateway configuration not found' };
-    }
+    const config = gatewayConfig || {
+      auth_shipAddressAsk: true,
+      auth_shipAddressReq: false,
+      auth_billAddressAsk: true,
+      auth_billAddressReq: true,
+      auth_emailAddressAsk: false,
+      auth_emailAddressReq: false,
+      auth_cardCode: 1,
+      auth_bankAccount: false,
+      auth_captcha: false,
+      auth_sandbox: credsRA?.[0]?.auth_sandbox ?? 0
+    };
+
+    // Determine sandbox vs production mode
+    // auth_sandbox === 1 or true means sandbox; 0 or false means production
+    const isSandbox = Boolean(config.auth_sandbox) && Number(config.auth_sandbox) !== 0;
 
     // Get event and contestant info
     const sql = await getConnection(vert);
@@ -782,32 +808,34 @@ export async function getPaymentForm(request) {
 
     paymentSetting = new ApiContracts.SettingType();
     paymentSetting.setSettingName('hostedPaymentShippingAddressOptions');
-    paymentSetting.setSettingValue(`{"show": ${Boolean(gatewayConfig.auth_shipAddressAsk)}, "required": ${Boolean(gatewayConfig.auth_shipAddressReq)}}`);
+    paymentSetting.setSettingValue(`{"show": ${Boolean(config.auth_shipAddressAsk)}, "required": ${Boolean(config.auth_shipAddressReq)}}`);
     settingList.push(paymentSetting);
 
     paymentSetting = new ApiContracts.SettingType();
     paymentSetting.setSettingName('hostedPaymentBillingAddressOptions');
-    paymentSetting.setSettingValue(`{"show": ${Boolean(gatewayConfig.auth_billAddressAsk)}, "required": ${Boolean(gatewayConfig.auth_billAddressReq)}}`);
+    paymentSetting.setSettingValue(`{"show": ${Boolean(config.auth_billAddressAsk)}, "required": ${Boolean(config.auth_billAddressReq)}}`);
     settingList.push(paymentSetting);
 
     paymentSetting = new ApiContracts.SettingType();
     paymentSetting.setSettingName('hostedPaymentCustomerOptions');
-    paymentSetting.setSettingValue(`{"showEmail": ${Boolean(gatewayConfig.auth_emailAddressAsk)}, "requiredEmail": ${Boolean(gatewayConfig.auth_emailAddressReq)}}`);
+    paymentSetting.setSettingValue(`{"showEmail": ${Boolean(config.auth_emailAddressAsk)}, "requiredEmail": ${Boolean(config.auth_emailAddressReq)}}`);
     settingList.push(paymentSetting);
 
     paymentSetting = new ApiContracts.SettingType();
     paymentSetting.setSettingName('hostedPaymentPaymentOptions');
-    paymentSetting.setSettingValue(`{"cardCodeRequired": ${Boolean(gatewayConfig.auth_cardCode)}, "showCreditCard": true, "showBankAccount": ${Boolean(gatewayConfig.auth_bankAccount)}}`);
+    paymentSetting.setSettingValue(`{"cardCodeRequired": ${Boolean(config.auth_cardCode)}, "showCreditCard": true, "showBankAccount": ${Boolean(config.auth_bankAccount)}}`);
     settingList.push(paymentSetting);
 
     paymentSetting = new ApiContracts.SettingType();
     paymentSetting.setSettingName('hostedPaymentSecurityOptions');
-    paymentSetting.setSettingValue(`{"captcha": ${Boolean(gatewayConfig.auth_captcha)}}`);
+    paymentSetting.setSettingValue(`{"captcha": ${Boolean(config.auth_captcha)}}`);
     settingList.push(paymentSetting);
 
+    const rawOrigin = request.headers?.origin || request.headers?.referer || '';
+    const cleanOrigin = rawOrigin ? rawOrigin.replace(/\/$/, '') : 'https://www.eventsquid.com';
     paymentSetting = new ApiContracts.SettingType();
     paymentSetting.setSettingName('hostedPaymentIFrameCommunicatorUrl');
-    paymentSetting.setSettingValue(`{"url": "${request.headers.origin || ''}/authnetCommunicator.cfm"}`);
+    paymentSetting.setSettingValue(`{"url": "${cleanOrigin}/authnetCommunicator.cfm"}`);
     settingList.push(paymentSetting);
 
     paymentSetting = new ApiContracts.SettingType();
@@ -825,25 +853,40 @@ export async function getPaymentForm(request) {
 
     const ctrl = new ApiControllers.GetHostedPaymentPageController(getRequest.getJSON());
 
-    if (Number(gatewayConfig.auth_sandbox) === 0) {
+    // Explicitly set production environment if not sandbox
+    if (!isSandbox) {
       ctrl.setEnvironment(SDKConstants.endpoint.production);
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       ctrl.execute(function() {
         const apiResponse = ctrl.getResponse();
         const response = new ApiContracts.GetHostedPaymentPageResponse(apiResponse);
 
-        if (response != null) {
+        if (response != null && response.getMessages() != null) {
           if (response.getMessages().getResultCode() == ApiContracts.MessageTypeEnum.OK) {
-            resolve({ token: response.getToken(), form: response });
+            resolve({
+              token: response.getToken(),
+              form: response,
+              auth_sandbox: isSandbox ? 1 : 0,
+              actionUrl: isSandbox
+                ? 'https://test.authorize.net/payment/payment'
+                : 'https://accept.authorize.net/payment/payment'
+            });
           } else {
-            console.error('Error Code:', response.getMessages().getMessage()[0].getCode());
-            console.error('Error message:', response.getMessages().getMessage()[0].getText());
-            reject(response);
+            const errMessage = response.getMessages().getMessage()?.[0];
+            const errCode = errMessage?.getCode();
+            const errText = errMessage?.getText();
+            console.error('AuthNet GetHostedPaymentPage Error Code:', errCode);
+            console.error('AuthNet GetHostedPaymentPage Error message:', errText);
+            resolve({
+              error: errText || 'Failed to generate payment form token',
+              code: errCode,
+              response
+            });
           }
         } else {
-          reject(response);
+          resolve({ error: 'No response received from Authorize.Net' });
         }
       });
     });
