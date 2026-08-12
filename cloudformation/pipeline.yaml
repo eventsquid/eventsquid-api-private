@@ -218,6 +218,7 @@ Resources:
                     exit 1
                   fi
                 - aws cloudformation deploy --template-file cloudformation/template.yaml --stack-name eventsquid-private-api --parameter-overrides VpcId=${VPC_ID} SubnetIds=${SUBNET_IDS} --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION}
+                - aws lambda wait function-updated --function-name eventsquid-private-api --region ${AWS_REGION} || true
                 # Set Lambda log retention to 30 days. Done here instead of in the CFN template because
                 # AWS::Logs::LogGroup has a Create+PutRetention race that intermittently fails. Both
                 # commands are idempotent: create-log-group no-ops if it exists; put-retention-policy

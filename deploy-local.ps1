@@ -92,6 +92,9 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+Write-Host "Waiting for function update to complete..." -ForegroundColor Yellow
+aws lambda wait function-updated --function-name eventsquid-private-api --region $Region --profile $Profile
+
 # Step 5: Update Lambda function configuration
 Write-Host "`nStep 5: Updating Lambda function configuration..." -ForegroundColor Green
 aws lambda update-function-configuration `

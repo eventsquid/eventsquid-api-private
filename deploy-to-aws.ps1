@@ -61,6 +61,9 @@ aws lambda update-function-code `
     --zip-file fileb://function.zip `
     --region us-west-2
 
+Write-Host "Waiting for function update to complete..." -ForegroundColor Yellow
+aws lambda wait function-updated --function-name eventsquid-private-api --region us-west-2
+
 # Step 5: Update Lambda configuration (preserve existing environment variables)
 Write-Host "`n5. Updating Lambda function configuration..." -ForegroundColor Green
 
