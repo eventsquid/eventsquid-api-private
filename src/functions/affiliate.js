@@ -285,7 +285,7 @@ export async function updateGatewayDefaults(affiliateID, isDefault, vert) {
 }
 
 /**
- * Update gateway (updates MongoDB gateways collection)
+ * Update gateway (updates MongoDB gateways collection and syncs to MSSQL affiliateMerchant)
  */
 export async function updateGateway(affiliateID, gatewayID, form, vert) {
   try {
@@ -345,17 +345,103 @@ export async function updateGateway(affiliateID, gatewayID, form, vert) {
         { upsert: true }
       );
 
-      // If this is set as default, update MSSQL payMethod
+      // Sync gateway-specific credential fields to MSSQL affiliateMerchant table
+      const sql = await getConnection(vert);
+      const dbName = getDatabaseName(vert);
+      await populateAffMerchant(affiliateID, vert);
+
+      const request = new sql.Request();
+      request.input('affiliateID', sql.Int, Number(affiliateID));
+
+      const updateFields = [];
+      const gwType = gatewayID.toLowerCase();
+
+      if (gwType === 'authnet') {
+        request.input('auth_APILogin', sql.VarChar, form.auth_APILogin || '');
+        request.input('auth_transactionKey', sql.VarChar, form.auth_transactionKey || '');
+        request.input('auth_testMode', sql.Int, Number(form.auth_testMode) || 0);
+        request.input('auth_visaCheckout', sql.Int, Number(form.auth_visaCheckout) || 0);
+        request.input('auth_iFrame', sql.Int, Number(form.auth_iFrame) || 0);
+        request.input('auth_sandbox', sql.Bit, form.auth_sandbox ? 1 : 0);
+        updateFields.push(
+          '[auth_APILogin] = @auth_APILogin',
+          '[auth_transactionKey] = @auth_transactionKey',
+          '[auth_testMode] = @auth_testMode',
+          '[auth_visaCheckout] = @auth_visaCheckout',
+          '[auth_iFrame] = @auth_iFrame',
+          '[auth_sandbox] = @auth_sandbox'
+        );
+      } else if (gwType === 'stripe') {
+        request.input('stripeAccessToken', sql.VarChar, form.stripeAccessToken || '');
+        request.input('stripeLiveMode', sql.Int, Number(form.stripeLiveMode) || 0);
+        request.input('stripeRefreshToken', sql.VarChar, form.stripeRefreshToken || '');
+        request.input('stripeScope', sql.VarChar, form.stripeScope || '');
+        request.input('stripePublishableKey', sql.VarChar, form.stripePublishableKey || '');
+        request.input('stripeUserID', sql.VarChar, form.stripeUserID || '');
+        request.input('stripeTokenType', sql.VarChar, form.stripeTokenType || '');
+        request.input('stripeReqBillingAdd', sql.Int, Number(form.stripeReqBillingAdd) || 0);
+        updateFields.push(
+          'stripeAccessToken = @stripeAccessToken',
+          'stripeLiveMode = @stripeLiveMode',
+          'stripeRefreshToken = @stripeRefreshToken',
+          'stripeScope = @stripeScope',
+          'stripePublishableKey = @stripePublishableKey',
+          'stripeUserID = @stripeUserID',
+          'stripeTokenType = @stripeTokenType',
+          'stripeReqBillingAdd = @stripeReqBillingAdd'
+        );
+      } else if (gwType === 'paypalexpress') {
+        request.input('paypalExpressAPIUser', sql.VarChar, form.paypalExpressAPIUser || '');
+        request.input('paypalExpressAPIPwd', sql.VarChar, form.paypalExpressAPIPwd || '');
+        request.input('paypalExpressAPISignature', sql.VarChar, form.paypalExpressAPISignature || '');
+        updateFields.push(
+          'paypalExpressAPIUser = @paypalExpressAPIUser',
+          'paypalExpressAPIPwd = @paypalExpressAPIPwd',
+          'paypalExpressAPISignature = @paypalExpressAPISignature'
+        );
+      } else if (gwType === 'paypalpayflow') {
+        request.input('paypalPayflowVendor', sql.VarChar, form.paypalPayflowVendor || '');
+        request.input('paypalPayflowPwd', sql.VarChar, form.paypalPayflowPwd || '');
+        request.input('paypalPayflowUser', sql.VarChar, form.paypalPayflowUser || '');
+        request.input('paypalPayflowPartner', sql.VarChar, form.paypalPayflowPartner || '');
+        request.input('paypalPayflowTestMode', sql.Int, Number(form.paypalPayflowTestMode) || 0);
+        updateFields.push(
+          'paypalPayflowVendor = @paypalPayflowVendor',
+          'paypalPayflowPwd = @paypalPayflowPwd',
+          'paypalPayflowUser = @paypalPayflowUser',
+          'paypalPayflowPartner = @paypalPayflowPartner',
+          'paypalPayflowTestMode = @paypalPayflowTestMode'
+        );
+      } else if (gwType === 'payzang') {
+        request.input('payZangTokenizationKey', sql.VarChar, form.payZangTokenizationKey || '');
+        request.input('payZangSecurityKey', sql.VarChar, form.payZangSecurityKey || '');
+        updateFields.push(
+          'payZangTokenizationKey = @payZangTokenizationKey',
+          'payZangSecurityKey = @payZangSecurityKey'
+        );
+      } else if (gwType === 'vantiv-worldpay') {
+        request.input('vwApplicationID', sql.VarChar, form.vwApplicationID || '');
+        request.input('vwAcceptorID', sql.VarChar, form.vwAcceptorID || '');
+        request.input('vwAccountToken', sql.VarChar, form.vwAccountToken || '');
+        request.input('vwAccountID', sql.VarChar, form.vwAccountID || '');
+        updateFields.push(
+          'vwApplicationID = @vwApplicationID',
+          'vwAcceptorID = @vwAcceptorID',
+          'vwAccountToken = @vwAccountToken',
+          'vwAccountID = @vwAccountID'
+        );
+      }
+
       if (form.isDefault) {
-        const sql = await getConnection(vert);
-        const dbName = getDatabaseName(vert);
-        const request = new sql.Request();
-        request.input('affiliateID', sql.Int, Number(affiliateID));
-        request.input('payMethod', sql.VarChar, gatewayID.toLowerCase());
+        request.input('payMethod', sql.VarChar, gwType);
+        updateFields.push('payMethod = @payMethod');
+      }
+
+      if (updateFields.length > 0) {
         await request.query(`
           USE ${dbName};
           UPDATE affiliateMerchant
-          SET payMethod = @payMethod
+          SET ${updateFields.join(', ')}
           WHERE affiliate_id = @affiliateID
         `);
       }
