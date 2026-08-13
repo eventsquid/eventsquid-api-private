@@ -212,15 +212,41 @@ export async function getGateways(affiliateID, vert) {
     const sqlObj = await getGatewaysSQL(affiliateID, vert);
     let mongoObj = await getGatewaysMongo(affiliateID, vert);
 
-    const missingRA = _.difference(sqlObj.enabledGatwaysRA, mongoObj.enabledGatwaysRA);
-
-    // If we are missing any gateways from Mongo, sync them
-    if (missingRA.length > 0) {
-      // TODO: Implement gateway-specific MongoDB sync functions
-      // For now, just return the SQL gateways
+    if (!mongoObj.gatewaysRA || mongoObj.gatewaysRA.length === 0) {
+      return sqlObj.gatewaysRA;
     }
 
-    return mongoObj.gatewaysRA.length > 0 ? mongoObj.gatewaysRA : sqlObj.gatewaysRA;
+    // Merge SQL credentials into Mongo gateway documents so legacy/SQL keys are never lost or wiped by empty Mongo records
+    const mergedGateways = mongoObj.gatewaysRA.map(mongoGw => {
+      const pmKey = (mongoGw.pm || mongoGw.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const sqlGw = sqlObj.gatewaysRA.find(
+        s => (s.name || s.pm || '').toLowerCase().replace(/[^a-z0-9]/g, '') === pmKey
+      );
+
+      if (sqlGw) {
+        const merged = { ...mongoGw };
+        for (const [key, val] of Object.entries(sqlGw)) {
+          if ((merged[key] === undefined || merged[key] === '' || merged[key] === null) && val !== undefined && val !== null && val !== '') {
+            merged[key] = val;
+          }
+        }
+        return merged;
+      }
+      return mongoGw;
+    });
+
+    // Also include any SQL gateways that don't exist in Mongo yet
+    for (const sqlGw of sqlObj.gatewaysRA) {
+      const pmKey = (sqlGw.name || sqlGw.pm || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const exists = mergedGateways.some(
+        g => (g.pm || g.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') === pmKey
+      );
+      if (!exists) {
+        mergedGateways.push(sqlGw);
+      }
+    }
+
+    return mergedGateways;
   } catch (error) {
     console.error('Error getting gateways:', error);
     throw error;
